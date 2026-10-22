@@ -1,0 +1,15 @@
+# /etc/systemd/system/finowise.service
+[Unit]
+Description=Finowise CRM
+After=network.target
+
+[Service]
+User=finowise
+WorkingDirectory=/home/finowise/app
+EnvironmentFile=/home/finowise/app.env
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

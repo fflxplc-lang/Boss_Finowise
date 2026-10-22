@@ -1,0 +1,12 @@
+{
+  "name": "finowise-crm-tests",
+  "private": true,
+  "description": "Browser tests for the CRM. Deliberately a package of its own: the server's npm ci at the repo root never sees these, so a test dependency can never reach production.",
+  "scripts": {
+    "test": "bash run.sh",
+    "all": "bash parallel.sh"
+  },
+  "devDependencies": {
+    "playwright-core": "1.49.1"
+  }
+}

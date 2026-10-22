@@ -1,0 +1,17 @@
+{
+  "name": "finowise-crm-server",
+  "version": "1.0.0",
+  "description": "Finowise CRM — real server-backed deployment (Express + JSON file storage, no native dependencies)",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "user": "node scripts/user.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
