@@ -12,6 +12,9 @@
   },
   "license": "ISC",
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "multer": "^2.4.0",
+    "pdf-parse": "^1.1.1",
+    "xlsx": "^0.18.5"
   }
 }

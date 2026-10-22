@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Payout engine (formerly WealthFlow): MF brokerage imports, L1-L7 sharing, settlements and the payment ledger. Mounted by ../server.js at /api/payout."
+}
