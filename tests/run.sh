@@ -44,6 +44,7 @@ startsrv(){
       CRM_USERS_DB="$WORK/users.db" \
       CRM_PIN_LOOKUP_URL="http://127.0.0.1:$(($PORT + 252))/pincode/" \
       CRM_IFSC_LOOKUP_URL="http://127.0.0.1:$(($PORT + 252))/ifsc/" \
+      CRM_PJ_AUTORUN=off \
       exec node server.js ) > "$WORK/server.log" 2>&1 &
   SRV=$!
   for _ in $(seq 1 120); do
