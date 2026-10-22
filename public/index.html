@@ -11,6 +11,7 @@
      adapts to it in the integration layer below (apprBoss*), never the other
      way round. -->
 <script src="/appraisal-engine.js"></script>
+<script src="/payout.js"></script>
 <title>BOSS</title>
 <!-- THE TAB SHOULD SAY WHOSE SYSTEM THIS IS.
      The browser drew its own globe because nothing here named an icon.
@@ -32999,12 +33000,16 @@ function pageAllowList(user){
    firm somebody sees; it was never meant to take away their own
    record. */
 const PERSONAL_PAGES = ['profile', 'dashboard'];
+/* Payouts is gated by its own team list on the server (Payouts › Clients &
+   Map › Hierarchy), not by the page allow-list: being on the payout team
+   is what opens it, and only to your own clients and earnings. */
+function pageIsPayout(view){ return typeof pyIsView === 'function' && pyIsView(view); }
 function pageIsPersonal(view){ return PERSONAL_PAGES.indexOf(view) >= 0; }
 function pageOpenToMe(view, user){
   const u = user || me();
   if(!u) return false;
   if(isAdmin(u)) return true;
-  if(pageIsPersonal(view)) return true;
+  if(pageIsPersonal(view) || pageIsPayout(view)) return true;
   const list = pageAllowList(u);
   if(!list.length) return true;              // nothing written down: nothing restricted
   return list.indexOf(view) >= 0;
@@ -33424,6 +33429,18 @@ function navigate(view, arg){
       ? 'That is an HR screen, and it is open to HR and to administrators. Your own attendance is in HR › '
         + 'Attendance Management.'
       : 'HR is not open to this account.',
+      {kind:'capability', flag:'manageUsers'});
+    return;
+  }
+  /* Payouts answers for itself, as HR does. Until the server has said who
+     you are, the page draws "Loading" and decides then. */
+  if(typeof pyIsView === 'function' && pyIsView(view) && pyMe() !== undefined && !pyViewOpen(view)){
+    currentView = 'dashboard';
+    window._navOpen = navGroupOf('dashboard');
+    render();
+    accessDenied(pySectionOpen()
+      ? 'That payout screen is for admins. Your own clients and earnings are in Payouts › Dashboard, Reports and the ledger.'
+      : 'Payouts is not open to this account yet. An admin adds you under Payouts › Clients & Map › Hierarchy.',
       {kind:'capability', flag:'manageUsers'});
     return;
   }
@@ -34057,12 +34074,18 @@ function render(){
     pms:['PMS · Partner Managing System','From the fee to the onboarding journey'],
     pqs:['PQS · Partner Query System','Partner queries, worked to closed'],
     ppo:['Partner Payout System','What each partner is owed and paid'],
-    ppf:['Partner Performance System','The funnel and each partner']};
+    ppf:['Partner Performance System','The funnel and each partner'],
+    pydash:['Payout Dashboard','Brokerage, payouts and compliance'], pyimports:['Data Import','Registrar files in'],
+    pyclients:['Clients & Map','The payout team and who earns on each client'], pyreports:['Brokerage Settlements','Payouts, invoices and reconciliation'],
+    pyrates:['Brokerage Rates','AMC brokerage rate master'], pypartner:['Partner Brokerage','Broking revenue from partners'],
+    pyledger:['Payouts','Earned, paid and still owed'], pyaudit:['Payout Audit Log','Every payout change'],
+    pysettings:['Payout Settings','Profile and sharing rules']};
   // Modules that draw their own header (and every profile) own the page title, so the
   // topbar one would just repeat it.
   const ownsHeader = (blueprintModuleFor(currentView) && window['_bpRec_'+blueprintModuleFor(currentView).type]
                       && planRecordOf(window['_bpRec_'+blueprintModuleFor(currentView).type]))
     || ['lms','cms','rms','dst','queries','business','djt','campaigns','projects','calls','mis','pps','pms','pqs','ppo','ppf','analytics'].includes(currentView)
+    || (typeof pyIsView === 'function' && pyIsView(currentView))
     || (currentView==='settings' && !settingsTab)
     || (currentView==='lms' && leadDetailId) || (currentView==='cms' && clientDetailId)
     || (currentView==='rms' && reviewDetailId);
@@ -34140,6 +34163,7 @@ function render(){
   else if(currentView==='pqs') c.innerHTML = viewPQS();
   else if(currentView==='ppo') c.innerHTML = viewPPO();
   else if(currentView==='ppf') c.innerHTML = viewPPF();
+  else if(typeof pyIsView === 'function' && pyIsView(currentView)) c.innerHTML = pyRender(currentView);
   else { currentView='dashboard'; c.innerHTML = viewDashboard(); } // unknown view (e.g. a stale bookmark) falls back to Dashboard instead of crashing or showing stale content
   seAlignTables();
   // The page was just rebuilt from values, so the number fields have their
@@ -34282,6 +34306,7 @@ const NAV_ICONS = {
   systemarchitecture:'🏛️', settings:'⚙️', profile:'👤', teammembers:'🧑‍💼', dwt:'🗓️', arc:'🔁', djt:'📔',
   hrdashboard:'🧭', hrattendance:'⏱️', hrincentive:'💰', hrappraisal:'📈',
   pps:'🌱', pms:'🤝', pqs:'🎫', ppo:'💸', ppf:'🏆',
+  pydash:'📊', pyimports:'⬆️', pyclients:'🗂️', pyreports:'🧾', pyrates:'💹', pypartner:'🤝', pyledger:'🏦', pyaudit:'📜', pysettings:'⚙️',
 };
 const NAV_LABELS = {
   dashboard:'Dashboard', lms:'Lead Management System', lng:'LNG · Lead Nurture Group', cms:'Client Management System', rms:'Review Management System',
@@ -34297,6 +34322,8 @@ const NAV_LABELS = {
   planforms:'Plan Input Forms', ctforms:'C&T Forms',
   pps:'PPS · Partner Perspective System', pms:'PMS · Partner Managing System', pqs:'PQS · Partner Query System',
   ppo:'Partner Payout System', ppf:'Partner Performance System',
+  pydash:'Payout Dashboard', pyimports:'Data Import', pyclients:'Clients & Map', pyreports:'Reports & Payouts',
+  pyrates:'Brokerage Rates', pypartner:'Partner Brokerage', pyledger:'Payouts Ledger', pyaudit:'Audit Log', pysettings:'Payout Settings',
 };
 /* What the rail calls a module, where the firm already has a name for it
    that is shorter than the one in NAV_LABELS. Only the rail reads this:
@@ -34397,6 +34424,15 @@ const NAV_GROUPS = [
    items:['hrdashboard','hrattendance','hrincentive','hrappraisal'],
    gate: ()=>hrSectionOpen(), itemGate: v=>hrModuleOpen(v),
    about:'Attendance, incentives and appraisals, kept apart from the client journey and read from the accounts the firm already has.'},
+  /* Payouts is what WealthFlow was: mutual fund brokerage, the L1–L7
+     sharing and what each person is owed (public/payout.js, served by
+     payout/ on the server). Not to be confused with Partner Journey ›
+     Payout, which is the partner fee ledger. It opens for BOSS admins and
+     for whoever an admin has put on the payout team. */
+  {id:'payouts', icon:'💰', label:'Payouts',
+   items:['pydash','pyimports','pyclients','pyreports','pyrates','pypartner','pyledger','pyaudit','pysettings'],
+   gate: ()=>pySectionOpen(), itemGate: v=>pyViewOpen(v),
+   about:'Mutual fund brokerage from CAMS and Karvy, split across the L1–L7 hierarchy, with invoices, approvals and the payment ledger.'},
   /* Import and the Recycle Bin are Setup screens — Data Administration —
      not modules of their own, so the System category they were the whole of
      has gone with them. Nothing was deleted: the recyclebin route is live,

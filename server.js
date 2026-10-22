@@ -3094,6 +3094,33 @@ app.get('/config.js', (req, res) => {
 });
 
 // Serve the CRM itself — one process, one command, no separate static host needed.
+/* PAYOUT — mutual fund brokerage, L1–L7 sharing, settlements and the payment
+   ledger. It was a separate app (WealthFlow) with its own logins; it now lives
+   in payout/ and answers at /api/payout behind the same sign-in and API key as
+   everything else. Its records are SQLite, in their own file beside data.json,
+   so nothing here touches the CRM's store. payout/ is ES modules, so it is
+   imported rather than required; a request that arrives in the moment before
+   that finishes simply waits for it. */
+process.env.CRM_PAYOUT_DB = process.env.CRM_PAYOUT_DB || path.join(path.dirname(DB_FILE), 'payout.db');
+function payoutAccount(req) {
+  const user = signedInUser(req);
+  if (!user) return null;
+  let name = '';
+  try {
+    const team = JSON.parse(store.team || '[]');
+    const member = Array.isArray(team) ? team.find((t) => t && t.id === user.member_id) : null;
+    name = (member && (member.name || member.fullName)) || '';
+  } catch (e) { /* no name, then: the payout module makes one from the email */ }
+  return { email: user.email, role: user.role, name };
+}
+const payoutRouter = import('./payout/index.js')
+  .then((m) => m.createPayoutRouter({ currentAccount: payoutAccount }));
+payoutRouter.catch((err) => console.error('Payout module failed to load:', err));
+app.use('/api/payout', checkApiKey, (req, res, next) => {
+  payoutRouter.then((router) => router(req, res, next),
+    () => res.status(503).json({ error: 'The payout module did not start. See the server log.' }));
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/*splat', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

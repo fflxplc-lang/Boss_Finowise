@@ -10,3 +10,6 @@ users.db-shm
 ._*
 *.log
 .env
+payout.db
+payout.db-wal
+payout.db-shm
