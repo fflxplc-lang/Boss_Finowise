@@ -12210,6 +12210,12 @@ async function doTransition(module, recordId, transitionId){
       : 'There are no priced lines on the approved allocation to allot.');
     return;
   }
+  // A partner's fee is believed once somebody has checked it, by whatever
+  // route the step is asked for.
+  if(module==='PPS' && t.id==='payVerifiedT'){
+    if(!pjMayVerifyPayment()){ alert('Verifying a payment needs Approve permission on Partners.'); return; }
+    if(!record.feeVerifiedAt){ record.feeVerifiedAt = new Date().toISOString(); record.feeVerifiedBy = currentUser; }
+  }
   // Place Order will not be marked placed on a plan nobody has read. Enforced
   // here as well as on the button, so every route into the step obeys it.
   if(module==='CMS' && cur==='initiateTransaction' && t.id==='transactionPlacedT' && !record.placeOrderReviewedAt){
@@ -32119,6 +32125,7 @@ let DB = { settings:{}, settingsAudit:[], workActivities:[], djtEntries:[], camp
            /* The Partner Journey's own stores: PPS prospects, PMS partners,
               their queries, their payouts and the webinars they register for. */
            partnerProspects:[], pjPartners:[], partnerQueries:[], partnerPayouts:[], partnerWebinars:[],
+           partnerReferrals:[],
            /* What the firm has wired BOSS to, what each run of it did, and
               what has been pushed in through a connector's own door and is
               waiting to be mapped. The credentials are not here: they live
@@ -32233,6 +32240,7 @@ async function loadAll(){
   DB.partnerQueries = await sget('partnerQueries', []);
   DB.partnerPayouts = await sget('partnerPayouts', []);
   DB.partnerWebinars = await sget('partnerWebinars', []);
+  DB.partnerReferrals = await sget('partnerReferrals', []);
   DB.hrSourceMaps = await sget('hrSourceMaps', []);
   DB.hrIncentives = await sget('hrIncentives', []);
   DB.hrAppraisals = await sget('hrAppraisals', []);
@@ -32687,6 +32695,33 @@ function defaultConfig(){
       // RMS sheet: "Sent to Client → a Mail Box Open — Pre-prepared Template from Setting"
       // The review's minutes, written on the stage and sent from it — the same
       // step LMS and CMS use, with wording of its own.
+      /* The Partner Journey's letters. Three of them are sent by the
+         server (partner-journey.js), which carries the same wording for a
+         database that has not been through migrateMailTemplateWording. */
+      pjAck: {subject:"Welcome — you are registered for {Webinar}",
+        body:"Dear {Name},\n\nThank you for registering for \"{Webinar}\" on {Date} at {Time}. You are now part of our community.\n\nPlease take two minutes to check the details you gave us and tell us a little more about yourself:\n\n{FormLink}\n\nWe will send you reminders before the session, and the joining link 24 hours before it starts.\n\n{Signature}"},
+      pjReminder: {subject:"Reminder: {Webinar} on {Date}",
+        body:"Dear {Name},\n\nThis is a reminder that you are registered for \"{Webinar}\".\n\n📅 Date: {Date}\n⏰ Time: {Time}\n\nThe session is {DaysToGo} away. The joining link will reach you 24 hours before it starts.\n\nWe look forward to seeing you there.\n\n{Signature}"},
+      pjJoiningLink: {subject:"Your joining link for {Webinar} — {Date}",
+        body:"Dear {Name},\n\n\"{Webinar}\" starts in 24 hours.\n\n📅 Date: {Date}\n⏰ Time: {Time}\n🔗 Joining Link: {JoiningLink}\n\nPlease join a few minutes early.\n\n{Signature}"},
+      pjPaymentLink: {subject:"Become a partner — your payment link",
+        body:"Dear {Name},\n\nThank you for attending \"{Webinar}\".\n\nTo join as a partner, the partner fee is {Fee}. You can pay it here:\n\n{PaymentLink}\n\nOnce it is paid, please reply with the payment reference / UTR so we can verify it and welcome you aboard.\n\n{Signature}"},
+      pjWelcome: {subject:"Payment received — welcome to Freedom Gurukul, {Name}",
+        body:"Dear {Name},\n\nWe have received and verified your payment of {Fee} on {PaidOn} (reference {Reference}). Thank you, and welcome aboard!\n\nYour Freedom Gurukul access:\n\n🔗 {GurukulLink}\n{GurukulNote}\n\nYour relationship manager will be in touch shortly to set up a one-to-one discussion.\n\n{Signature}"},
+      pjOneToOne: {subject:"Your one-to-one discussion — {Date}",
+        body:"Dear {Name},\n\nWe would like to sit with you one-to-one to understand you and plan your journey as a partner.\n\n📅 Date: {Date}\n⏰ Time: {Time}\n👤 With: {Host}\n🔗 Meeting Link: {MeetingLink}\n\nWe look forward to speaking with you.\n\n{Signature}"},
+      pjInduction: {subject:"Partner Induction — {Date}",
+        body:"Dear {Name},\n\nThank you for completing {Form}. The next step is your Partner Induction.\n\n📅 Date: {Date}\n⏰ Time: {Time}\n🔗 Meeting Link: {MeetingLink}\n\nPlease keep the time free; it is where we walk you through how the partnership works.\n\n{Signature}"},
+      pjCourses: {subject:"Your Freedom Gurukul courses are unlocked",
+        body:"Dear {Name},\n\nThe following Freedom Gurukul courses are now open to you:\n\n{Courses}\n\nYou can start here: {GurukulLink}\n\n{Signature}"},
+      pjNismDoubt: {subject:"NISM registration confirmed — doubt solving session on {Date}",
+        body:"Dear {Name},\n\nYour NISM registration is recorded:\n\n• Registration No.: {NismRegNo}\n• Exam: {NismSeries}\n• Registered on: {NismDate}\n• Centre / Mode: {NismCentre}\n\nTo help you prepare, please join the doubt solving session:\n\n📅 Date: {Date}\n⏰ Time: {Time}\n🔗 Meeting Link: {MeetingLink}\n\n{Signature}"},
+      pjOnboardingVideo: {subject:"Your onboarding as a partner",
+        body:"Dear {Name},\n\nYour ARN / EUIN details are verified. Congratulations!\n\nPlease watch the onboarding video before we meet:\n\n🎬 {VideoLink}\n\nYour onboarding meeting:\n📅 Date: {Date}\n⏰ Time: {Time}\n🔗 Meeting Link: {MeetingLink}\n\nIf you would like a one-to-one discussion as well, just reply to this mail.\n\n{Signature}"},
+      pjOnboardingOneToOne: {subject:"Your one-to-one onboarding discussion — {Date}",
+        body:"Dear {Name},\n\nAs requested, here is your one-to-one onboarding discussion.\n\n📅 Date: {Date}\n⏰ Time: {Time}\n🔗 Meeting Link: {MeetingLink}\n\n{Signature}"},
+      pjArnExpiry: {subject:"Your {What} expires on {ExpiresOn}",
+        body:"Dear {Name},\n\nYour {What} ({Number}) is valid until {ExpiresOn} — {DaysLeft} days from today.\n\nPlease start the renewal now so your work as a partner is not interrupted, and send us the renewed details once you have them.\n\n{Signature}"},
       rmsMom: {subject:'{Meeting} — minutes of our discussion, {Date}',
         body:'Dear {ClientName},\n\nThank you for your time. Below are the minutes of our {Meeting}, for your records.\n\n{Minutes}\n\nAction points:\n{ActionPoints}\n\nNext step: {NextAction}\n\nDo come back to us with any question at all.\n\n{Signature}'},
     },
@@ -33564,6 +33599,7 @@ async function boot(){
   await migrateRecommendationWording();
   await migrateBlueprintLinks();
   await migrateBusinessDeclined();
+  await migratePartnerJourneyBlueprints();
   await migrateMultiGoalBlueprint();
   await migrateConsentTransactions();
   await migrateSchemeAmcNames();
@@ -33648,7 +33684,7 @@ const LIVE_KEY_TO_DB = {
   exportHistory:'exportHistory',
   hrAttendance:'hrAttendance', hrLeave:'hrLeave', hrSourceMaps:'hrSourceMaps', hrRegularizations:'hrRegularizations',
   partnerProspects:'partnerProspects', pjPartners:'pjPartners', partnerQueries:'partnerQueries',
-  partnerPayouts:'partnerPayouts', partnerWebinars:'partnerWebinars',
+  partnerPayouts:'partnerPayouts', partnerWebinars:'partnerWebinars', partnerReferrals:'partnerReferrals',
   hrIncentives:'hrIncentives', hrAppraisals:'hrAppraisals', hrConfig:'hrConfig',
   automationExecutionLog:'automationExecutionLog', webhooks:'webhooks', workActivities:'workActivities',
   config:'config', settings:'settings', slaRules:'slaRules', automationRules:'automationRules',
@@ -37688,6 +37724,8 @@ function fieldInput(f, val){
     control = `<textarea id="f_${f.k}">${esc(val)}</textarea>`;
   } else if(f.t==='date'){
     control = `<input type="date" id="f_${f.k}" value="${esc(val)}"${dateBoundsAttr()}>`;
+  } else if(f.t==='time'){
+    control = `<input type="time" id="f_${f.k}" value="${esc(val)}">`;
   } else if(f.t==='team'){
     // Deactivated members drop out of every assignment picker, but a record that already
     // points at one keeps showing them — reassigning is a decision, never a silent side effect.
@@ -49576,23 +49614,26 @@ const BLUEPRINT_PPS = {
     {id:'sessionDay',      label:'Session-Day Reminder & Joining Link Sent'},
     {id:'paymentLinkSent', label:'Attended — Payment Link & Interest Form Sent'},
     {id:'rmFollowUp',      label:'RM Follow-up Call'},
+    {id:'paymentVerification', label:'Payment Received — Verification Pending'},
     {id:'community',       label:'Marketing & Education Community', terminal:true, color:'warn'},
     {id:'converted',       label:'Fee Paid — Moved to PMS', terminal:true, color:'ok'},
   ],
   transitions: [
     {id:'ackEmailT',     from:'registered', to:'acknowledged', label:'Acknowledgement Email Sent', kind:'forward', showIfRule:'pjViaEmail'},
     {id:'ackWhatsappT',  from:'registered', to:'acknowledged', label:'Added to WhatsApp Community', kind:'forward', showIfRule:'pjViaWhatsapp'},
-    {id:'remindersT',    from:'acknowledged', to:'remindersSent', label:'Session Reminders Sent (3, 2 & 1 day to go)', kind:'forward'},
+    {id:'remindersT',    from:'acknowledged', to:'remindersSent', label:'Send a Session Reminder', kind:'forward'},
     {id:'back_ack',      from:'acknowledged', to:'registered', label:'Back', kind:'back'},
     {id:'sessionDayT',   from:'remindersSent', to:'sessionDay', label:'Session-Day Reminder & Joining Link Sent', kind:'forward'},
     {id:'back_rem',      from:'remindersSent', to:'acknowledged', label:'Back', kind:'back'},
     {id:'attendedYesT',  from:'sessionDay', to:'paymentLinkSent', label:'Attended — Send Payment Link', kind:'forward', color:'ok'},
     {id:'attendedNoT',   from:'sessionDay', to:'community', label:'Did Not Attend', kind:'forward', color:'danger'},
     {id:'back_day',      from:'sessionDay', to:'remindersSent', label:'Back', kind:'back'},
-    {id:'paidT',         from:'paymentLinkSent', to:'converted', label:'Payment Done', kind:'forward', color:'ok'},
+    {id:'paidT',         from:'paymentLinkSent', to:'paymentVerification', label:'Payment Done', kind:'forward', color:'ok'},
     {id:'notPaidT',      from:'paymentLinkSent', to:'rmFollowUp', label:'Payment Not Done — RM to Follow Up', kind:'forward', color:'warn'},
-    {id:'paidAfterCallT',    from:'rmFollowUp', to:'converted', label:'Payment Done', kind:'forward', color:'ok'},
+    {id:'paidAfterCallT',    from:'rmFollowUp', to:'paymentVerification', label:'Payment Done', kind:'forward', color:'ok'},
     {id:'notPaidAfterCallT', from:'rmFollowUp', to:'community', label:'Not Paid — Move to Community', kind:'forward', color:'danger'},
+    {id:'payVerifiedT',  from:'paymentVerification', to:'converted', label:'Payment Verified — Move to PMS', kind:'forward', color:'ok'},
+    {id:'payRejectedT',  from:'paymentVerification', to:'rmFollowUp', label:'Payment Not Received — Back to RM', kind:'forward', color:'danger'},
     {id:'reinviteT',     from:'community', to:'acknowledged', label:'Invite to the Next Session', kind:'forward'},
   ],
 };
@@ -49611,6 +49652,9 @@ const BLUEPRINT_PMS = {
     {id:'admissionForm2',   label:'Freedom Gurukul Admission Form 2'},
     {id:'inductionArn',     label:'Partner Induction'},
     {id:'arnRegistration',  label:'ARN / EUIN Registration'},
+    {id:'arnVerification',  label:'ARN / EUIN Details — Verification Pending'},
+    {id:'onboardingVideo',  label:'Onboarding Video & Meeting Sent'},
+    {id:'onboardingOneToOne', label:'Onboarding One-to-One'},
     {id:'onboarded',        label:'Partner Onboarded', terminal:true, color:'ok'},
   ],
   transitions: [
@@ -49618,8 +49662,8 @@ const BLUEPRINT_PMS = {
     {id:'ownerFlxT',      from:'gurukulAccess', to:'oneToOne', label:'Lead Owner: Freedom LifeX — One-to-One by Internal RM', kind:'forward'},
     {id:'ownerSherpaT',   from:'gurukulAccess', to:'oneToOne', label:'Lead Owner: Master Sherpa / Monk — One-to-One by them', kind:'forward'},
     {id:'back_access',    from:'gurukulAccess', to:'welcomed', label:'Back', kind:'back'},
-    {id:'arnNoT',         from:'oneToOne', to:'admissionForm1', label:'Not an ARN Holder — Admission Form 1', kind:'forward'},
-    {id:'arnYesT',        from:'oneToOne', to:'admissionForm2', label:'ARN Holder — Admission Form 2', kind:'forward', color:'ok'},
+    {id:'arnNoT',         from:'oneToOne', to:'admissionForm1', label:'Not an ARN Holder', kind:'forward'},
+    {id:'arnYesT',        from:'oneToOne', to:'admissionForm2', label:'ARN Holder', kind:'forward', color:'ok'},
     {id:'back_one',       from:'oneToOne', to:'gurukulAccess', label:'Back', kind:'back'},
     {id:'inductionT',     from:'admissionForm1', to:'induction', label:'Partner Induction Done', kind:'forward'},
     {id:'back_adm1',      from:'admissionForm1', to:'oneToOne', label:'Back', kind:'back'},
@@ -49632,7 +49676,12 @@ const BLUEPRINT_PMS = {
     {id:'inductionArnT',  from:'admissionForm2', to:'inductionArn', label:'Partner Induction Done', kind:'forward'},
     {id:'back_adm2',      from:'admissionForm2', to:'oneToOne', label:'Back', kind:'back'},
     {id:'arnFromIndT',    from:'inductionArn', to:'arnRegistration', label:'Go to ARN / EUIN Registration', kind:'forward'},
-    {id:'onboardedT',     from:'arnRegistration', to:'onboarded', label:'ARN / EUIN Registered — Start Onboarding Journey', kind:'forward', color:'ok'},
+    {id:'arnSubmitT',     from:'arnRegistration', to:'arnVerification', label:'Enter ARN / EUIN Details', kind:'forward'},
+    {id:'arnVerifiedT',   from:'arnVerification', to:'onboardingVideo', label:'Details Verified — Send Onboarding Video', kind:'forward', color:'ok'},
+    {id:'arnRejectT',     from:'arnVerification', to:'arnRegistration', label:'Details Incorrect — Back to ARN / EUIN', kind:'forward', color:'danger'},
+    {id:'oneToOneOnbT',   from:'onboardingVideo', to:'onboardingOneToOne', label:'Partner Wants a One-to-One', kind:'forward'},
+    {id:'onboardedT',     from:'onboardingVideo', to:'onboarded', label:'Partner Onboarded', kind:'forward', color:'ok'},
+    {id:'onboardedAfterMeetT', from:'onboardingOneToOne', to:'onboarded', label:'One-to-One Done — Partner Onboarded', kind:'forward', color:'ok'},
   ],
 };
 BLUEPRINTS.PPS = BLUEPRINT_PPS;
@@ -49650,10 +49699,28 @@ MODULE_VIEW.PPS = 'pps'; MODULE_VIEW.PMS = 'pms'; MODULE_VIEW.PQS = 'pqs'; MODUL
 Object.keys(MODULE_DB_KEY).forEach(m=>{ bulkSelection[m] = bulkSelection[m] || new Set(); });
 TRANSITION_RULES.pjViaEmail = r => (r && r.commChannel) !== 'WhatsApp';
 TRANSITION_RULES.pjViaWhatsapp = r => (r && r.commChannel) !== 'Email';
+/* The steps that do something besides move: a letter that goes, a form
+   that is filled. Each opens its own box, and the box moves the stage. */
+STAGE_FORM_HANDLERS.ackEmailT = 'pjOpenAckModal';
+STAGE_FORM_HANDLERS.remindersT = 'pjOpenSessionMailModal';
+STAGE_FORM_HANDLERS.sessionDayT = 'pjOpenSessionMailModal';
+STAGE_FORM_HANDLERS.attendedYesT = 'pjOpenPaymentLinkModal';
 STAGE_FORM_HANDLERS.paidT = 'pjOpenPaymentModal';
 STAGE_FORM_HANDLERS.paidAfterCallT = 'pjOpenPaymentModal';
+STAGE_FORM_HANDLERS.payVerifiedT = 'pjOpenVerifyPaymentModal';
+STAGE_FORM_HANDLERS.ownerFlxT = 'pjOpenMeetingModal';
+STAGE_FORM_HANDLERS.ownerSherpaT = 'pjOpenMeetingModal';
+STAGE_FORM_HANDLERS.arnNoT = 'pjOpenAdmissionModal';
+STAGE_FORM_HANDLERS.arnYesT = 'pjOpenAdmissionModal';
+STAGE_FORM_HANDLERS.inductionT = 'pjOpenMomModal';
+STAGE_FORM_HANDLERS.inductionArnT = 'pjOpenMomModal';
+STAGE_FORM_HANDLERS.coursesT = 'pjOpenCoursesModal';
+STAGE_FORM_HANDLERS.nismT = 'pjOpenNismModal';
+STAGE_FORM_HANDLERS.doubtT = 'pjOpenMomModal';
 STAGE_FORM_HANDLERS.examDateT = 'pjOpenExamDateModal';
-STAGE_FORM_HANDLERS.onboardedT = 'pjOpenArnModal';
+STAGE_FORM_HANDLERS.arnSubmitT = 'pjOpenArnModal';
+STAGE_FORM_HANDLERS.arnVerifiedT = 'pjOpenMeetingModal';
+STAGE_FORM_HANDLERS.oneToOneOnbT = 'pjOpenMeetingModal';
 TIMELINE_DATE_OF.PPS = r => r && r.createdAt;
 TIMELINE_DATE_OF.PMS = r => r && r.createdAt;
 TIMELINE_DATE_OF.PPF = r => r && (r.paidOn || r.createdAt);
@@ -49661,6 +49728,7 @@ const PPS_STAGE_GROUPS = [
   ['Registered',      ['registered','acknowledged'],       'info'],
   ['Reminders',       ['remindersSent','sessionDay'],      'info'],
   ['Payment Pending', ['paymentLinkSent','rmFollowUp'],    'warn'],
+  ['Verify Payment',  ['paymentVerification'],             'purple'],
   ['Fee Paid',        ['converted'],                       'ok'],
   ['Community',       ['community'],                       'danger'],
 ];
@@ -49669,7 +49737,8 @@ const PMS_STAGE_GROUPS = [
   ['One-to-One',            ['oneToOne'],                                                       'info'],
   ['Admission & Induction', ['admissionForm1','admissionForm2','induction','inductionArn'],      'purple'],
   ['Courses & NISM',        ['coursesUnlocked','nismRegistration','doubtSession','examDate'],   'warn'],
-  ['ARN / EUIN',            ['arnRegistration'],                                                'warn'],
+  ['ARN / EUIN',            ['arnRegistration','arnVerification'],                              'warn'],
+  ['Onboarding',            ['onboardingVideo','onboardingOneToOne'],                           'purple'],
   ['Onboarded',             ['onboarded'],                                                      'ok'],
 ];
 MODULE_STAGE_GROUPS.PPS = ()=>PPS_STAGE_GROUPS;
@@ -49691,8 +49760,10 @@ function pjPartnerName(id){ return pjName(pjPartners().find(p=>p.id===id)); }
 function pjWebinarLabel(w){ return w ? (w.title || 'Webinar') + (w.date ? ' · ' + fmtDate(w.date) : '') : '—'; }
 function pjLivePartners(){ return pjPartners().filter(p=>!p.deletedAt); }
 
-/* The prospect's own details. The source decides who the lead owner is
-   later — a Master Sherpa's prospect is theirs to sit with one-to-one. */
+/* The prospect's own details. A referral code says who brought them —
+   a Master Sherpa or Monk, whose prospect is theirs to sit with one-to-one
+   later — and the name comes from the code. No code is a prospect from
+   paid social media. The source is worked out from that, not asked. */
 function ppsFields(){
   const webs = pjWebinars().filter(w=>!w.deletedAt).slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
   const labels = {}; webs.forEach(w=>{ labels[w.id] = pjWebinarLabel(w); });
@@ -49703,9 +49774,9 @@ function ppsFields(){
     {k:'email', l:'Email', t:'text', vk:'email', ph:'name@example.com'},
     {k:'city', l:'City', t:'text'},
     {k:'occupation', l:'Occupation', t:'text'},
-    {k:'source', l:'Source', t:'select', opts:['Paid Social Media','Master Sherpa'], req:1},
-    {k:'masterSherpa', l:'Master Sherpa', t:'text', showIf:{field:'source', value:'Master Sherpa'},
-      h:'Who shared their unique link with this prospect.'},
+    {k:'referralCode', l:'Referral Code', t:'text', ph:'e.g. MS-RAVI01',
+      h:'The code of the Master Sherpa / Monk who referred them. Leave it blank for paid social media.'},
+    {k:'referralName', l:'Referral Name', t:'text', ph:'Filled in from the code'},
     {k:'commChannel', l:'Type of Communication', t:'select', opts:['WhatsApp','Email'], req:1},
     {k:'webinarId', l:'Webinar / Session', t:'select', opts: webs.map(w=>w.id), optLabels: labels},
     {k:'assignedTo', l:'RM', t:'team'},
@@ -49739,12 +49810,17 @@ function viewPPS(){
   const tabs = `<div class="tabs" style="margin-bottom:10px">
     <div class="tab ${window._ppsTab==='prospects'?'active':''}" onclick="window._ppsTab='prospects'; render()">Prospects</div>
     <div class="tab ${window._ppsTab==='webinars'?'active':''}" onclick="window._ppsTab='webinars'; render()">Webinars &amp; Campaigns</div>
+    <div class="tab ${window._ppsTab==='referrals'?'active':''}" onclick="window._ppsTab='referrals'; render()">Referral Codes</div>
+    ${pjMaySetUp() ? `<div class="tab ${window._ppsTab==='settings'?'active':''}" onclick="window._ppsTab='settings'; render()">Settings</div>` : ''}
   </div>`;
   if(window._ppsTab==='webinars') return ppsHeader() + tabs + ppsWebinarsHtml();
+  if(window._ppsTab==='referrals') return ppsHeader() + tabs + pjReferralsHtml();
+  if(window._ppsTab==='settings' && pjMaySetUp()) return ppsHeader() + tabs + pjSettingsHtml();
   const all = visibleRecords(pjProspects(), r=>r.assignedTo, r=>r.branch);
   window._ppsSort = window._ppsSort || 'newest';
   const searchMap = {stage: r=>stateLabel('PPS', stateOf('PPS', r)), rm: r=>teamName(r.assignedTo),
-    source: r=>r.source, city: r=>r.city, name: r=>pjName(r), mobile: r=>r.mobile, sherpa: r=>r.masterSherpa};
+    source: r=>r.source, city: r=>r.city, name: r=>pjName(r), mobile: r=>r.mobile,
+    referral: r=>[r.referralCode, r.referralName || r.masterSherpa].filter(Boolean).join(' ')};
   const inWindow = applyTimeline('PPS', all);
   let rows = applyTimeline('PPS', all);
   /* A prospect who has paid has left PPS for PMS, as a converted lead
@@ -49764,7 +49840,7 @@ function viewPPS(){
     ${listSearchRow({stateKey:'_ppsSearch', live:true, sortKey:'_ppsSort',
       sortOptions:[['newest','↓ Newest first'],['oldest','↑ Oldest first']]})}
     <div class="table-wrap"><table id="ppsTable">
-      <thead><tr><th>Prospect</th><th>Mobile</th><th>City</th><th>Source</th><th>Channel</th><th>Webinar</th><th>RM</th><th>Stage</th></tr></thead>
+      <thead><tr><th>Prospect</th><th>Mobile</th><th>City</th><th>Referral</th><th>Channel</th><th>Webinar</th><th>RM</th><th>Stage</th></tr></thead>
       <tbody>${rows.map(r=>{
         const meta = stateMeta('PPS', stateOf('PPS', r));
         const w = pjWebinars().find(x=>x.id===r.webinarId);
@@ -49772,7 +49848,7 @@ function viewPPS(){
           <td style="font-weight:700">${esc(pjName(r))}</td>
           <td style="color:var(--info)">${esc(r.mobile||'—')}</td>
           <td>${esc(r.city||'—')}</td>
-          <td>${esc(r.source||'—')}${r.masterSherpa? ' <span class="small-note" style="margin:0">· '+esc(r.masterSherpa)+'</span>':''}</td>
+          <td>${esc(pjReferralText(r))}</td>
           <td>${esc(r.commChannel||'—')}</td>
           <td>${esc(w ? pjWebinarLabel(w) : '—')}</td>
           <td style="color:var(--info)">${esc(teamName(r.assignedTo))}</td>
@@ -49783,6 +49859,9 @@ function viewPPS(){
 function ppsHeader(){
   return moduleHeader({title:'PPS — Partner Perspective System',
     subtitle: 'Registration to the ' + money(pjFee()) + ' fee. A prospect who pays moves to PMS.',
+    /* Template, Import and Export — the same importer every module uses,
+       so a sheet of prospects comes in mapped and checked. */
+    module: 'PPS',
     actions:[
       can('PPS','create') && {label:'New Webinar', icon:'+', onclick:'pjOpenWebinarForm()'},
       can('PPS','create') && {label:'New Prospect', icon:'+', kind:'primary', onclick:'pjOpenProspectForm()'},
@@ -49792,16 +49871,117 @@ function pjOpenProspectForm(id){
   const r = id ? pjProspects().find(x=>x.id===id) : {assignedTo: currentUser, branch: (me()||{}).branch || ''};
   if(!r) return;
   if(id && !mayEditRecord('PPS', id)) return;
-  openModal(id ? 'Edit Prospect' : 'New Prospect', ppsFields().map(f=>fieldInput(f, r[f.k])).join(''),
+  openModal(id ? 'Edit Prospect' : 'New Prospect', ppsFields().map(f=>fieldInput(f, r[f.k] !== undefined ? r[f.k]
+      : f.k==='referralName' ? (r.masterSherpa || '') : undefined)).join(''),
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSaveProspect('${esc(id||'')}')">Save</button>`);
   applyConditionalFields();
+  pjWireReferralLookup();
+}
+/* ---------- Referral codes ----------
+   Each Master Sherpa / Monk has a code of their own. Typing it on a
+   prospect fills in who they are; the name is the code's, not typed. */
+function pjReferrals(){ return Array.isArray(DB.partnerReferrals) ? DB.partnerReferrals : (DB.partnerReferrals = []); }
+function pjReferralByCode(code){
+  const want = String(code||'').trim().toUpperCase();
+  if(!want) return null;
+  return pjReferrals().find(x=>!x.deletedAt && String(x.code||'').trim().toUpperCase()===want) || null;
+}
+function pjReferralText(r){
+  if(!r) return '—';
+  if(r.referralCode) return r.referralCode + (r.referralName ? ' · ' + r.referralName : '');
+  if(r.source==='Master Sherpa') return 'Master Sherpa' + (r.masterSherpa ? ' · ' + r.masterSherpa : '');
+  return r.source || 'Paid Social Media';
+}
+function pjWireReferralLookup(){
+  const code = document.getElementById('f_referralCode');
+  const name = document.getElementById('f_referralName');
+  if(!code || !name) return;
+  name.readOnly = true;
+  const fill = ()=>{
+    const hit = pjReferralByCode(code.value);
+    name.value = hit ? (hit.name || '') : '';
+    name.placeholder = !String(code.value||'').trim() ? 'Filled in from the code'
+      : hit ? '' : 'No one holds this code — check it, or add it under Referral Codes';
+  };
+  code.addEventListener('input', fill);
+  code.addEventListener('change', fill);
+  if(String(code.value||'').trim()) fill();
+}
+/* Sets the referral name, the source and the Master Sherpa from the code,
+   so a form, an imported sheet and an edit all say the same thing.
+   Answers false for a code nobody holds. */
+function pjApplyReferral(r){
+  r.referralCode = String(r.referralCode||'').trim().toUpperCase();
+  if(!r.referralCode){
+    r.referralName = ''; r.source = 'Paid Social Media'; r.masterSherpa = '';
+    return true;
+  }
+  const hit = pjReferralByCode(r.referralCode);
+  if(!hit) return false;
+  r.referralName = hit.name || '';
+  r.source = 'Master Sherpa';
+  r.masterSherpa = hit.name || '';
+  return true;
+}
+function pjReferralsHtml(){
+  const list = pjReferrals().filter(x=>!x.deletedAt).slice().sort((a,b)=>String(a.code||'').localeCompare(String(b.code||'')));
+  const brought = code => pjProspects().filter(p=>!p.deletedAt && String(p.referralCode||'').toUpperCase()===String(code||'').toUpperCase());
+  return `<div class="row" style="justify-content:flex-end;margin-bottom:10px">
+      ${can('PPS','create') ? `<button class="btn sm primary" onclick="pjOpenReferralForm()">+ New Referral Code</button>` : ''}</div>
+    <div class="table-wrap"><table id="ppsRefTable">
+    <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Mobile</th><th>Email</th><th>Prospects</th><th>Fee Paid</th><th></th></tr></thead>
+    <tbody>${list.map(x=>{
+      const b = brought(x.code);
+      return `<tr class="row-clickable" onclick="pjOpenReferralForm('${esc(x.id)}')">
+        <td style="font-weight:700">${esc(x.code)}</td><td>${esc(x.name||'—')}</td><td>${esc(x.type||'—')}</td>
+        <td>${esc(x.mobile||'—')}</td><td>${esc(x.email||'—')}</td><td>${b.length}</td>
+        <td>${b.filter(p=>stateOf('PPS', p)==='converted').length}</td>
+        <td onclick="event.stopPropagation()">${can('PPS','delete')? `<button class="btn ghost sm" style="color:var(--danger)" onclick="pjDeleteReferral('${esc(x.id)}')">Delete</button>`:''}</td></tr>`;
+    }).join('') || `<tr><td colspan="8" class="empty">No referral codes yet. Add one for each Master Sherpa / Monk, and typing it on a prospect fills in their name.</td></tr>`}</tbody>
+  </table></div>`;
+}
+const PJ_REFERRAL_FIELDS = [
+  {k:'code', l:'Referral Code', t:'text', req:1, ph:'MS-RAVI01'},
+  {k:'name', l:'Name', t:'text', req:1, vk:'person'},
+  {k:'type', l:'Type', t:'select', opts:['Master Sherpa','Monk','Partner']},
+  {k:'mobile', l:'Mobile', t:'text', vk:'mobile', im:'numeric', maxLen:10},
+  {k:'email', l:'Email', t:'text', vk:'email'},
+];
+function pjOpenReferralForm(id){
+  const x = id ? pjReferrals().find(r=>r.id===id) : {type:'Master Sherpa'};
+  if(!x) return;
+  openModal(id ? 'Referral Code — ' + x.code : 'New Referral Code', PJ_REFERRAL_FIELDS.map(f=>fieldInput(f, x[f.k])).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button>${can('PPS', id?'edit':'create')? `<button class="btn primary" onclick="pjSaveReferral('${esc(id||'')}')">Save</button>`:''}`);
+}
+async function pjSaveReferral(id){
+  if(!can('PPS', id ? 'edit' : 'create')){ alert('You do not have permission.'); return; }
+  const data = readFields(PJ_REFERRAL_FIELDS);
+  if(!validateRequired(PJ_REFERRAL_FIELDS, data)) return;
+  data.code = String(data.code).trim().toUpperCase();
+  const clash = pjReferralByCode(data.code);
+  if(clash && clash.id !== id){ alert('The code ' + data.code + ' is already ' + (clash.name||'someone') + '’s.'); return; }
+  if(id) Object.assign(pjReferrals().find(r=>r.id===id), data, {updatedAt: new Date().toISOString()});
+  else pjReferrals().push(Object.assign({id: uid('REF'), createdAt: new Date().toISOString(), createdBy: currentUser}, data));
+  await save('partnerReferrals');
+  closeModal(); window._ppsTab = 'referrals'; navigate('pps');
+}
+async function pjDeleteReferral(id){
+  if(!can('PPS','delete')) return;
+  const x = pjReferrals().find(r=>r.id===id);
+  if(!x || !confirm('Delete the referral code ' + x.code + '? Prospects who came in on it keep the code and the name.')) return;
+  x.deletedAt = new Date().toISOString(); x.deletedBy = currentUser;
+  await save('partnerReferrals');
+  render();
 }
 async function pjSaveProspect(id){
   if(!can('PPS', id ? 'edit' : 'create')){ alert('You do not have permission.'); return; }
   const fields = ppsFields();
   const data = readFields(fields);
   if(!validateRequired(fields, data)) return;
-  if(data.source !== 'Master Sherpa') data.masterSherpa = '';
+  if(!pjApplyReferral(data)){
+    alert('No one holds the referral code ' + data.referralCode + '.\n\nCheck it with the Master Sherpa / Monk, or add it under PPS › Referral Codes first.');
+    return;
+  }
   if(id){
     const r = pjProspects().find(x=>x.id===id);
     if(!r) return;
@@ -49827,7 +50007,7 @@ function viewPPSDetail(id){
   const w = pjWebinars().find(x=>x.id===r.webinarId);
   const partner = r.partnerId ? pjPartners().find(p=>p.id===r.partnerId) : null;
   return profileShell({
-    title: pjName(r), subtitle: r.id + ' · ' + (r.source||'—'),
+    title: pjName(r), subtitle: r.id + ' · ' + pjReferralText(r),
     tabKey: '_ppsTabRec',
     actions: [
       {label:'Back', icon:'←', onclick:"navigate('pps')"},
@@ -49836,13 +50016,15 @@ function viewPPSDetail(id){
       can('PPS','delete') && {label:'Delete', icon:'🗑', onclick:`softDeleteRecord('PPS','${esc(id)}')`},
     ],
     progress: {title:'Prospect Progress', html: stepperHtml('PPS', r, ppsPathFor(r)) + blueprintWidget('PPS', r, {compact:1})},
-    tabs: [['overview','Overview'],['history','Stage History']],
+    tabs: [['overview','Overview'],['form','Registration Form'],['mail','Emails ('+pjComms('PPS', id).length+')'],['history','Stage History']],
     timeline: {module:'PPS', recordId:id, history:r.blueprintHistory, stateKey:'_ppsTlBack'},
-    body: tab => tab==='history' ? pjHistoryTable('PPS', r) : [
+    body: tab => tab==='history' ? pjHistoryTable('PPS', r) : tab==='mail' ? pjCommsTable('PPS', id)
+      : tab==='form' ? pjAckFormHtml(r) : [
       profCard('Prospect', [
         ['Name', esc(pjName(r))], ['Mobile', esc(r.mobile||'')], ['Email', esc(r.email||'')],
         ['City', esc(r.city||'')], ['Occupation', esc(r.occupation||'')],
-        ['Source', esc(r.source||'')], ['Master Sherpa', esc(r.masterSherpa||'')],
+        ['Referral Code', esc(r.referralCode||'')], ['Referral Name', esc(r.referralName || r.masterSherpa || '')],
+        ['Source', esc(r.source||'')],
         ['Type of Communication', esc(r.commChannel||'')], ['RM', esc(teamName(r.assignedTo))],
         ['Branch', esc(r.branch||'')], ['Registered', fmtDate(r.createdAt)], ['Notes', esc(r.notes||'')],
       ]),
@@ -49853,7 +50035,8 @@ function viewPPSDetail(id){
       ] : [['Session', 'Not registered against a webinar yet — pick one with Edit.']]),
       profCard('Fee', [
         ['Fee', money(pjFee())], ['Paid', r.feePaidOn ? fmtDate(r.feePaidOn) : 'Not yet'],
-        ['Amount', r.feeAmount ? money(r.feeAmount) : ''], ['Mode', esc(r.feeMode||'')], ['Reference', esc(r.feeRef||'')],
+        ['Amount', r.feeAmount ? money(r.feeAmount) : ''], ['Mode', esc(r.feeMode||'')], ['Reference / UTR', esc(r.feeRef||'')],
+        ['Verified', r.feeVerifiedAt ? fmtDate(r.feeVerifiedAt) + ' · ' + esc(teamName(r.feeVerifiedBy)) : (r.feeRef ? 'Pending' : '')],
         ['Partner Record', partner ? `<a href="javascript:void(0)" onclick="navigate('pms','${esc(partner.id)}')">${esc(partner.id)}</a>` : ''],
       ]),
     ].join(''),
@@ -49866,7 +50049,7 @@ function ppsPathFor(r){
   const been = id => ((r && r.blueprintHistory)||[]).some(h=>h.state===id) || stateOf('PPS', r)===id;
   const path = ['registered','acknowledged','remindersSent','sessionDay','paymentLinkSent'];
   if(been('rmFollowUp')) path.push('rmFollowUp');
-  if(stateOf('PPS', r)==='community') path.push('community'); else path.push('converted');
+  if(stateOf('PPS', r)==='community') path.push('community'); else path.push('paymentVerification', 'converted');
   return path;
 }
 function pjHistoryTable(module, r){
@@ -49887,21 +50070,42 @@ function pjOpenPaymentModal(module, id, tid){
     {k:'feeAmount', l:'Amount Paid', t:'number', req:1},
     {k:'feePaidOn', l:'Paid On', t:'date', req:1},
     {k:'feeMode', l:'Mode', t:'select', opts:['UPI','Bank Transfer','Card','Cash','Cheque'], req:1},
-    {k:'feeRef', l:'Reference / UTR', t:'text'},
+    {k:'feeRef', l:'Reference / UTR', t:'text', req:1, h:'The payment cannot be verified without it.'},
   ];
   openModal('Payment Done — ' + pjName(r),
-    `<p class="small-note" style="margin-top:0">The partner fee is ${money(pjFee())}. Saving moves ${esc(pjName(r))} to PMS as a partner.</p>`
+    `<p class="small-note" style="margin-top:0">The partner fee is ${money(pjFee())}. Saving sends the payment for verification; once it is verified, ${esc(pjName(r))} moves to PMS as a partner.</p>`
     + f.map(x=>fieldInput(x, r[x.k] || (x.k==='feeAmount' ? pjFee() : x.k==='feePaidOn' ? today : ''))).join(''),
-    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSavePayment('${esc(id)}','${esc(tid)}')">Save &amp; Move to PMS</button>`);
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSavePayment('${esc(id)}','${esc(tid)}')">Save &amp; Send for Verification</button>`);
 }
 async function pjSavePayment(id, tid){
   const r = pjProspects().find(x=>x.id===id);
   if(!r) return;
   const f = [{k:'feeAmount', l:'Amount Paid', req:1}, {k:'feePaidOn', l:'Paid On', t:'date', req:1},
-             {k:'feeMode', l:'Mode', req:1}, {k:'feeRef', l:'Reference / UTR'}];
+             {k:'feeMode', l:'Mode', req:1}, {k:'feeRef', l:'Reference / UTR', req:1}];
   const data = readFields(f);
+  data.feeRef = String(data.feeRef||'').trim();
   if(!validateRequired(f, data)) return;
-  Object.assign(r, data);
+  Object.assign(r, data, {feeVerifiedAt: '', feeVerifiedBy: ''});
+  closeModal();
+  await doTransition('PPS', id, tid);
+}
+/* Somebody has to look at the bank before a payment is believed. Only
+   then is the partner made, and the welcome letter sent. */
+function pjMayVerifyPayment(){ return isAdmin() || can('PPS','approve'); }
+function pjOpenVerifyPaymentModal(module, id, tid){
+  const r = pjProspects().find(x=>x.id===id);
+  if(!r) return;
+  if(!pjMayVerifyPayment()){ alert('Verifying a payment needs Approve permission on Partners.'); return; }
+  openModal('Verify Payment — ' + pjName(r), profCard('Payment', [
+      ['Amount', money(r.feeAmount)], ['Paid On', fmtDate(r.feePaidOn)||'—'], ['Mode', esc(r.feeMode||'—')],
+      ['Reference / UTR', '<b>' + esc(r.feeRef||'—') + '</b>']])
+    + `<p class="small-note">Check the reference against the bank statement. Verifying creates the partner in PMS and sends the payment acknowledgement and welcome email with their Freedom Gurukul access.</p>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjVerifyPayment('${esc(id)}','${esc(tid)}')">Payment Verified — Move to PMS</button>`);
+}
+async function pjVerifyPayment(id, tid){
+  const r = pjProspects().find(x=>x.id===id);
+  if(!r || !pjMayVerifyPayment()) return;
+  r.feeVerifiedAt = new Date().toISOString(); r.feeVerifiedBy = currentUser;
   closeModal();
   await doTransition('PPS', id, tid);
 }
@@ -49912,24 +50116,513 @@ function pjOpenExamDateModal(module, id, tid){
   openModal('Finalize the Exam Date', f.map(x=>fieldInput(x, r[x.k] || (x.k==='examName' ? 'NISM Series V-A' : ''))).join(''),
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSaveStageFields('PMS','${esc(id)}','${esc(tid)}','exam')">Save</button>`);
 }
+/* The ARN and the EUIN, whose they are, how long each is good for, and
+   the partner's logo if they have one. Saving pauses the partner until
+   somebody has checked the details; the validity is what the expiry
+   warnings read. */
+const PJ_ARN_FIELDS = [
+  {k:'arn', l:'ARN', t:'text', vk:'arn', req:1, ph:'ARN-123456'},
+  {k:'arnName', l:'ARN Name', t:'text', req:1, h:'The name the ARN is registered in.'},
+  {k:'arnValidFrom', l:'ARN Valid From', t:'date', req:1},
+  {k:'arnValidTo', l:'ARN Valid Until', t:'date', req:1},
+  {k:'euin', l:'EUIN', t:'text', vk:'euin', req:1, ph:'E123456'},
+  {k:'euinName', l:'EUIN Name', t:'text', req:1, h:'The name the EUIN is registered in.'},
+  {k:'euinValidFrom', l:'EUIN Valid From', t:'date', req:1},
+  {k:'euinValidTo', l:'EUIN Valid Until', t:'date', req:1},
+];
 function pjOpenArnModal(module, id, tid){
   const r = pjPartners().find(x=>x.id===id);
   if(!r) return;
-  const f = [{k:'arn', l:'ARN', t:'text', vk:'arn', req:1, ph:'ARN-123456'}, {k:'euin', l:'EUIN', t:'text', vk:'euin', req:1, ph:'E123456'}];
-  openModal('ARN / EUIN Registration', f.map(x=>fieldInput(x, r[x.k])).join(''),
-    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSaveStageFields('PMS','${esc(id)}','${esc(tid)}','arn')">Save</button>`);
+  openModal('ARN / EUIN Registration', `<div class="field-grid">${PJ_ARN_FIELDS.map(x=>fieldInput(x, r[x.k])).join('')}</div>
+      <div class="field"><label>Logo (optional)</label>
+        <input type="file" id="pjArnLogo" accept="image/png,image/jpeg,image/svg+xml,image/webp">
+        ${r.logo ? `<div style="margin-top:6px"><img src="${esc(r.logo)}" alt="logo" style="max-height:48px"></div>` : ''}
+        <div class="small-note" style="margin-top:4px">PNG, JPG or SVG, up to 300 KB.</div></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSaveStageFields('PMS','${esc(id)}','${esc(tid)}','arn')">Save &amp; Send for Verification</button>`);
+}
+function pjReadLogo(){
+  const el = document.getElementById('pjArnLogo');
+  const file = el && el.files && el.files[0];
+  if(!file) return Promise.resolve(null);
+  if(file.size > 300 * 1024) return Promise.reject(new Error('The logo is ' + Math.round(file.size/1024) + ' KB. Keep it under 300 KB.'));
+  return new Promise((resolve, reject)=>{
+    const fr = new FileReader();
+    fr.onload = ()=>resolve(String(fr.result||''));
+    fr.onerror = ()=>reject(new Error('The logo could not be read.'));
+    fr.readAsDataURL(file);
+  });
 }
 async function pjSaveStageFields(module, id, tid, which){
   const r = pjPartners().find(x=>x.id===id);
   if(!r) return;
   const f = which==='exam'
     ? [{k:'examDate', l:'Exam Date', t:'date', req:1}, {k:'examName', l:'Exam'}]
-    : [{k:'arn', l:'ARN', vk:'arn', req:1}, {k:'euin', l:'EUIN', vk:'euin', req:1}];
+    : PJ_ARN_FIELDS;
   const data = readFields(f);
   if(!validateRequired(f, data)) return;
+  if(which==='arn'){
+    for(const [a, b, what] of [['arnValidFrom','arnValidTo','ARN'], ['euinValidFrom','euinValidTo','EUIN']]){
+      if(String(data[b]) <= String(data[a])){ alert('The ' + what + ' has to be valid until a date after the one it is valid from.'); return; }
+    }
+    let logo = null;
+    try { logo = await pjReadLogo(); } catch(e){ alert(e.message); return; }
+    if(logo) data.logo = logo;
+    data.arnSubmittedAt = new Date().toISOString(); data.arnSubmittedBy = currentUser;
+  }
   Object.assign(r, data);
   closeModal();
   await doTransition(module, id, tid);
+}
+
+/* ---------- the letters and forms the steps carry ---------- */
+function pjConfig(){ return (DB.config && DB.config.partnerJourney) || {}; }
+function pjMaySetUp(){ return isAdmin() || canAdmin('manageModuleSettings'); }
+function pjComms(module, id){
+  return (DB.communications||[]).filter(c=>c && !c.deletedAt && c.module===module && c.recordId===id);
+}
+function pjCommsTable(module, id){
+  return profTable('Emails & Messages', ['When','Channel','What','To','Status'],
+    pjComms(module, id).slice().sort((a,b)=>String(b.at||'').localeCompare(String(a.at||''))).map(c=>`<tr>
+      <td>${esc(fmtDateTime(c.at))}</td><td>${esc(c.channel||'')}</td>
+      <td><b>${esc(c.label||'')}</b><div class="small-note" style="margin:0">${esc(c.subject||'')}</div></td>
+      <td>${esc(c.address||'—')}</td>
+      <td>${statusBadge(c.status)}${c.statusNote && c.status!=='Sent' ? `<div class="small-note" style="margin:0">${esc(c.statusNote)}</div>` : ''}</td></tr>`),
+    'Nothing has been sent yet.');
+}
+/* One letter from the Partner Journey, in the firm's wording from Setup ›
+   Email Templates, to the record's own address. What became of it is on
+   the record's Emails tab either way. */
+async function pjMail(module, r, key, vars, label){
+  const tpl = mailTemplateOf(key);
+  const all = Object.assign({Name: pjName(r), FirstName: r.firstName || '', RMName: teamName(r.assignedTo || currentUser),
+    FirmName: (DB.config.company||{}).name || ''}, vars || {});
+  return deliverMail({to: r.email || '', subject: fillTemplate(tpl.subject, all), body: fillTemplate(tpl.body, all),
+    module, recordId: r.id, label: label || key, template: key, signAs: r.assignedTo || currentUser});
+}
+function pjSaidMail(res, what){
+  if(res && res.status !== 'Sent') alert(what + ' was not sent: ' + (res.note || res.status) + '\n\nThe stage has moved, and the letter is on the record’s Emails tab.');
+}
+function pjMeetingLine(what, m){
+  if(!m || !m.date) return esc(what) + ' not booked yet.';
+  return esc(what) + ' on <b>' + esc(fmtDate(m.date)) + '</b>' + (m.time ? ' at ' + esc(m.time) : '')
+    + (m.link ? ' · <a href="' + esc(m.link) + '" target="_blank" rel="noopener">meeting link</a>' : '') + '.';
+}
+
+/* The acknowledgement carries the prospect's own registration form: what
+   they gave, for them to check, correct and add to. It is served on a
+   token of its own (partner-form.html), and what comes back is stored on
+   the prospect. */
+function pjNewFormToken(){
+  const a = new Uint8Array(18);
+  (window.crypto || window.msCrypto).getRandomValues(a);
+  return btoa(String.fromCharCode.apply(null, Array.from(a))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function pjFormUrl(r){ return location.origin + '/partner-form?pf=' + encodeURIComponent(r.ackFormToken || ''); }
+function pjFormStatusNote(r){
+  if(!r.ackFormToken) return '';
+  return `<div class="small-note" style="margin:6px 0 0">Registration form: ${r.ackFormSubmittedAt
+    ? '<span class="badge ok">Submitted ' + esc(fmtDateTime(r.ackFormSubmittedAt)) + '</span>'
+    : '<span class="badge warn">Sent, not back yet</span>'} · <a href="javascript:void(0)" onclick="window._ppsTabRec='form'; render()">see it</a></div>`;
+}
+function pjAckFormHtml(r){
+  const a = (r.ackForm && r.ackForm.answers) || null;
+  const labels = {firstName:'First Name', lastName:'Last Name', mobile:'Mobile', email:'Email', city:'City', occupation:'Occupation',
+    dob:'Date of Birth', qualification:'Highest Qualification', experience:'Experience in financial products', interest:'Why a partner'};
+  const head = r.ackFormToken
+    ? `<p class="small-note" style="margin-top:0">Their link: <a href="${esc(pjFormUrl(r))}" target="_blank" rel="noopener">${esc(pjFormUrl(r))}</a></p>`
+    : `<p class="small-note" style="margin-top:0">The form goes out with the acknowledgement email.</p>`;
+  if(!a) return profCard('Registration Form', [['Status', r.ackFormToken ? 'Sent, not back yet' : 'Not sent yet']]) + head;
+  return profCard('Registration Form — submitted ' + fmtDateTime(r.ackFormSubmittedAt),
+    Object.keys(labels).map(k=>[labels[k], esc(k==='dob' ? (fmtDate(a[k])||'') : (a[k]||''))])) + head;
+}
+function pjOpenAckModal(module, id, tid){
+  const r = pjProspects().find(x=>x.id===id);
+  if(!r) return;
+  const w = pjWebinars().find(x=>x.id===r.webinarId);
+  openModal('Acknowledgement Email — ' + pjName(r),
+    `<p class="small-note" style="margin-top:0">Sends the acknowledgement to <b>${esc(r.email||'no address on file')}</b> with their own registration form, filled in with what they gave. What they send back is stored on the prospect.</p>`
+    + (w ? '' : `<p class="small-note" style="color:var(--warn)">They are not registered against a webinar yet, so the letter will not name the session.</p>`),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSendAck('${esc(id)}','${esc(tid)}')">Send &amp; Mark Acknowledged</button>`);
+}
+async function pjSendAck(id, tid){
+  const r = pjProspects().find(x=>x.id===id);
+  if(!r) return;
+  if(!r.email){ alert('There is no email address on this prospect. Add one with Edit first.'); return; }
+  if(!r.ackFormToken){ r.ackFormToken = pjNewFormToken(); r.ackFormSentAt = new Date().toISOString(); }
+  await save('partnerProspects');
+  const w = pjWebinars().find(x=>x.id===r.webinarId) || {};
+  closeModal();
+  const res = await pjMail('PPS', r, 'pjAck', {Webinar: w.title || 'our session', Date: fmtDate(w.date) || '', Time: w.time || '',
+    FormLink: pjFormUrl(r)}, 'Acknowledgement & registration form');
+  await doTransition('PPS', id, tid);
+  pjSaidMail(res, 'The acknowledgement');
+}
+/* The reminders and the joining link go out by themselves; these buttons
+   send one now, to this prospect, and move the stage. */
+function pjOpenSessionMailModal(module, id, tid){
+  const r = pjProspects().find(x=>x.id===id);
+  if(!r) return;
+  const w = pjWebinars().find(x=>x.id===r.webinarId);
+  const link = tid==='sessionDayT';
+  openModal((link ? 'Joining Link' : 'Session Reminder') + ' — ' + pjName(r),
+    `<p class="small-note" style="margin-top:0">${link ? 'Sends the session’s joining link' : 'Sends a reminder of the session'} to <b>${esc(r.email||'no address on file')}</b> now.
+      ${w ? '' : 'They are not registered against a webinar yet.'} These go out by themselves too — ${esc(pjReminderPlanText())}, and the joining link 24 hours before.</p>`
+    + (link && w && !w.joiningLink ? `<p class="small-note" style="color:var(--warn)">The webinar has no joining link yet. Add it on the webinar first.</p>` : ''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn" onclick="closeModal(); doTransition('PPS','${esc(id)}','${esc(tid)}')">Move Without Sending</button>
+     <button class="btn primary" onclick="pjSendSessionMail('${esc(id)}','${esc(tid)}')">Send &amp; Move</button>`);
+}
+async function pjSendSessionMail(id, tid){
+  const r = pjProspects().find(x=>x.id===id);
+  if(!r) return;
+  const w = pjWebinars().find(x=>x.id===r.webinarId) || {};
+  const link = tid==='sessionDayT';
+  const days = w.date ? Math.max(0, Math.round((new Date(w.date + 'T00:00:00') - new Date(new Date().toISOString().slice(0,10) + 'T00:00:00')) / 86400000)) : 0;
+  closeModal();
+  const res = await pjMail('PPS', r, link ? 'pjJoiningLink' : 'pjReminder', {Webinar: w.title || 'our session', Date: fmtDate(w.date) || '',
+    Time: w.time || '', JoiningLink: w.joiningLink || '', DaysToGo: days === 1 ? '1 day' : days + ' days'},
+    link ? 'Joining link' : 'Session reminder');
+  // Sent by hand, so the automatic one does not follow it.
+  if(link && w.id){ r.pjSent = Object.assign({}, r.pjSent, {['link:' + w.id]: new Date().toISOString()}); }
+  await doTransition('PPS', id, tid);
+  pjSaidMail(res, link ? 'The joining link' : 'The reminder');
+}
+function pjOpenPaymentLinkModal(module, id, tid){
+  const r = pjProspects().find(x=>x.id===id);
+  if(!r) return;
+  const w = pjWebinars().find(x=>x.id===r.webinarId) || {};
+  const f = [{k:'paymentLink', l:'Payment Link', t:'text', req:1, h:'Taken from the webinar. Change it here for this prospect only.'}];
+  openModal('Attended — Send Payment Link to ' + pjName(r),
+    `<p class="small-note" style="margin-top:0">Emails the ${esc(money(pjFee()))} payment link to <b>${esc(r.email||'no address on file')}</b>.</p>`
+    + f.map(x=>fieldInput(x, r.paymentLink || pjConfig().paymentLink || w.paymentLink || '')).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSendPaymentLink('${esc(id)}','${esc(tid)}')">Send Payment Link</button>`);
+}
+async function pjSendPaymentLink(id, tid){
+  const r = pjProspects().find(x=>x.id===id);
+  if(!r) return;
+  const f = [{k:'paymentLink', l:'Payment Link', req:1}];
+  const data = readFields(f);
+  if(!validateRequired(f, data)) return;
+  const w = pjWebinars().find(x=>x.id===r.webinarId) || {};
+  r.paymentLink = data.paymentLink;
+  closeModal();
+  const res = await pjMail('PPS', r, 'pjPaymentLink', {Webinar: w.title || 'our session', Fee: money(pjFee()), PaymentLink: data.paymentLink},
+    'Payment link');
+  r.paymentLinkSentAt = new Date().toISOString();
+  await doTransition('PPS', id, tid);
+  pjSaidMail(res, 'The payment link');
+}
+
+/* A meeting booked and written to the partner: the one-to-one after
+   Freedom Gurukul access, the onboarding meeting with its video, and the
+   onboarding one-to-one. */
+const PJ_MEETING_STEPS = {
+  ownerFlxT:    {title:'One-to-One Discussion', store:'oneToOneMeeting', key:'pjOneToOne', label:'One-to-one invitation',
+                 host: r=>teamName(r.assignedTo || currentUser), intro:'Lead owner Freedom LifeX: the internal RM holds the one-to-one.'},
+  ownerSherpaT: {title:'One-to-One Discussion', store:'oneToOneMeeting', key:'pjOneToOne', label:'One-to-one invitation',
+                 host: r=>r.masterSherpa || r.referralName || 'your Master Sherpa / Monk', intro:'Lead owner Master Sherpa / Monk: they hold the one-to-one.'},
+  arnVerifiedT: {title:'Onboarding Video & Meeting', store:'onboardingMeeting', key:'pjOnboardingVideo', label:'Onboarding video & meeting', video:true,
+                 intro:'The ARN / EUIN details are correct. This sends the onboarding video and books the onboarding meeting.'},
+  oneToOneOnbT: {title:'Onboarding One-to-One', store:'onboardingOneToOne', key:'pjOnboardingOneToOne', label:'Onboarding one-to-one',
+                 intro:'The partner asked for a one-to-one.'},
+};
+function pjMeetingFields(step){
+  return (step.video ? [{k:'videoLink', l:'Onboarding Video Link', t:'text', req:1}] : []).concat([
+    {k:'mtDate', l:'Meeting Date', t:'date', req:1},
+    {k:'mtTime', l:'Time', t:'time', req:1},
+    {k:'mtLink', l:'Meeting Link', t:'text', req:1, ph:'https://…'},
+  ]);
+}
+function pjOpenMeetingModal(module, id, tid){
+  const r = pjPartners().find(x=>x.id===id);
+  const step = PJ_MEETING_STEPS[tid];
+  if(!r || !step) return;
+  if(tid==='arnVerifiedT' && !(isAdmin() || can('PMS','approve'))){ alert('Verifying ARN / EUIN details needs Approve permission on Partners.'); return; }
+  const was = r[step.store] || {};
+  const vals = {videoLink: was.videoLink || pjConfig().onboardingVideoLink || '', mtDate: was.date || '', mtTime: was.time || '', mtLink: was.link || ''};
+  openModal(step.title + ' — ' + pjName(r),
+    `<p class="small-note" style="margin-top:0">${esc(step.intro)} The invitation goes to <b>${esc(r.email||'no address on file')}</b>.</p>`
+    + pjMeetingFields(step).map(f=>fieldInput(f, vals[f.k])).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSaveMeeting('${esc(id)}','${esc(tid)}')">Send Invitation &amp; Continue</button>`);
+}
+async function pjSaveMeeting(id, tid){
+  const r = pjPartners().find(x=>x.id===id);
+  const step = PJ_MEETING_STEPS[tid];
+  if(!r || !step) return;
+  const f = pjMeetingFields(step);
+  const d = readFields(f);
+  if(!validateRequired(f, d)) return;
+  r[step.store] = {date: d.mtDate, time: d.mtTime, link: d.mtLink, videoLink: d.videoLink || '', at: new Date().toISOString(), by: currentUser};
+  if(tid==='arnVerifiedT'){ r.arnVerifiedAt = new Date().toISOString(); r.arnVerifiedBy = currentUser; }
+  closeModal();
+  const res = await pjMail('PMS', r, step.key, {Date: fmtDate(d.mtDate), Time: d.mtTime, MeetingLink: d.mtLink,
+    VideoLink: d.videoLink || '', Host: step.host ? step.host(r) : ''}, step.label);
+  await doTransition('PMS', id, tid);
+  pjSaidMail(res, 'The invitation');
+}
+
+/* The admission forms. Not an ARN holder fills Form 1, an ARN holder
+   Form 2; saving books the Partner Induction and writes to them about it. */
+const PJ_ADMISSION_FORMS = {
+  arnNoT: {n:1, title:'Freedom Gurukul Admission Form 1', fields:[
+    {k:'afDob', l:'Date of Birth', t:'date', req:1},
+    {k:'afPan', l:'PAN', t:'text', vk:'pan', req:1, ph:'ABCDE1234F'},
+    {k:'afAddress', l:'Address', t:'textarea'},
+    {k:'afQualification', l:'Highest Qualification', t:'text'},
+    {k:'afOccupation', l:'Current Occupation', t:'text'},
+    {k:'afExperience', l:'Experience in financial products', t:'select', opts:['None','Less than 1 year','1–3 years','More than 3 years']},
+    {k:'afWhy', l:'Why do they want to become a partner?', t:'textarea'},
+  ]},
+  arnYesT: {n:2, title:'Freedom Gurukul Admission Form 2', fields:[
+    {k:'afDob', l:'Date of Birth', t:'date', req:1},
+    {k:'afPan', l:'PAN', t:'text', vk:'pan', req:1, ph:'ABCDE1234F'},
+    {k:'afAddress', l:'Address', t:'textarea'},
+    {k:'afArn', l:'Existing ARN', t:'text', vk:'arn', req:1, ph:'ARN-123456'},
+    {k:'afEuin', l:'Existing EUIN', t:'text', vk:'euin', ph:'E123456'},
+    {k:'afYears', l:'Years as a distributor', t:'number'},
+    {k:'afAum', l:'AUM managed today', t:'number'},
+    {k:'afAmcs', l:'AMCs empanelled with', t:'text'},
+  ]},
+};
+const PJ_INDUCTION_FIELDS = [
+  {k:'mtDate', l:'Partner Induction — Date', t:'date', req:1},
+  {k:'mtTime', l:'Time', t:'time', req:1},
+  {k:'mtLink', l:'Meeting Link', t:'text', req:1, ph:'https://…'},
+];
+function pjOpenAdmissionModal(module, id, tid){
+  const r = pjPartners().find(x=>x.id===id);
+  const form = PJ_ADMISSION_FORMS[tid];
+  if(!r || !form) return;
+  const was = r['admissionForm' + form.n] || {};
+  const m = r.inductionMeeting || {};
+  openModal(form.title + ' — ' + pjName(r),
+    `<div class="field-grid">${form.fields.map(f=>fieldInput(f, was[f.k] !== undefined ? was[f.k] : (f.k==='afArn' ? r.arn : f.k==='afEuin' ? r.euin : undefined))).join('')}</div>
+     <div class="section-title">Partner Induction</div>
+     <p class="small-note" style="margin-top:0">Saving the form emails <b>${esc(r.email||'no address on file')}</b> the induction’s date and meeting link.</p>
+     <div class="field-grid">${PJ_INDUCTION_FIELDS.map(f=>fieldInput(f, {mtDate:m.date, mtTime:m.time, mtLink:m.link}[f.k])).join('')}</div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSaveAdmission('${esc(id)}','${esc(tid)}')">Save Form &amp; Send Induction</button>`);
+}
+async function pjSaveAdmission(id, tid){
+  const r = pjPartners().find(x=>x.id===id);
+  const form = PJ_ADMISSION_FORMS[tid];
+  if(!r || !form) return;
+  const answers = readFields(form.fields);
+  if(!validateRequired(form.fields, answers)) return;
+  const m = readFields(PJ_INDUCTION_FIELDS);
+  if(!validateRequired(PJ_INDUCTION_FIELDS, m)) return;
+  r['admissionForm' + form.n] = Object.assign({}, answers, {savedAt: new Date().toISOString(), savedBy: currentUser});
+  if(form.n === 2){ if(answers.afArn) r.arn = answers.afArn; if(answers.afEuin) r.euin = answers.afEuin; }
+  r.inductionMeeting = {date: m.mtDate, time: m.mtTime, link: m.mtLink, at: new Date().toISOString(), by: currentUser};
+  closeModal();
+  const res = await pjMail('PMS', r, 'pjInduction', {Form: form.title, Date: fmtDate(m.mtDate), Time: m.mtTime, MeetingLink: m.mtLink},
+    'Partner induction invitation');
+  await doTransition('PMS', id, tid);
+  pjSaidMail(res, 'The induction invitation');
+}
+
+/* A meeting that has happened is written up before the step moves on:
+   the Partner Induction, and the doubt solving session. */
+const PJ_MOM_STEPS = {
+  inductionT:    {meeting:'Partner Induction', store:'inductionMeeting'},
+  inductionArnT: {meeting:'Partner Induction', store:'inductionMeeting'},
+  doubtT:        {meeting:'Doubt Solving Session', store:'doubtMeeting'},
+};
+const PJ_MOM_FIELDS = [
+  {k:'momDate', l:'Held On', t:'date', req:1},
+  {k:'momAttendees', l:'Attended By', t:'text'},
+  {k:'momMinutes', l:'Minutes of Meeting', t:'textarea', req:1},
+  {k:'momActions', l:'Action Points', t:'textarea'},
+  {k:'momNext', l:'Next Step', t:'text'},
+];
+function pjOpenMomModal(module, id, tid){
+  const r = pjPartners().find(x=>x.id===id);
+  const step = PJ_MOM_STEPS[tid];
+  if(!r || !step) return;
+  const m = r[step.store] || {};
+  openModal('Minutes — ' + step.meeting + ' · ' + pjName(r), PJ_MOM_FIELDS.map(f=>fieldInput(f,
+      f.k==='momDate' ? (m.date || new Date().toISOString().slice(0,10)) : f.k==='momAttendees' ? pjName(r) + ', ' + teamName(r.assignedTo || currentUser) : '')).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSaveMom('${esc(id)}','${esc(tid)}')">Save Minutes &amp; Continue</button>`);
+}
+async function pjSaveMom(id, tid){
+  const r = pjPartners().find(x=>x.id===id);
+  const step = PJ_MOM_STEPS[tid];
+  if(!r || !step) return;
+  const d = readFields(PJ_MOM_FIELDS);
+  if(!validateRequired(PJ_MOM_FIELDS, d)) return;
+  r.pjMeetings = (r.pjMeetings||[]).concat([{id: uid('PMM'), meeting: step.meeting, date: d.momDate, attendees: d.momAttendees,
+    minutes: d.momMinutes, actions: d.momActions, next: d.momNext, at: new Date().toISOString(), by: currentUser}]);
+  closeModal();
+  await save('pjPartners');
+  await doTransition('PMS', id, tid);
+}
+
+/* Unlocking the courses: which ones, recorded on the partner and written
+   to them. Freedom Gurukul is not connected to BOSS, so the access
+   itself is given there; this is the record of it and the letter. */
+function pjCourseList(){
+  return String(pjConfig().courses || 'Module 1, Module 2, Module 3, NISM, IRDA').split(',').map(x=>x.trim()).filter(Boolean);
+}
+function pjOpenCoursesModal(module, id, tid){
+  const r = pjPartners().find(x=>x.id===id);
+  if(!r) return;
+  const had = new Set(r.coursesUnlocked || pjCourseList());
+  openModal('Unlock FG Courses — ' + pjName(r),
+    `<p class="small-note" style="margin-top:0">Tick the courses to open for them. They are told which, at <b>${esc(r.email||'no address on file')}</b>.</p>`
+    + pjCourseList().map((c, i)=>`<label style="display:flex;gap:8px;align-items:center;margin:6px 0;font-size:14px">
+        <input type="checkbox" class="pj-course" id="pjc_${i}" value="${esc(c)}"${had.has(c)?' checked':''}> ${esc(c)}</label>`).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSaveCourses('${esc(id)}','${esc(tid)}')">Unlock &amp; Notify</button>`);
+}
+async function pjSaveCourses(id, tid){
+  const r = pjPartners().find(x=>x.id===id);
+  if(!r) return;
+  const picked = Array.from(document.querySelectorAll('.pj-course')).filter(x=>x.checked).map(x=>x.value);
+  if(!picked.length){ alert('Tick at least one course to unlock.'); return; }
+  r.coursesUnlocked = picked; r.coursesUnlockedAt = new Date().toISOString(); r.coursesUnlockedBy = currentUser;
+  closeModal();
+  const res = await pjMail('PMS', r, 'pjCourses', {Courses: picked.map(c=>'• ' + c).join('\n'), GurukulLink: pjConfig().gurukulLink || ''},
+    'FG courses unlocked');
+  await doTransition('PMS', id, tid);
+  pjSaidMail(res, 'The courses letter');
+}
+
+/* NISM registration: the details, kept on the partner and mailed back to
+   them with the doubt solving session's date and link. */
+const PJ_NISM_FIELDS = [
+  {k:'nismRegNo', l:'NISM Registration No.', t:'text', req:1},
+  {k:'nismSeries', l:'Exam', t:'text', req:1, ph:'NISM Series V-A'},
+  {k:'nismRegDate', l:'Registered On', t:'date', req:1},
+  {k:'nismCentre', l:'Exam Centre / Mode', t:'text', ph:'Online, or the centre and city'},
+];
+function pjOpenNismModal(module, id, tid){
+  const r = pjPartners().find(x=>x.id===id);
+  if(!r) return;
+  const n = r.nism || {}, m = r.doubtMeeting || {};
+  const vals = Object.assign({nismSeries: 'NISM Series V-A', nismRegDate: new Date().toISOString().slice(0,10)}, n);
+  openModal('NISM Registration — ' + pjName(r),
+    `<div class="field-grid">${PJ_NISM_FIELDS.map(f=>fieldInput(f, vals[f.k])).join('')}</div>
+     <div class="section-title">Doubt Solving Session</div>
+     <p class="small-note" style="margin-top:0">The details above and this session go to <b>${esc(r.email||'no address on file')}</b>.</p>
+     <div class="field-grid">${PJ_INDUCTION_FIELDS.map(f=>fieldInput(Object.assign({}, f, f.k==='mtDate' ? {l:'Doubt Session — Date'} : {}),
+        {mtDate:m.date, mtTime:m.time, mtLink:m.link}[f.k])).join('')}</div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSaveNism('${esc(id)}','${esc(tid)}')">Save &amp; Send</button>`);
+}
+async function pjSaveNism(id, tid){
+  const r = pjPartners().find(x=>x.id===id);
+  if(!r) return;
+  const d = readFields(PJ_NISM_FIELDS);
+  if(!validateRequired(PJ_NISM_FIELDS, d)) return;
+  const m = readFields(PJ_INDUCTION_FIELDS);
+  if(!validateRequired(PJ_INDUCTION_FIELDS, m)) return;
+  r.nism = Object.assign({}, d, {at: new Date().toISOString(), by: currentUser});
+  r.examName = r.examName || d.nismSeries;
+  r.doubtMeeting = {date: m.mtDate, time: m.mtTime, link: m.mtLink, at: new Date().toISOString(), by: currentUser};
+  closeModal();
+  const res = await pjMail('PMS', r, 'pjNismDoubt', {NismRegNo: d.nismRegNo, NismSeries: d.nismSeries, NismDate: fmtDate(d.nismRegDate),
+    NismCentre: d.nismCentre || '—', Date: fmtDate(m.mtDate), Time: m.mtTime, MeetingLink: m.mtLink}, 'NISM registration & doubt session');
+  await doTransition('PMS', id, tid);
+  pjSaidMail(res, 'The NISM letter');
+}
+
+/* ARN / EUIN expiry. From the months set in PPS › Settings (six unless
+   changed) before either runs out, an onboarded partner shows here and in
+   their RM's bell — the server writes the bell line and the partner's
+   letter once a week. */
+function pjExpiring(p){
+  if(!p || p.deletedAt || stateOf('PMS', p)!=='onboarded') return [];
+  const months = Number(pjConfig().expiryMonths) || 6;
+  const today = new Date().toISOString().slice(0,10);
+  return [['ARN', p.arn, p.arnValidTo], ['EUIN', p.euin, p.euinValidTo]].filter(([, , until])=>{
+    if(!/^\d{4}-\d{2}-\d{2}/.test(String(until||''))) return false;
+    const from = new Date(until + 'T00:00:00Z'); from.setUTCMonth(from.getUTCMonth() - months);
+    return today >= from.toISOString().slice(0,10);
+  }).map(([what, num, until])=>({what, num, until,
+    days: Math.ceil((new Date(until + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000)}));
+}
+function pjExpiryBadges(p){
+  return pjExpiring(p).map(x=>`<span class="badge ${x.days <= 30 ? 'danger' : 'warn'}">${esc(x.what)} ${x.days <= 0 ? 'expired ' + esc(fmtDate(x.until)) : 'expires in ' + x.days + 'd'}</span>`).join(' ');
+}
+
+/* ---------- PPS › Settings ---------- */
+const PJ_SETTINGS_FIELDS = [
+  {k:'fee', l:'Partner Fee', t:'number', h:'What a prospect pays to become a partner.'},
+  {k:'paymentLink', l:'Default Payment Link', t:'text', h:'Used when a webinar has no payment link of its own.'},
+  {k:'gurukulLink', l:'Freedom Gurukul Link', t:'text', h:'Goes out in the welcome email and the courses letter.'},
+  {k:'gurukulNote', l:'Freedom Gurukul access note', t:'textarea', h:'How they sign in — goes out in the welcome email under the link.'},
+  {k:'courses', l:'FG Courses', t:'text', h:'Comma separated — the list offered on Unlock FG Courses.'},
+  {k:'onboardingVideoLink', l:'Onboarding Video Link', t:'text'},
+  {k:'autoReminders', l:'Send session reminders automatically', t:'select', opts:['Yes','No']},
+  {k:'reminderDaysBefore', l:'Start reminding (days before the session)', t:'number'},
+  {k:'reminderTimes', l:'Reminder times each day', t:'text', ph:'10:00, 18:00', h:'Indian time, comma separated. Two times means twice a day.'},
+  {k:'linkHoursBefore', l:'Send the joining link (hours before)', t:'number'},
+  {k:'expiryAlerts', l:'Warn about ARN / EUIN expiry', t:'select', opts:['Yes','No']},
+  {k:'expiryMonths', l:'Start warning (months before expiry)', t:'number'},
+  {k:'expiryEmailPartner', l:'Also email the partner each week', t:'select', opts:['Yes','No']},
+];
+const PJ_SETTINGS_DEFAULTS = {fee: 1999, courses: 'Module 1, Module 2, Module 3, NISM, IRDA', autoReminders: 'Yes',
+  reminderDaysBefore: 2, reminderTimes: '10:00, 18:00', linkHoursBefore: 24, expiryAlerts: 'Yes', expiryMonths: 6, expiryEmailPartner: 'Yes'};
+function pjReminderPlanText(){
+  const c = Object.assign({}, PJ_SETTINGS_DEFAULTS, pjConfig());
+  const times = String(c.reminderTimes||'').split(',').map(x=>x.trim()).filter(Boolean);
+  return 'on each of the ' + (Number(c.reminderDaysBefore)||0) + ' days before it, ' + (times.length===2 ? 'twice a day' : times.length + ' time(s) a day')
+    + ' (' + times.join(', ') + ')';
+}
+function pjSettingsHtml(){
+  const c = Object.assign({}, PJ_SETTINGS_DEFAULTS, pjConfig());
+  return `<div class="card" style="padding:16px">
+    <div class="field-grid">${PJ_SETTINGS_FIELDS.map(f=>fieldInput(f, c[f.k])).join('')}</div>
+    <div class="row" style="gap:8px;margin-top:10px">
+      <button class="btn primary" onclick="pjSaveSettings()">Save Settings</button>
+      <button class="btn" onclick="pjRunNow()">Run Reminders &amp; Expiry Checks Now</button>
+    </div>
+    <p class="small-note">The reminders, the joining link and the expiry warnings are sent by the server every few minutes, whether or not anyone has BOSS open. Their wording is in Setup › Email Templates, under Partner Journey.</p>
+  </div>`;
+}
+async function pjSaveSettings(){
+  if(!pjMaySetUp()){ alert('You do not have permission to change these settings.'); return; }
+  const d = readFields(PJ_SETTINGS_FIELDS);
+  const bad = String(d.reminderTimes||'').split(',').map(x=>x.trim()).filter(Boolean).find(x=>!/^([01]?\d|2[0-3]):[0-5]\d$/.test(x));
+  if(bad){ alert('"' + bad + '" is not a time. Write them as 10:00, 18:00.'); return; }
+  DB.config.partnerJourney = Object.assign({}, pjConfig(), d);
+  await save('config');
+  alert('Saved.');
+  render();
+}
+async function pjRunNow(){
+  try{
+    const res = await fetch('/api/partner-journey/run', {method:'POST', headers: Object.assign({'Content-Type':'application/json'}, apiHeaders()), body:'{}'});
+    const r = await res.json();
+    const rem = r.reminders || {}, exp = r.expiry || {};
+    alert('Reminders: ' + (rem.letters||0) + ' letter(s), ' + (rem.sent||0) + ' delivered.\nExpiry warnings: ' + (exp.notified||0) + '.');
+  }catch(e){ alert('Could not reach the server: ' + e.message); }
+}
+
+/* Workflows saved from Stage Management before these steps existed are
+   given them, so a firm that edited the spine keeps its edits and gets the
+   new stages too. */
+async function migratePartnerJourneyBlueprints(){
+  const saved = (DB.config && DB.config.blueprints) || {};
+  let touched = false;
+  ['PPS','PMS'].forEach(m=>{
+    const bp = saved[m];
+    if(!bp || !Array.isArray(bp.states) || !Array.isArray(bp.transitions)) return;
+    const code = BLUEPRINTS[m];
+    code.states.forEach((st, i)=>{
+      if(bp.states.some(x=>x.id===st.id)) return;
+      const before = code.states[i+1] && bp.states.findIndex(x=>x.id===code.states[i+1].id);
+      if(before >= 0) bp.states.splice(before, 0, JSON.parse(JSON.stringify(st))); else bp.states.push(JSON.parse(JSON.stringify(st)));
+      touched = true;
+    });
+    code.transitions.forEach(t=>{
+      const had = bp.transitions.find(x=>x.id===t.id);
+      if(!had){ bp.transitions.push(JSON.parse(JSON.stringify(t))); touched = true; return; }
+      // The steps whose road changed are put on the new road.
+      if(['paidT','paidAfterCallT','onboardedT'].includes(t.id) && (had.from!==t.from || had.to!==t.to)){
+        had.from = t.from; had.to = t.to; had.label = t.label; touched = true;
+      }
+      if((t.id==='arnNoT' || t.id==='arnYesT') && /Admission Form/.test(had.label||'')){ had.label = t.label; touched = true; }
+      if(t.id==='remindersT' && /3, 2 & 1/.test(had.label||'')){ had.label = t.label; touched = true; }
+    });
+  });
+  if(touched) await save('config');
 }
 
 /* What a stage does besides moving. Paying the fee creates the partner in
@@ -49939,9 +50632,10 @@ async function pjSideEffect(module, record, t){
   if(module==='PPS' && t.to==='converted' && !record.partnerId){
     const p = {id: uid('PMS'), createdAt: new Date().toISOString(), createdBy: currentUser,
       prospectId: record.id};
-    ['firstName','lastName','mobile','email','city','occupation','source','masterSherpa','assignedTo','branch',
-     'webinarId','feeAmount','feePaidOn','feeMode','feeRef'].forEach(k=>{ if(record[k]!==undefined) p[k] = record[k]; });
-    p.leadOwner = record.source==='Master Sherpa' ? 'Master Sherpa / Monk' : 'Freedom LifeX';
+    ['firstName','lastName','mobile','email','city','occupation','source','masterSherpa','referralCode','referralName',
+     'assignedTo','branch','webinarId','feeAmount','feePaidOn','feeMode','feeRef','feeVerifiedAt','feeVerifiedBy']
+      .forEach(k=>{ if(record[k]!==undefined) p[k] = record[k]; });
+    p.leadOwner = (record.referralCode || record.source==='Master Sherpa') ? 'Master Sherpa / Monk' : 'Freedom LifeX';
     p.ppsHistory = (record.blueprintHistory||[]).slice();
     initState('PMS', p);
     pjPartners().push(p);
@@ -49950,6 +50644,14 @@ async function pjSideEffect(module, record, t){
     await save('pjPartners');
     await save('partnerProspects');
     await logAudit('PMS', p.id, 'Create', [{field:'from PPS', oldValue:record.id, newValue:pjName(p)}]);
+    /* The payment is verified, so it is acknowledged — and the welcome
+       carries their Freedom Gurukul access. */
+    const cfgPj = pjConfig();
+    const sent = await pjMail('PMS', p, 'pjWelcome', {Fee: money(p.feeAmount || pjFee()), PaidOn: fmtDate(p.feePaidOn) || '',
+      Reference: p.feeRef || '', GurukulLink: cfgPj.gurukulLink || '(your RM will send it)', GurukulNote: cfgPj.gurukulNote || ''},
+      'Payment acknowledgement & welcome');
+    p.welcomeMailAt = new Date().toISOString(); p.welcomeMailStatus = sent.status;
+    await save('pjPartners');
     window._afterTransitionNav = ['pms', p.id];
     return;
   }
@@ -49963,7 +50665,7 @@ async function pjSideEffect(module, record, t){
         exam: record.examName || '', result: t.id==='examPassT' ? 'Pass' : 'Fail', at: new Date().toISOString()}]);
       record.examResult = t.id==='examPassT' ? 'Pass' : 'Fail';
     }
-    if(t.id==='onboardedT') record.onboardedAt = new Date().toISOString();
+    if(t.id==='onboardedT' || t.id==='onboardedAfterMeetT') record.onboardedAt = new Date().toISOString();
     await save('pjPartners');
   }
 }
@@ -49975,12 +50677,30 @@ function pjStagePanelHtml(module, r, cur){
     if(cur==='registered') return note(r.commChannel==='WhatsApp'
       ? 'Registered through WhatsApp: add them to the WhatsApp community, where the daily images and articles go.'
       : r.commChannel==='Email' ? 'Registered through email: send the acknowledgement email.' : 'Set the type of communication with Edit, and the stage offers the matching step.');
+    const w = pjWebinars().find(x=>x.id===r.webinarId);
+    const auto = pjConfig().autoReminders !== 'No';
+    if((cur==='acknowledged' || cur==='remindersSent') && w && auto) return note('Reminders go out by themselves before “' + esc(w.title||'the session')
+      + '” on ' + esc(fmtDate(w.date)||'—') + ' — ' + esc(pjReminderPlanText()) + ' — and the joining link 24 hours before it. The stage moves as they go; the button sends one now.')
+      + pjFormStatusNote(r);
+    if(cur==='acknowledged' || cur==='remindersSent') return (w ? '' : note('Register them against a webinar with Edit, and the reminders go out by themselves.')) + pjFormStatusNote(r);
     if(cur==='sessionDay') return note('After the LIVE session: did they attend? Those who did get the payment link and the expression of interest form at the session end.');
     if(cur==='paymentLinkSent') return note('Payment link sent for the ' + esc(money(pjFee())) + ' fee. If it is not paid, the RM calls to follow up.');
+    if(cur==='paymentVerification') return note('Payment of ' + esc(money(r.feeAmount)) + ' by ' + esc(r.feeMode||'—') + ', reference <b>' + esc(r.feeRef||'—')
+      + '</b>. Check it against the bank before verifying' + (pjMayVerifyPayment() ? '.' : ' — that needs Approve permission on Partners.'));
     if(cur==='community') return note('Kept warm in the marketing and education community. Invite them to the next session when one is planned.');
     return '';
   }
   if(module==='PMS'){
+    if(cur==='welcomed') return note(r.welcomeMailAt ? 'Payment acknowledgement &amp; welcome email with Freedom Gurukul access: ' + esc(r.welcomeMailStatus||'') + ' on ' + esc(fmtDateTime(r.welcomeMailAt)) + '.'
+      : 'Give them their Freedom Gurukul access.');
+    if(cur==='gurukulAccess') return note('Who is the lead owner? Choosing books the one-to-one discussion and emails them the meeting link.');
+    if(cur==='admissionForm1' || cur==='admissionForm2') return note(pjMeetingLine('Partner Induction', r.inductionMeeting) + ' When it is done, write its minutes.');
+    if(cur==='nismRegistration') return note(pjMeetingLine('Doubt solving session', r.doubtMeeting) + ' When it is held, write its minutes.');
+    if(cur==='arnVerification') return note('ARN ' + esc(r.arn||'—') + ' (' + esc(r.arnName||'') + ') valid ' + esc(fmtDate(r.arnValidFrom)||'—') + ' to ' + esc(fmtDate(r.arnValidTo)||'—')
+      + ' · EUIN ' + esc(r.euin||'—') + ' (' + esc(r.euinName||'') + ') valid ' + esc(fmtDate(r.euinValidFrom)||'—') + ' to ' + esc(fmtDate(r.euinValidTo)||'—')
+      + '. Paused until somebody checks them.');
+    if(cur==='onboardingVideo') return note(pjMeetingLine('Onboarding meeting', r.onboardingMeeting) + ' If they want a one-to-one as well, book it; otherwise mark them onboarded.');
+    if(cur==='onboardingOneToOne') return note(pjMeetingLine('Onboarding one-to-one', r.onboardingOneToOne));
     if(cur==='oneToOne') return note('One-to-one by ' + esc(r.leadOwner==='Master Sherpa / Monk'
       ? 'the Master Sherpa / Monk' + (r.masterSherpa? ' (' + r.masterSherpa + ')' : '') : 'the internal RM')
       + '. Is the participant an ARN holder?');
@@ -50013,7 +50733,7 @@ const PJ_WEBINAR_FIELDS = [
   {k:'targetAudience', l:'Target Audience', t:'text'},
   {k:'socialMedia', l:'Social Media', t:'text', ph:'Facebook, Instagram, YouTube…'},
   {k:'date', l:'Webinar Date', t:'date', req:1},
-  {k:'time', l:'Time', t:'text', ph:'7:00 PM'},
+  {k:'time', l:'Time', t:'text', ph:'7:00 PM or 19:00', h:'Indian time. The reminders and the 24-hour joining link are timed from it.'},
   {k:'campaignStart', l:'Campaign Start Date', t:'date'},
   {k:'registrationLink', l:'Registration Link', t:'text'},
   {k:'creativesApproved', l:'Creatives Approved', t:'select', opts:['Yes','No']},
@@ -50080,9 +50800,11 @@ async function pjDeleteWebinar(id){
 function pmsPathFor(r){
   const arn = r.arnHolder==='Yes' || stateOf('PMS', r)==='admissionForm2' || stateOf('PMS', r)==='inductionArn'
     || ((r.blueprintHistory||[]).some(h=>h.state==='admissionForm2'));
+  const been = id => stateOf('PMS', r)===id || ((r.blueprintHistory||[]).some(h=>h.state===id));
+  const tail = ['arnRegistration','arnVerification','onboardingVideo'].concat(been('onboardingOneToOne') ? ['onboardingOneToOne'] : [], ['onboarded']);
   return arn
-    ? ['welcomed','gurukulAccess','oneToOne','admissionForm2','inductionArn','arnRegistration','onboarded']
-    : ['welcomed','gurukulAccess','oneToOne','admissionForm1','induction','coursesUnlocked','nismRegistration','doubtSession','examDate','arnRegistration','onboarded'];
+    ? ['welcomed','gurukulAccess','oneToOne','admissionForm2','inductionArn'].concat(tail)
+    : ['welcomed','gurukulAccess','oneToOne','admissionForm1','induction','coursesUnlocked','nismRegistration','doubtSession','examDate'].concat(tail);
 }
 function viewPMS(){
   if(!can('PMS','view')) return permissionWall('Partners');
@@ -50091,11 +50813,15 @@ function viewPMS(){
     owner: r=>r.leadOwner, city: r=>r.city, name: r=>pjName(r), mobile: r=>r.mobile, arn: r=>r.arn};
   const inWindow = applyTimeline('PMS', all);
   let rows = applyStageFilter('PMS', inWindow).filter(r=>matchesSearch(window._pmsSearch, r, searchMap));
+  const expiring = all.filter(r=>pjExpiring(r).length);
+  if(window._pmsExpiring) rows = rows.filter(r=>pjExpiring(r).length);
   rows = rows.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
   return `${moduleHeader({title:'PMS — Partner Managing System',
       subtitle: all.length + ' partner(s) · from the fee to the onboarding journey', actions:[]})}
     ${timelineBarHtml('PMS')}
-    ${kpiCards(dashboardStageCards('PMS', inWindow))}
+    ${kpiCards(dashboardStageCards('PMS', inWindow).concat([{label:'ARN / EUIN Expiring', value: expiring.length,
+      tone: expiring.length ? 'danger' : 'ok', selected: !!window._pmsExpiring,
+      onclick: 'window._pmsExpiring=' + (window._pmsExpiring ? 'false' : 'true') + '; render()'}]))}
     ${stageFilterNote('PMS')}
     ${listSearchRow({stateKey:'_pmsSearch', live:true})}
     <div class="table-wrap"><table id="pmsTable">
@@ -50105,7 +50831,7 @@ function viewPMS(){
         return `<tr class="row-clickable" onclick="navigate('pms','${esc(r.id)}')">
           <td style="font-weight:700">${esc(pjName(r))}</td><td style="color:var(--info)">${esc(r.mobile||'—')}</td>
           <td>${esc(r.leadOwner||'—')}</td><td>${esc(r.arnHolder||'—')}</td>
-          <td>${esc([r.arn, r.euin].filter(Boolean).join(' / ')||'—')}</td>
+          <td>${esc([r.arn, r.euin].filter(Boolean).join(' / ')||'—')} ${pjExpiryBadges(r)}</td>
           <td>${esc(fmtDate(r.feePaidOn)||'—')}</td><td style="color:var(--info)">${esc(teamName(r.assignedTo))}</td>
           <td><span class="badge ${meta.color||'info'}">${esc(meta.label||'')}</span></td></tr>`;
       }).join('') || `<tr><td colspan="8" class="empty">No partners yet. A prospect arrives here when their fee is paid in PPS.</td></tr>`}</tbody>
@@ -50148,7 +50874,8 @@ function viewPMSDetail(id){
       can('PMS','delete') && {label:'Delete', icon:'🗑', onclick:`softDeleteRecord('PMS','${esc(id)}')`},
     ],
     progress: {title:'Partner Progress', html: stepperHtml('PMS', r, pmsPathFor(r)) + blueprintWidget('PMS', r, {compact:1})},
-    tabs: [['overview','Overview'],['exams','Exams'],['queries','Queries ('+qs.length+')'],['payouts','Payouts ('+pays.length+')'],['history','Stage History']],
+    tabs: [['overview','Overview'],['forms','Forms & Meetings'],['exams','Exams'],['mail','Emails ('+pjComms('PMS', id).length+')'],
+      ['queries','Queries ('+qs.length+')'],['payouts','Payouts ('+pays.length+')'],['history','Stage History']],
     timeline: {module:'PMS', recordId:id, history:(r.ppsHistory||[]).map(h=>Object.assign({}, h, {state: stateLabel('PPS', h.state), via: h.via ? 'PPS · ' + h.via : 'PPS'})).concat(r.blueprintHistory||[]), stateKey:'_pmsTlBack'},
     body: tab => {
       if(tab==='history') return pjHistoryTable('PMS', r);
@@ -50158,6 +50885,8 @@ function viewPMSDetail(id){
         'No exam attempts recorded yet.');
       if(tab==='queries') return pjQueryTableHtml(qs);
       if(tab==='payouts') return pjPayoutTableHtml(pays);
+      if(tab==='mail') return pjCommsTable('PMS', id);
+      if(tab==='forms') return pjPartnerFormsHtml(r);
       return [
         profCard('Partner', [
           ['Name', esc(pjName(r))], ['Mobile', esc(r.mobile||'')], ['Email', esc(r.email||'')], ['City', esc(r.city||'')],
@@ -50165,13 +50894,52 @@ function viewPMSDetail(id){
           ['ARN Holder', esc(r.arnHolder||'')], ['ARN', esc(r.arn||'')], ['EUIN', esc(r.euin||'')],
           ['Payout Rate', r.payoutRatePct ? esc(String(r.payoutRatePct)) + '%' : ''],
           ['RM', esc(teamName(r.assignedTo))], ['Branch', esc(r.branch||'')],
+          ['Referral', esc(r.referralCode ? r.referralCode + ' · ' + (r.referralName||'') : '')],
           ['Onboarded', r.onboardedAt ? fmtDate(r.onboardedAt) : ''], ['Notes', esc(r.notes||'')],
         ]),
+        (r.arnName || r.arnValidTo || r.logo) ? profCard('ARN / EUIN', [
+          ['Logo', r.logo ? `<img src="${esc(r.logo)}" alt="logo" style="max-height:44px">` : ''],
+          ['ARN', esc(r.arn||'')], ['ARN Name', esc(r.arnName||'')],
+          ['ARN Valid', esc((fmtDate(r.arnValidFrom)||'—') + ' to ' + (fmtDate(r.arnValidTo)||'—'))],
+          ['EUIN', esc(r.euin||'')], ['EUIN Name', esc(r.euinName||'')],
+          ['EUIN Valid', esc((fmtDate(r.euinValidFrom)||'—') + ' to ' + (fmtDate(r.euinValidTo)||'—'))],
+          ['Verified', r.arnVerifiedAt ? fmtDate(r.arnVerifiedAt) + ' · ' + esc(teamName(r.arnVerifiedBy)) : 'Not yet'],
+          ['Expiry', pjExpiryBadges(r) || (r.arnValidTo ? 'Not due' : '')],
+        ]) : '',
         profCard('Fee', [['Amount', r.feeAmount ? money(r.feeAmount) : ''], ['Paid On', fmtDate(r.feePaidOn)||''],
-          ['Mode', esc(r.feeMode||'')], ['Reference', esc(r.feeRef||'')]]),
+          ['Mode', esc(r.feeMode||'')], ['Reference / UTR', esc(r.feeRef||'')],
+          ['Welcome Email', r.welcomeMailAt ? esc(r.welcomeMailStatus||'') + ' · ' + fmtDateTime(r.welcomeMailAt) : '']]),
       ].join('');
     },
   });
+}
+
+/* Everything the partner's steps have written down, in the order they
+   happened: the admission form, the meetings booked and their minutes,
+   the courses opened and the NISM registration. */
+function pjPartnerFormsHtml(r){
+  const out = [];
+  [1, 2].forEach(n=>{
+    const a = r['admissionForm' + n];
+    if(!a) return;
+    const form = Object.values(PJ_ADMISSION_FORMS).find(f=>f.n===n);
+    out.push(profCard(form.title + ' — ' + fmtDateTime(a.savedAt), form.fields.map(f=>[f.l,
+      esc(f.t==='date' ? (fmtDate(a[f.k])||'') : f.t==='number' && a[f.k] ? String(a[f.k]) : (a[f.k]||''))])));
+  });
+  const meets = [['One-to-One Discussion', r.oneToOneMeeting], ['Partner Induction', r.inductionMeeting],
+    ['Doubt Solving Session', r.doubtMeeting], ['Onboarding Meeting', r.onboardingMeeting], ['Onboarding One-to-One', r.onboardingOneToOne]]
+    .filter(([, m])=>m && m.date);
+  if(meets.length) out.push(profTable('Meetings Booked', ['Meeting','Date','Time','Link'], meets.map(([what, m])=>`<tr>
+    <td>${esc(what)}</td><td>${esc(fmtDate(m.date))}</td><td>${esc(m.time||'')}</td>
+    <td>${m.link ? `<a href="${esc(m.link)}" target="_blank" rel="noopener">${esc(m.link)}</a>` : ''}${m.videoLink ? `<div class="small-note" style="margin:0">Video: <a href="${esc(m.videoLink)}" target="_blank" rel="noopener">${esc(m.videoLink)}</a></div>` : ''}</td></tr>`), ''));
+  if((r.pjMeetings||[]).length) out.push(profTable('Minutes of Meeting', ['Meeting','Held On','Attended By','Minutes','Action Points','Next'],
+    r.pjMeetings.slice().reverse().map(m=>`<tr><td>${esc(m.meeting)}</td><td>${esc(fmtDate(m.date))}</td><td>${esc(m.attendees||'')}</td>
+      <td style="white-space:pre-wrap">${esc(m.minutes||'')}</td><td style="white-space:pre-wrap">${esc(m.actions||'')}</td><td>${esc(m.next||'')}</td></tr>`), ''));
+  if(r.coursesUnlocked) out.push(profCard('FG Courses Unlocked — ' + fmtDateTime(r.coursesUnlockedAt), [['Courses', esc(r.coursesUnlocked.join(', '))],
+    ['By', esc(teamName(r.coursesUnlockedBy))]]));
+  if(r.nism) out.push(profCard('NISM Registration', [['Registration No.', esc(r.nism.nismRegNo||'')], ['Exam', esc(r.nism.nismSeries||'')],
+    ['Registered On', esc(fmtDate(r.nism.nismRegDate)||'')], ['Centre / Mode', esc(r.nism.nismCentre||'')]]));
+  return out.join('') || '<div class="empty">Nothing yet — the forms and meetings appear here as the partner\u2019s steps are done.</div>';
 }
 
 /* ---------- PQS — Partner Query System ---------- */
@@ -65250,6 +66018,7 @@ const EXPORT_SOURCES = [
   {id:'platformHoldings',label:'Platform AUM snapshots', module:'Transactions', owner:r=>r.importedBy, branch:r=>r.branch},
   {id:'platformSips',   label:'Platform SIP registrations', module:'Transactions', owner:r=>r.importedBy, branch:r=>r.branch},
   {id:'partners',       label:'Partners',               module:'Partners', owner:r=>r.createdBy, branch:r=>r.branch},
+  {id:'partnerProspects',label:'Partner prospects (PPS)', module:'PPS',   owner:r=>r.assignedTo, branch:r=>r.branch},
   {id:'campaigns',      label:'Campaigns',              module:'Campaigns', owner:r=>r.createdBy, branch:r=>r.branch},
   {id:'projects',       label:'Projects',               module:'Projects', owner:r=>r.owner,  branch:r=>r.branch},
   {id:'team',           label:'Team members',           module:'Team',  owner:r=>r.id,         branch:r=>r.branch,
@@ -65461,6 +66230,7 @@ const IMP_BACK_PREFIX = {
   transactions:'TXN', platformHoldings:'PHD', platformSips:'PSP', partners:'PTR',
   campaigns:'CMP', projects:'PRJ', team:'USR', amcs:'AMC', schemes:'SCH',
   commissionRates:'CMR', communications:'COM', importBatches:'IMB', auditLog:'AUD',
+  partnerProspects:'PPS',
 };
 /* The fields that are a link to another record. Checked so a preview can
    say "this row names a client that is not here" before it is written,
@@ -65747,6 +66517,9 @@ async function impBackWrite(plans, undo){
 function impNormaliseRow(srcId, rec, row){
   if(!rec || !row) return;
   if(srcId === 'schemes') impSchemeAmc(rec);
+  // A prospect's sheet names a referral code; who holds it is read from
+  // the codes on file, exactly as the form does it.
+  if(srcId === 'partnerProspects') pjApplyReferral(rec);
   if(srcId !== 'team') return;
   if(row.departments !== undefined) setUserDepartments(rec, multiPickValues(row.departments));
   if(row.managerIds !== undefined) setUserManagers(rec, multiPickValues(row.managerIds));
@@ -72332,6 +73105,42 @@ const MAIL_TEMPLATE_DEFS = [
   {group:'Queries', key:'queryReply', label:'Ticket — reply to the client',
    when:'Sent from a ticket when a reply is sent to the client rather than kept as an internal note.',
    vars:['Name','Ref','Subject','Reply','RMName','FirmName']},
+  {group:'Partner Journey', key:'pjAck', label:'PPS — acknowledgement, with the registration form',
+   when:'Sent from Acknowledgement Email Sent. {FormLink} is the prospect\u2019s own registration form, filled in with what they gave; what they send back lands on their record.',
+   vars:['Name','Webinar','Date','Time','FormLink','RMName','FirmName']},
+  {group:'Partner Journey', key:'pjReminder', label:'PPS — session reminder (automatic)',
+   when:'Sent by the server to every prospect registered for a webinar, on the days before it, at the times set in PPS › Settings. Twice a day for two days unless the firm changes it.',
+   vars:['Name','Webinar','Date','Time','DaysToGo','FirmName']},
+  {group:'Partner Journey', key:'pjJoiningLink', label:'PPS — joining link, 24 hours before (automatic)',
+   when:'Sent by the server to every prospect registered for a webinar, 24 hours before it starts, with the webinar\u2019s joining link.',
+   vars:['Name','Webinar','Date','Time','JoiningLink','FirmName']},
+  {group:'Partner Journey', key:'pjPaymentLink', label:'PPS — payment link, after the session',
+   when:'Sent from Attended \u2014 Send Payment Link.',
+   vars:['Name','Webinar','Fee','PaymentLink','RMName','FirmName']},
+  {group:'Partner Journey', key:'pjWelcome', label:'PMS — payment acknowledgement & welcome, with Freedom Gurukul access',
+   when:'Sent the moment a payment is verified and the partner is created in PMS.',
+   vars:['Name','Fee','PaidOn','Reference','GurukulLink','GurukulNote','RMName','FirmName']},
+  {group:'Partner Journey', key:'pjOneToOne', label:'PMS — one-to-one discussion invitation',
+   when:'Sent from Freedom Gurukul Access, when the lead owner is chosen and the one-to-one is booked.',
+   vars:['Name','Host','Date','Time','MeetingLink','FirmName']},
+  {group:'Partner Journey', key:'pjInduction', label:'PMS — partner induction invitation',
+   when:'Sent once Admission Form 1 or 2 is saved, with the induction meeting\u2019s date and link.',
+   vars:['Name','Form','Date','Time','MeetingLink','FirmName']},
+  {group:'Partner Journey', key:'pjCourses', label:'PMS — Freedom Gurukul courses unlocked',
+   when:'Sent from Unlock FG Courses, naming the courses that were opened.',
+   vars:['Name','Courses','GurukulLink','FirmName']},
+  {group:'Partner Journey', key:'pjNismDoubt', label:'PMS — NISM registration & doubt solving session',
+   when:'Sent from NISM Registration Done. It repeats the registration details and invites the partner to the doubt solving session.',
+   vars:['Name','NismRegNo','NismSeries','NismDate','NismCentre','Date','Time','MeetingLink','FirmName']},
+  {group:'Partner Journey', key:'pjOnboardingVideo', label:'PMS — onboarding video & meeting',
+   when:'Sent once the ARN / EUIN details have been verified.',
+   vars:['Name','VideoLink','Date','Time','MeetingLink','FirmName']},
+  {group:'Partner Journey', key:'pjOnboardingOneToOne', label:'PMS — onboarding one-to-one',
+   when:'Sent when the partner asks for a one-to-one after the onboarding video.',
+   vars:['Name','Date','Time','MeetingLink','FirmName']},
+  {group:'Partner Journey', key:'pjArnExpiry', label:'PMS — ARN / EUIN expiry reminder (automatic)',
+   when:'Sent by the server once a week from six months before an onboarded partner\u2019s ARN or EUIN runs out (PPS › Settings).',
+   vars:['Name','What','Number','ExpiresOn','DaysLeft','FirmName']},
 ];
 /* ADDING A KEY IS NOT ENOUGH WHEN THE WORDING ITSELF CHANGES.
 
@@ -72367,6 +73176,10 @@ const MAIL_WORDING_REVISIONS = [
   // 3 — the ISEQ asked for on its own now reads as it does when it rides with
   //     the Input Form: same explanation, same sign-off, one source of truth.
   {n:3, keys:['iseqSend']},
+  // 4 — the Partner Journey's letters, written into the database so the
+  //     server, which sends three of them on its own, reads the firm's copy.
+  {n:4, keys:['pjAck','pjReminder','pjJoiningLink','pjPaymentLink','pjWelcome','pjOneToOne','pjInduction',
+    'pjCourses','pjNismDoubt','pjOnboardingVideo','pjOnboardingOneToOne','pjArnExpiry']},
 ];
 const MAIL_WORDING_REVISION = MAIL_WORDING_REVISIONS[MAIL_WORDING_REVISIONS.length-1].n;
 async function migrateMailTemplateWording(){

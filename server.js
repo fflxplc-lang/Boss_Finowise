@@ -1035,6 +1035,9 @@ app.get('/logout',  (req, res) => { res.clearCookie(COOKIE, { path: '/' }); res.
 // open too, and simply hands out nothing when nobody is signed in.
 function isClientLinkRequest(req) {
   if (req.path.startsWith('/api/public/')) return true;
+  // A partner prospect's registration form. The page holds nothing; what it
+  // shows comes from /api/public/pps-form, on the token in its address.
+  if (req.method === 'GET' && req.path === '/partner-form' && req.query.pf) return true;
   if (req.path === '/config.js') return true;
   if (req.method !== 'GET' || req.path.startsWith('/api/')) return false;
   const token = req.query.doc || req.query.support;
@@ -3119,6 +3122,14 @@ payoutRouter.catch((err) => console.error('Payout module failed to load:', err))
 app.use('/api/payout', checkApiKey, (req, res, next) => {
   payoutRouter.then((router) => router(req, res, next),
     () => res.status(503).json({ error: 'The payout module did not start. See the server log.' }));
+});
+
+/* THE PARTNER JOURNEY — the session reminders, the ARN / EUIN expiry
+   warnings and the prospect's own form, which all have to work with no
+   CRM tab open. See partner-journey.js. */
+require('./partner-journey').install({ app, storeList, storeValue, putList, writeToDisk, sendMail, checkApiKey });
+app.get('/partner-form', (req, res) => {
+  res.set('Cache-Control', 'no-store').sendFile(path.join(__dirname, 'public', 'partner-form.html'));
 });
 
 app.use(express.static(path.join(__dirname, 'public')));

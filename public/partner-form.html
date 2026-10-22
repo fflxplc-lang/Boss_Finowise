@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Partner Registration</title>
+<style>
+  :root{ --ink:#1d2b36; --muted:#6b7a86; --line:#dfe5ea; --brand:#17485a; --bg:#f6f4f0; --ok:#1f7a4d; --danger:#b42318; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap{ max-width:640px; margin:0 auto; padding:24px 16px 48px; }
+  .card{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:22px; }
+  h1{ font-size:22px; margin:0 0 4px; }
+  .sub{ color:var(--muted); font-size:14px; margin:0 0 18px; }
+  .field{ margin-bottom:14px; }
+  label{ display:block; font-size:13px; font-weight:600; margin-bottom:5px; }
+  .req{ color:var(--danger); }
+  input,select,textarea{ width:100%; font:inherit; padding:10px 12px; border:1px solid var(--line); border-radius:9px; background:#fff; }
+  textarea{ min-height:90px; resize:vertical; }
+  button{ font:inherit; font-weight:700; color:#fff; background:var(--brand); border:0; border-radius:999px; padding:11px 22px; cursor:pointer; }
+  button[disabled]{ opacity:.6; cursor:default; }
+  .msg{ padding:12px 14px; border-radius:9px; font-size:14px; margin-bottom:14px; }
+  .msg.ok{ background:#e7f5ee; color:var(--ok); }
+  .msg.err{ background:#fdecea; color:var(--danger); }
+</style>
+</head>
+<body>
+<div class="wrap"><div class="card" id="card"><p class="sub">Loading your form…</p></div></div>
+<script>
+(function(){
+  var token = new URLSearchParams(location.search).get('pf') || '';
+  var card = document.getElementById('card');
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function control(f, v){
+    var id = 'f_' + f.k;
+    if(f.t === 'textarea') return '<textarea id="' + id + '">' + esc(v) + '</textarea>';
+    if(f.t === 'select') return '<select id="' + id + '"><option value="">Select…</option>'
+      + f.opts.map(function(o){ return '<option' + (o === v ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select>';
+    var type = f.t === 'date' ? 'date' : f.vk === 'email' ? 'email' : f.vk === 'mobile' ? 'tel' : 'text';
+    return '<input type="' + type + '" id="' + id + '" value="' + esc(v) + '"' + (f.vk === 'mobile' ? ' inputmode="numeric" maxlength="10"' : '') + '>';
+  }
+  function draw(d, note){
+    var w = d.webinar;
+    card.innerHTML = '<h1>Partner Registration</h1>'
+      + '<p class="sub">' + esc(d.firm) + (w ? ' · ' + esc(w.title) + ' · ' + esc(w.date) + (w.time ? ' at ' + esc(w.time) : '') : '') + '</p>'
+      + (note || '')
+      + '<p class="sub" style="margin-top:-6px">This is what you gave us when you registered. Please check it, correct anything that is wrong, fill in the rest and send it back.</p>'
+      + d.fields.map(function(f){
+          return '<div class="field"><label>' + esc(f.l) + (f.req ? ' <span class="req">*</span>' : '') + '</label>' + control(f, d.values[f.k] || '') + '</div>';
+        }).join('')
+      + '<div id="err"></div><button id="send">' + (d.submittedAt ? 'Send again' : 'Submit') + '</button>';
+    document.getElementById('send').onclick = function(){ submit(d); };
+  }
+  function submit(d){
+    var answers = {};
+    d.fields.forEach(function(f){ var el = document.getElementById('f_' + f.k); answers[f.k] = el ? el.value : ''; });
+    var btn = document.getElementById('send'); btn.disabled = true;
+    fetch('/api/public/pps-form?token=' + encodeURIComponent(token), {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({answers: answers})})
+      .then(function(r){ return r.json(); })
+      .then(function(r){
+        if(!r.ok){ btn.disabled = false; document.getElementById('err').innerHTML = '<div class="msg err">' + esc(r.message || 'That did not go through.') + '</div>'; return; }
+        card.innerHTML = '<h1>Thank you</h1><div class="msg ok">Your details have reached us. We look forward to seeing you at the session.</div>';
+      })
+      .catch(function(){ btn.disabled = false; document.getElementById('err').innerHTML = '<div class="msg err">Could not reach us. Please try again.</div>'; });
+  }
+  fetch('/api/public/pps-form?token=' + encodeURIComponent(token))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d.ok){ card.innerHTML = '<h1>Partner Registration</h1><div class="msg err">' + esc(d.message || 'This link is not valid any more.') + '</div>'; return; }
+      draw(d, d.submittedAt ? '<div class="msg ok">You have already sent this form. You can change anything and send it again.</div>' : '');
+    })
+    .catch(function(){ card.innerHTML = '<div class="msg err">Could not load the form. Please try again.</div>'; });
+})();
+</script>
+</body>
+</html>

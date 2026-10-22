@@ -70,6 +70,7 @@ worker(){
         CRM_USERS_DB="$D/store/users.db" \
         CRM_PIN_LOOKUP_URL="http://127.0.0.1:$(($PORT + 252))/pincode/" \
         CRM_IFSC_LOOKUP_URL="http://127.0.0.1:$(($PORT + 252))/ifsc/" \
+        CRM_PJ_AUTORUN=off \
         exec node server.js ) > "$D/server.log" 2>&1 &
     SRV=$!
     for _ in $(seq 1 150); do
