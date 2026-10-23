@@ -50065,6 +50065,7 @@ async function pjSaveProspect(id){
     Object.assign(r, data);
     await save('partnerProspects');
     await logAudit('PPS', id, 'Edit', diffFields(before, r, fields));
+    pjNudgeAutomation();
     closeModal(); navigate('pps', id);
     return;
   }
@@ -50073,6 +50074,7 @@ async function pjSaveProspect(id){
   pjProspects().push(r);
   await save('partnerProspects');
   await logAudit('PPS', r.id, 'Create', [{field:'name', oldValue:'', newValue:pjName(r)}]);
+  pjNudgeAutomation();
   closeModal(); navigate('pps', r.id);
 }
 function viewPPSDetail(id){
@@ -50429,6 +50431,7 @@ async function pjSendAck(id, tid){
   const res = await pjMail('PPS', r, 'pjAck', {Webinar: w.title || 'our session', Date: fmtDate(w.date) || '', Time: w.time || '',
     FormLink: pjFormUrl(r)}, 'Acknowledgement & registration form');
   await doTransition('PPS', id, tid);
+  pjNudgeAutomation();
   pjSaidMail(res, 'The acknowledgement');
 }
 /* The reminders and the joining link go out by themselves; these buttons
@@ -50763,6 +50766,12 @@ async function pjSaveSettings(){
   alert('Saved.');
   render();
 }
+/* After a change that may make a reminder or the joining link due now,
+   the server runs its clock straight away rather than at its next
+   five-minute turn; the stage then moves while the page is open. */
+function pjNudgeAutomation(){
+  try{ fetch('/api/partner-journey/run', {method:'POST', headers: Object.assign({'Content-Type':'application/json'}, apiHeaders()), body: JSON.stringify({nudge: true})}).catch(()=>{}); }catch(e){}
+}
 async function pjRunNow(){
   try{
     const res = await fetch('/api/partner-journey/run', {method:'POST', headers: Object.assign({'Content-Type':'application/json'}, apiHeaders()), body:'{}'});
@@ -50967,6 +50976,7 @@ async function pjSaveWebinar(id){
     pjWebinars().push(Object.assign({id: uid('WEB'), createdAt: new Date().toISOString(), createdBy: currentUser}, data));
   }
   await save('partnerWebinars');
+  pjNudgeAutomation();
   closeModal(); window._ppsTab = 'webinars'; navigate('pps');
 }
 async function pjDeleteWebinar(id){
