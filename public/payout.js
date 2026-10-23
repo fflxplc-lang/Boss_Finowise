@@ -93,6 +93,7 @@ function pyMe(){
    account. Until it has answered, a BOSS admin in the browser is taken at
    their word so the rail does not flicker, and the server still refuses
    anything they should not have. */
+function pyMentor(){ const m = PY.me; return !!(m && !m.error && m.role === 'mentor'); }
 function pyAdmin(){
   const m = PY.me;
   if(m && !m.error) return m.role === 'admin';
@@ -782,7 +783,7 @@ function pyHierarchy(){
   return pyCard('Payout team', `<div class="small-note" style="margin-top:0">Everyone here signs in with their BOSS account. Add a person with the same email they use for BOSS; a BOSS admin is always a payout admin.</div>`
     + (!d ? pyLoadingHtml(url) : pyTable([{t: 'Person'}, {t: 'Role & level'}, {t: 'Reports to'}, {t: 'Mapped clients', c: 1}, {t: 'Access'}, {t: '', r: 1}],
       d.map((u, i)=>`<tr><td><b>${esc(u.name)}</b><div class="small-note" style="margin:0">${esc(u.email || '')}${u.code ? ' · ' + esc(u.code) : ''}</div></td>
-        <td>${pyBadge(String(u.role).toUpperCase(), u.role === 'admin' ? 'info' : 'muted')} <b>L${u.level}</b> <span class="small-note">${esc(u.level_name || PY_LEVELS[u.level] || '')}</span>
+        <td>${pyBadge(String(u.role).toUpperCase(), u.role === 'admin' ? 'info' : u.role === 'mentor' ? 'ok' : 'muted')} <b>L${u.level}</b> <span class="small-note">${esc(u.level_name || PY_LEVELS[u.level] || '')}</span>
           ${(u.extra_levels || []).length ? `<div class="small-note" style="margin:0">+ ${u.extra_levels.map(l=>'L' + l).join(', ')}</div>` : ''}
           ${u.active === 0 ? ' ' + pyBadge('disabled', 'danger') : ''}</td>
         <td class="small">${esc(u.parent_name || '—')}</td>
@@ -823,7 +824,8 @@ function pyUserDraw(){
     <div class="field-grid">
       ${pyField('Reports to', pySelect('pyU_parent_id', f.parent_id || '', [['', '— Nobody (top) —']].concat(PY.s._userAll.map(x=>[x.id, x.name + ' · L' + x.level])), ''))}
       ${pyField('Sharing % rate', inp('sharing_pct', '', '', 'type="number" step="0.01"'))}
-      ${pyField('Role', pySelect('pyU_role', f.role, [['ops', 'Ops / RM — own data'], ['partner', 'Partner — own data'], ['admin', 'Admin — full access']], ''))}
+      ${pyField('Role', pySelect('pyU_role', f.role, [['ops', 'Ops / RM — own data'], ['partner', 'Partner — own data'], ['mentor', 'Mentor — own data + direct reports'], ['admin', 'Admin — full access']], ''),
+        'A mentor sees their own data and that of everyone who reports to them directly.')}
       ${pyField('Primary level', pySelect('pyU_level', f.level, [1, 2, 3, 4, 5, 6, 7].map(l=>[l, 'Level ' + l + ' · ' + PY_LEVELS[l]]), "PY.s._user.level=Number(this.value); pyUserKeep(); pyUserDraw()"))}
     </div>
     <div class="card py-sub">
@@ -1066,7 +1068,9 @@ function pyRepSummary(f){
 function pyRepMonthly(f, admin){
   const userId = PY.s.monUser || '';
   const url = '/reports/monthly' + pyQs(Object.assign({}, f, {userId})), d = pyData(url);
-  const users = admin ? pyData('/users') : [];
+  // A mentor may look at the people who report to them; the server lists only those.
+  const pick = admin || pyMentor();
+  const users = pick ? pyData('/users') : [];
   if(!d) return pyLoadingHtml(url);
   PY.s._invoice = d.invoice;
   const inv = d.invoice;
@@ -1076,7 +1080,7 @@ function pyRepMonthly(f, admin){
         ${toggle('gstEnabled', 'GST')}${inv.gstEnabled ? `<span class="row" style="gap:4px">${pyInput('pyGstPct', inv.gstPct, `type="number" class="py-pct" ${admin ? '' : 'disabled'} onchange="pySetTax({gstPct: Number(this.value)})"`)} %</span><span class="small-note" style="margin:0">GST is added on the invoice</span>` : ''}
         ${toggle('tdsEnabled', 'TDS deduction')}<span class="row" style="gap:4px">${pyInput('pyTdsPct', inv.tdsPct, `type="number" class="py-pct" ${admin ? '' : 'disabled'} onchange="pySetTax({tdsPct: Number(this.value)})"`)} %</span>
         ${inv.tdsEnabled ? '<span class="small-note" style="margin:0">TDS comes off the net payable</span>' : ''}
-        ${admin ? `<span style="margin-left:auto">${pySelect('pyMonUser', userId, [['', 'My own payouts']].concat((users || []).map(u=>[u.id, u.name])), "PY.s.monUser=this.value; render()")}</span>` : ''}</div>`)
+        ${pick ? `<span style="margin-left:auto">${pySelect('pyMonUser', userId, [['', 'My own payouts']].concat((users || []).filter(u=>!PY.me || u.id !== PY.me.id).map(u=>[u.id, u.name])), "PY.s.monUser=this.value; render()")}</span>` : ''}</div>`)
     + pyCard(esc(d.user.name), pyTable([{t: 'Settlement period'}, {t: 'Txns', c: 1}, {t: 'My share', r: 1}]
         .concat(inv.gstEnabled ? [{t: 'GST ' + inv.gstPct + '%', r: 1}] : []).concat(inv.tdsEnabled ? [{t: 'TDS ' + inv.tdsPct + '%', r: 1}] : [])
         .concat([{t: 'Net payable', r: 1}, {t: '', r: 1}]),

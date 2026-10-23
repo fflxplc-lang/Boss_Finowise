@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db, audit, tx, getSetting } from '../db.js';
-import { requireAdmin, scopeUser } from '../auth.js';
+import { requireAdmin, scopeIds } from '../auth.js';
 import { recalculate, chainFor, leadByError } from '../services/payout.js';
 import { linkFolio } from '../services/mapping.js';
 import { parseJSON, upper, clean } from '../util.js';
@@ -24,7 +24,7 @@ function decorate(c, users, rmMax, latest) {
 }
 
 function loadClients(req) {
-  const uid = scopeUser(req);
+  const ids = scopeIds(req);
   const latest = latestPeriod();
   const users = new Map(db.prepare('SELECT id, name, level FROM users').all().map((u) => [u.id, u]));
   const rmMax = Number(getSetting('rmMaxLevel'));
@@ -33,7 +33,7 @@ function loadClients(req) {
       (SELECT SUM(b.aum) FROM brokerage b ${LIVE} WHERE b.client_id = c.id AND b.period = ?) aum
     FROM clients c ORDER BY aum DESC NULLS LAST, c.name`).all(latest);
   let list = rows.map((c) => decorate(c, users, rmMax, latest));
-  if (uid) list = list.filter((c) => Object.values(c.hierarchy).map(Number).includes(uid));
+  if (ids) list = list.filter((c) => Object.values(c.hierarchy).map(Number).some((id) => ids.includes(id)));
   return list;
 }
 

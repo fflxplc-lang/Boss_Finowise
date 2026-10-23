@@ -2,7 +2,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { db, audit, getSetting, tx } from '../db.js';
-import { requireAdmin, scopeUser } from '../auth.js';
+import { requireAdmin, scopeIds, IN_SCOPE } from '../auth.js';
 import { invoiceTax } from '../services/tax.js';
 import { parseTable, cell } from '../parsers/registrar.js';
 import { parseJSON, round2, clean, norm, num, toISODate } from '../util.js';
@@ -55,9 +55,9 @@ function ledger(period, product) {
 
 r.get('/', (req, res) => {
   const period = req.query.period || latestPeriod();
-  const uid = scopeUser(req);
+  const ids = scopeIds(req);
   let rows = ledger(period, req.query.product || 'all');
-  if (uid) rows = rows.filter((x) => x.id === uid);
+  if (ids) rows = rows.filter((x) => ids.includes(x.id));
   const sum = (k) => round2(rows.reduce((s, x) => s + x[k], 0));
 
   // Attribution health — money that may be reaching the wrong person.
@@ -89,8 +89,10 @@ r.post('/payments', requireAdmin, (req, res) => {
 });
 
 r.get('/payments', (req, res) => {
-  const uid = scopeUser(req) || (req.query.userId ? Number(req.query.userId) : null);
-  res.json(db.prepare(`SELECT p.*, u.name FROM payments p JOIN users u ON u.id = p.user_id ${uid ? 'WHERE p.user_id = ?' : ''} ORDER BY p.id DESC LIMIT 500`).all(...(uid ? [uid] : [])));
+  let ids = scopeIds(req);
+  const asked = req.query.userId ? Number(req.query.userId) : null;
+  if (asked && (!ids || ids.includes(asked))) ids = [asked];
+  res.json(db.prepare(`SELECT p.*, u.name FROM payments p JOIN users u ON u.id = p.user_id ${ids ? `WHERE p.user_id ${IN_SCOPE}` : ''} ORDER BY p.id DESC LIMIT 500`).all(...(ids ? [JSON.stringify(ids)] : [])));
 });
 
 // Columns: Name or ARN code, Amount, Date, Reference (month comes from the form).
