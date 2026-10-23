@@ -1038,6 +1038,12 @@ function isClientLinkRequest(req) {
   // A partner prospect's registration form. The page holds nothing; what it
   // shows comes from /api/public/pps-form, on the token in its address.
   if (req.method === 'GET' && req.path === '/partner-form' && req.query.pf) return true;
+  // The partner's own login, which is not a BOSS session: every one of its
+  // routes checks the partner's cookie, and answers only with their own
+  // record. The empanelment form is on its token, like the one above.
+  if (req.path === '/partner' || req.path.startsWith('/partner/')) return true;
+  if (req.path.startsWith('/api/partner-portal/')) return true;
+  if (req.method === 'GET' && req.path === '/empanelment' && req.query.t) return true;
   if (req.path === '/config.js') return true;
   if (req.method !== 'GET' || req.path.startsWith('/api/')) return false;
   const token = req.query.doc || req.query.support;
@@ -3127,8 +3133,13 @@ app.use('/api/payout', checkApiKey, (req, res, next) => {
 /* THE PARTNER JOURNEY — the session reminders, the ARN / EUIN expiry
    warnings and the prospect's own form, which all have to work with no
    CRM tab open. See partner-journey.js. */
-require('./partner-journey').install({ app, storeList, storeValue, putList, writeToDisk, sendMail, checkApiKey,
+const partnerJourney = require('./partner-journey').install({ app, storeList, storeValue, putList, writeToDisk, sendMail, checkApiKey,
   dataDir: path.dirname(DB_FILE) });
+/* The partner's own login and the one empanelment form (B2B changes 3).
+   A door of its own, with accounts of its own: see partner-portal.js. */
+require('./partner-portal').install({ app, usersDb, storeList, storeValue, putList, writeToDisk, checkApiKey, hashPassword, passwordMatches,
+  sign, readCookie, signedInUser, tooManyAttempts, noteFailure, forgiveAttempts: (ip) => attempts.delete(ip), branding, esc,
+  pj: partnerJourney, publicDir: path.join(__dirname, 'public') });
 app.get('/partner-form', (req, res) => {
   res.set('Cache-Control', 'no-store').sendFile(path.join(__dirname, 'public', 'partner-form.html'));
 });

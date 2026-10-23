@@ -12219,8 +12219,13 @@ async function doTransition(module, recordId, transitionId){
     const why = pobGuard(record, t);
     if(why){ alert(why); return; }
   }
+  if(module==='PPS' && (t.id==='payVerifiedT' || t.id==='payRejectedT') && !pjMayVerifyPayment(record)){
+    alert(pjNotYoursToVerify(record)); return;
+  }
+  if(module==='PMS' && (t.id==='arnVerifiedT' || t.id==='arnRejectT') && !pjMayVerifyArn(record)){
+    alert(pjArnNotYours(record)); return;
+  }
   if(module==='PPS' && t.id==='payVerifiedT'){
-    if(!pjMayVerifyPayment()){ alert('Verifying a payment needs Approve permission on Partners.'); return; }
     if(!record.feeVerifiedAt){ record.feeVerifiedAt = new Date().toISOString(); record.feeVerifiedBy = currentUser; }
   }
   // Place Order will not be marked placed on a plan nobody has read. Enforced
@@ -32743,6 +32748,12 @@ function defaultConfig(){
         body:"Dear {Name},\n\nYour {What} ({Number}) is valid until {ExpiresOn} — {DaysLeft} days from today.\n\nPlease start the renewal now so your work as a partner is not interrupted, and send us the renewed details once you have them.\n\n{Signature}"},
       pobPaymentAck: {subject:"Payment received — {PartnerCode}",
         body:"Dear {Name},\n\nThank you. We have received and verified your payment of {Amount} (reference {Reference}) on {PaidOn}.\n\nYour partner code is {PartnerCode} and your application is {ApplicationId}. Next, we will send you the Freedom LifeX empanelment form and agreement, and ask for your documents.\n\n{Signature}"},
+      pjVerifyRequest: {subject:"To verify: {What} — {Name}",
+        body:"Dear {VerifierName},\n\n{SubmittedBy} has put in {What} for {Name}, and it is waiting for you:\n\n{Details}\n\nPlease check it and approve it, or send it back with a comment: {Link}\n\nIt does not move to the next step until it is approved.\n\n{Signature}"},
+      pobEmpanelmentForm: {subject:"Your Freedom LifeX empanelment form — {ApplicationId}",
+        body:"Dear {Name},\n\nThe next step is your empanelment with Freedom LifeX. One form covers it all: your details, your documents and the partner agreement.\n\nWe have filled in what we already have. Please check it, correct anything that is wrong, upload your documents and submit:\n\n{FormLink}\n\nYour partner code is {PartnerCode}. Once you submit, our team evaluates the application and writes to you.\n\n{Signature}"},
+      pobTaskReviewed: {subject:"{Task} — {Decision}",
+        body:"Dear {Name},\n\nYour mentor {Mentor} has reviewed “{Task}”: {Decision}.\n\n{Comments}\n\n{NextStep}\n\nSign in to see your tasks: {PortalLink}\n\n{Signature}"},
       pobLogin: {subject:"Your Freedom LifeX login",
         body:"Dear {Name},\n\nYour Freedom LifeX account is ready.\n\n👤 Login ID: {LoginId}\n🔗 Set your password here: {LoginLink}\n\nFor now it opens your onboarding tasks. Your full access as a partner comes once your onboarding is complete.\n\n{Signature}"},
       pobRoleMeeting: {subject:"One-to-one to confirm your role — {Date}",
@@ -49660,9 +49671,12 @@ const BLUEPRINT_PPS = {
   transitions: [
     {id:'ackEmailT',     from:'registered', to:'acknowledged', label:'Acknowledgement Email Sent', kind:'forward', showIfRule:'pjViaEmail'},
     {id:'ackWhatsappT',  from:'registered', to:'acknowledged', label:'Added to WhatsApp Community', kind:'forward', showIfRule:'pjViaWhatsapp'},
-    {id:'remindersT',    from:'acknowledged', to:'remindersSent', label:'Send a Session Reminder', kind:'forward'},
+    /* The reminders and the joining link go to every prospect registered
+       for the webinar by themselves (partner-journey.js), and the stage
+       moves with them, so they are not buttons unless PPS › Settings asks. */
+    {id:'remindersT',    from:'acknowledged', to:'remindersSent', label:'Send a Session Reminder', kind:'forward', showIfRule:'pjManualSessionSends'},
     {id:'back_ack',      from:'acknowledged', to:'registered', label:'Back', kind:'back'},
-    {id:'sessionDayT',   from:'remindersSent', to:'sessionDay', label:'Session-Day Reminder & Joining Link Sent', kind:'forward'},
+    {id:'sessionDayT',   from:'remindersSent', to:'sessionDay', label:'Session-Day Reminder & Joining Link Sent', kind:'forward', showIfRule:'pjManualSessionSends'},
     {id:'back_rem',      from:'remindersSent', to:'acknowledged', label:'Back', kind:'back'},
     {id:'attendedYesT',  from:'sessionDay', to:'paymentLinkSent', label:'Attended — Send Payment Link', kind:'forward', color:'ok'},
     {id:'attendedNoT',   from:'sessionDay', to:'community', label:'Did Not Attend', kind:'forward', color:'danger'},
@@ -49738,6 +49752,7 @@ MODULE_VIEW.PPS = 'pps'; MODULE_VIEW.PMS = 'pms'; MODULE_VIEW.PQS = 'pqs'; MODUL
 Object.keys(MODULE_DB_KEY).forEach(m=>{ bulkSelection[m] = bulkSelection[m] || new Set(); });
 TRANSITION_RULES.pjViaEmail = r => (r && r.commChannel) !== 'WhatsApp';
 TRANSITION_RULES.pjViaWhatsapp = r => (r && r.commChannel) !== 'Email';
+TRANSITION_RULES.pjManualSessionSends = () => pjConfig().manualSessionSends === 'Yes';
 /* The steps that do something besides move: a letter that goes, a form
    that is filled. Each opens its own box, and the box moves the stage. */
 STAGE_FORM_HANDLERS.ackEmailT = 'pjOpenAckModal';
@@ -49850,10 +49865,12 @@ function viewPPS(){
     <div class="tab ${window._ppsTab==='prospects'?'active':''}" onclick="window._ppsTab='prospects'; render()">Prospects</div>
     <div class="tab ${window._ppsTab==='webinars'?'active':''}" onclick="window._ppsTab='webinars'; render()">Webinars &amp; Campaigns</div>
     <div class="tab ${window._ppsTab==='referrals'?'active':''}" onclick="window._ppsTab='referrals'; render()">Referral Codes</div>
+    <div class="tab ${window._ppsTab==='verify'?'active':''}" onclick="window._ppsTab='verify'; render()">To Verify${pjVerifyQueue().length ? ' (' + pjVerifyQueue().length + ')' : ''}</div>
     ${pjMaySetUp() ? `<div class="tab ${window._ppsTab==='settings'?'active':''}" onclick="window._ppsTab='settings'; render()">Settings</div>` : ''}
   </div>`;
   if(window._ppsTab==='webinars') return ppsHeader() + tabs + ppsWebinarsHtml();
   if(window._ppsTab==='referrals') return ppsHeader() + tabs + pjReferralsHtml();
+  if(window._ppsTab==='verify') return ppsHeader() + tabs + pjVerifyQueueHtml();
   if(window._ppsTab==='settings' && pjMaySetUp()) return ppsHeader() + tabs + pjSettingsHtml();
   const all = visibleRecords(pjProspects(), r=>r.assignedTo, r=>r.branch);
   window._ppsSort = window._ppsSort || 'newest';
@@ -49894,6 +49911,26 @@ function viewPPS(){
           <td><span class="badge ${meta.color||'info'}">${esc(meta.label||'')}</span></td></tr>`;
       }).join('') || `<tr><td colspan="8" class="empty">No prospects match. Add one with New Prospect.</td></tr>`}</tbody>
     </table></div>`;
+}
+/* Everything waiting for me to verify: fee payments in PPS and ARN /
+   EUIN details in PMS. An administrator sees the lot. */
+function pjVerifyQueue(){
+  const out = [];
+  pjProspects().filter(r=>!r.deletedAt && stateOf('PPS', r)==='paymentVerification' && pjMayVerifyPayment(r))
+    .forEach(r=>out.push({r, module:'PPS', view:'pps', what:'Fee payment', detail: money(r.feeAmount) + ' · ' + (r.feeMode||'') + ' · UTR ' + (r.feeRef||'—'),
+      by: r.feeSubmittedBy, at: r.feeSubmittedAt, verifiers: pjPayVerifiers(r)}));
+  pjPartners().filter(r=>!r.deletedAt && stateOf('PMS', r)==='arnVerification' && pjMayVerifyArn(r))
+    .forEach(r=>out.push({r, module:'PMS', view:'pms', what:'ARN / EUIN details', detail: PJ_ARN_GROUPS.filter(g=>r[g.number]).map(g=>g.what + ' ' + r[g.number]).join(' · '),
+      by: r.arnSubmittedBy, at: r.arnSubmittedAt, verifiers: pjArnVerifiers(r)}));
+  return out.sort((a,b)=>String(a.at||'').localeCompare(String(b.at||'')));
+}
+function pjVerifyQueueHtml(){
+  return `<p class="small-note" style="margin-top:0">What is waiting for you to verify. A payment or a set of details goes to the reporting manager of whoever put it in (the mapped RM, when the partner put it in), or to an administrator; nobody verifies their own.</p>
+    <div class="table-wrap"><table id="pjVerifyTable"><thead><tr><th>Who</th><th>Module</th><th>To verify</th><th>Detail</th><th>Put in by</th><th>Since</th><th>Verifier</th></tr></thead>
+    <tbody>${pjVerifyQueue().map(x=>`<tr class="row-clickable" onclick="navigate('${x.view}','${esc(x.r.id)}')">
+      <td style="font-weight:700">${esc(pjName(x.r))}</td><td>${esc(x.module)}</td><td>${esc(x.what)}</td><td>${esc(x.detail)}</td>
+      <td>${esc(x.by==='Partner' ? 'The partner' : teamName(x.by))}</td><td>${esc(x.at ? fmtDate(String(x.at).slice(0,10)) : '—')}</td><td>${esc(pjNames(x.verifiers))}</td></tr>`).join('')
+      || `<tr><td colspan="7" class="empty">Nothing is waiting for you to verify.</td></tr>`}</tbody></table></div>`;
 }
 function ppsHeader(){
   return moduleHeader({title:'PPS — Partner Perspective System',
@@ -50071,15 +50108,30 @@ function viewPPSDetail(id){
         ['Session', esc(pjWebinarLabel(w))], ['Time', esc(w.time||'')],
         ['Joining Link', w.joiningLink ? `<a href="${esc(w.joiningLink)}" target="_blank" rel="noopener">${esc(w.joiningLink)}</a>` : ''],
         ['Payment Link', w.paymentLink ? `<a href="${esc(w.paymentLink)}" target="_blank" rel="noopener">${esc(w.paymentLink)}</a>` : ''],
+        ['Reminders', esc(pjAutoSendText(r, w))],
       ] : [['Session', 'Not registered against a webinar yet — pick one with Edit.']]),
       profCard('Fee', [
         ['Fee', money(pjFee())], ['Paid', r.feePaidOn ? fmtDate(r.feePaidOn) : 'Not yet'],
         ['Amount', r.feeAmount ? money(r.feeAmount) : ''], ['Mode', esc(r.feeMode||'')], ['Reference / UTR', esc(r.feeRef||'')],
         ['Verified', r.feeVerifiedAt ? fmtDate(r.feeVerifiedAt) + ' · ' + esc(teamName(r.feeVerifiedBy)) : (r.feeRef ? 'Pending' : '')],
+        ['Recorded By', r.feeSubmittedBy ? esc(r.feeSubmittedBy==='Partner' ? 'The partner' : teamName(r.feeSubmittedBy)) : ''],
+        ['Verifier', !r.feeVerifiedAt && stateOf('PPS', r)==='paymentVerification' ? esc(pjNames(pjPayVerifiers(r))) : ''],
         ['Partner Record', partner ? `<a href="javascript:void(0)" onclick="navigate('pms','${esc(partner.id)}')">${esc(partner.id)}</a>` : ''],
       ]),
     ].join(''),
   });
+}
+/* What the server has sent this prospect for their webinar, and what
+   comes next. Nobody has to press anything for it. */
+function pjAutoSendText(r, w){
+  const sent = Object.keys(r.pjSent || {});
+  const rem = sent.filter(k=>k.indexOf('rem:' + w.id + ':')===0).length;
+  const link = sent.includes('link:' + w.id);
+  const c = Object.assign({}, PJ_SETTINGS_DEFAULTS, pjConfig());
+  if(c.autoReminders==='No') return 'Automatic reminders are switched off in PPS › Settings.';
+  return (rem ? rem + ' reminder(s) sent' : 'No reminder yet') + (link ? ', joining link sent' : '') + '. '
+    + 'They go out by themselves ' + pjReminderPlanText() + ', and the joining link ' + (Number(c.linkHoursBefore)||24)
+    + ' hours before. The stage moves on its own.';
 }
 /* The stepper shows the road this prospect is actually on: a prospect who
    was chased by the RM shows that step, and one who went to the community
@@ -50124,17 +50176,71 @@ async function pjSavePayment(id, tid){
   const data = readFields(f);
   data.feeRef = String(data.feeRef||'').trim();
   if(!validateRequired(f, data)) return;
-  Object.assign(r, data, {feeVerifiedAt: '', feeVerifiedBy: ''});
+  const verifiers = pjVerifiersFor(currentUser);
+  Object.assign(r, data, {feeVerifiedAt: '', feeVerifiedBy: '', feeSubmittedBy: currentUser, feeSubmittedAt: new Date().toISOString(),
+    feeVerifierIds: verifiers});
   closeModal();
   await doTransition('PPS', id, tid);
+  if(stateOf('PPS', r)==='paymentVerification')
+    await pjAskVerifiers(verifiers, {what: 'Partner fee payment', name: pjName(r), module: 'PPS', recordId: r.id, view: 'pps',
+      details: money(r.feeAmount) + ' · ' + (r.feeMode||'') + ' · UTR ' + r.feeRef + ' · paid ' + (fmtDate(r.feePaidOn)||'')});
+}
+
+/* WHO CHECKS WHAT. Whoever puts a payment or a set of details in does not
+   verify it. What an RM puts in goes to the people they report to, or to
+   the administrators when they report to nobody; what a partner puts in
+   from their own login goes to the RM they are mapped to. The
+   administrators can always act: theirs is the queue of last resort. The
+   verifiers are written on the record when it is put in, so the queue
+   does not change under it if somebody's manager changes later. */
+function pjAdmins(){ return DB.team.filter(t=>isMemberActive(t) && isAdmin(t)).map(t=>t.id); }
+function pjVerifiersFor(submittedBy, mappedRm){
+  if(submittedBy==='Partner'){
+    const rm = DB.team.find(t=>t.id===mappedRm);
+    return rm && isMemberActive(rm) ? [rm.id] : pjAdmins();
+  }
+  const u = DB.team.find(t=>t.id===submittedBy);
+  const mgrs = userManagers(u).filter(m=>isMemberActive(m)).map(m=>m.id);
+  if(mgrs.length) return mgrs;
+  const others = pjAdmins().filter(id=>id!==submittedBy);
+  return others.length ? others : pjAdmins();
+}
+function pjMayVerify(verifierIds, submittedBy){
+  const u = me();
+  if(!u) return false;
+  if(isAdmin(u)) return true;
+  if(submittedBy && submittedBy===u.id) return false;
+  return (verifierIds||[]).includes(u.id);
+}
+function pjNames(ids){ return (ids||[]).map(teamName).join(', ') || 'an administrator'; }
+/* The bell and an email for each verifier, so a request does not wait
+   for somebody to happen to open the right screen. */
+async function pjAskVerifiers(ids, o){
+  const others = (ids||[]).filter(id=>id && id!==currentUser);
+  if(!others.length) return;
+  await notifyUsers(others, {title: 'To verify: ' + o.what + ' — ' + o.name, body: o.details || '', view: o.view, arg: o.recordId, kind: 'verify'});
+  const tpl = mailTemplateOf('pjVerifyRequest');
+  for(const id of others){
+    const t = DB.team.find(x=>x.id===id);
+    if(!t || !t.email) continue;
+    const vars = {VerifierName: t.name || '', What: o.what, Name: o.name, Details: o.details || '', SubmittedBy: o.by || teamName(currentUser),
+      Link: location.origin + '/', FirmName: (DB.config.company||{}).name || ''};
+    await deliverMail({to: t.email, subject: fillTemplate(tpl.subject, vars), body: fillTemplate(tpl.body, vars),
+      module: o.module, recordId: o.recordId, label: 'Verification request to ' + (t.name || ''), template: 'pjVerifyRequest', signAs: currentUser});
+  }
 }
 /* Somebody has to look at the bank before a payment is believed. Only
    then is the partner made, and the welcome letter sent. */
-function pjMayVerifyPayment(){ return isAdmin() || can('PPS','approve'); }
+function pjPayVerifiers(r){ return (r && r.feeVerifierIds) || pjVerifiersFor((r && (r.feeSubmittedBy || r.assignedTo)) || currentUser); }
+function pjMayVerifyPayment(r){ return pjMayVerify(pjPayVerifiers(r), r && r.feeSubmittedBy); }
+function pjNotYoursToVerify(r){
+  return (r && r.feeSubmittedBy===currentUser && !isAdmin()) ? 'You recorded this payment, so you cannot verify it. It is waiting for ' + pjNames(pjPayVerifiers(r)) + '.'
+    : 'This payment is waiting for ' + pjNames(pjPayVerifiers(r)) + ' to verify.';
+}
 function pjOpenVerifyPaymentModal(module, id, tid){
   const r = pjProspects().find(x=>x.id===id);
   if(!r) return;
-  if(!pjMayVerifyPayment()){ alert('Verifying a payment needs Approve permission on Partners.'); return; }
+  if(!pjMayVerifyPayment(r)){ alert(pjNotYoursToVerify(r)); return; }
   openModal('Verify Payment — ' + pjName(r), profCard('Payment', [
       ['Amount', money(r.feeAmount)], ['Paid On', fmtDate(r.feePaidOn)||'—'], ['Mode', esc(r.feeMode||'—')],
       ['Reference / UTR', '<b>' + esc(r.feeRef||'—') + '</b>']])
@@ -50143,7 +50249,7 @@ function pjOpenVerifyPaymentModal(module, id, tid){
 }
 async function pjVerifyPayment(id, tid){
   const r = pjProspects().find(x=>x.id===id);
-  if(!r || !pjMayVerifyPayment()) return;
+  if(!r || !pjMayVerifyPayment(r)) return;
   r.feeVerifiedAt = new Date().toISOString(); r.feeVerifiedBy = currentUser;
   closeModal();
   await doTransition('PPS', id, tid);
@@ -50155,24 +50261,49 @@ function pjOpenExamDateModal(module, id, tid){
   openModal('Finalize the Exam Date', f.map(x=>fieldInput(x, r[x.k] || (x.k==='examName' ? 'NISM Series V-A' : ''))).join(''),
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSaveStageFields('PMS','${esc(id)}','${esc(tid)}','exam')">Save</button>`);
 }
-/* The ARN and the EUIN, whose they are, how long each is good for, and
-   the partner's logo if they have one. Saving pauses the partner until
-   somebody has checked the details; the validity is what the expiry
-   warnings read. */
+/* The ARN and the EUIN, whose they are, the mobile each is registered
+   to, how long each is good for, and the partner's logo if they have
+   one. Either is enough — a partner may hold only one — but one of them
+   has to be there, and whichever is given is given whole. Saving pauses
+   the partner until the submitter's reporting manager (or an
+   administrator) has checked the details; the validity is what the
+   expiry warnings read. */
+const PJ_ARN_GROUPS = [{what:'ARN', number:'arn'}, {what:'EUIN', number:'euin'}];
 const PJ_ARN_FIELDS = [
-  {k:'arn', l:'ARN', t:'text', vk:'arn', req:1, ph:'ARN-123456'},
-  {k:'arnName', l:'ARN Name', t:'text', req:1, h:'The name the ARN is registered in.'},
-  {k:'arnValidFrom', l:'ARN Valid From', t:'date', req:1},
-  {k:'arnValidTo', l:'ARN Valid Until', t:'date', req:1},
-  {k:'euin', l:'EUIN', t:'text', vk:'euin', req:1, ph:'E123456'},
-  {k:'euinName', l:'EUIN Name', t:'text', req:1, h:'The name the EUIN is registered in.'},
-  {k:'euinValidFrom', l:'EUIN Valid From', t:'date', req:1},
-  {k:'euinValidTo', l:'EUIN Valid Until', t:'date', req:1},
+  {k:'arn', l:'ARN', t:'text', vk:'arn', ph:'ARN-123456'},
+  {k:'arnName', l:'ARN Name', t:'text', h:'The name the ARN is registered in.'},
+  {k:'arnMobile', l:'ARN Registered Mobile', t:'text', vk:'mobile', im:'numeric', maxLen:10, ph:'Mobile the ARN is registered to'},
+  {k:'arnValidFrom', l:'ARN Valid From', t:'date'},
+  {k:'arnValidTo', l:'ARN Valid Until', t:'date'},
+  {k:'euin', l:'EUIN', t:'text', vk:'euin', ph:'E123456'},
+  {k:'euinName', l:'EUIN Name', t:'text', h:'The name the EUIN is registered in.'},
+  {k:'euinMobile', l:'EUIN Registered Mobile', t:'text', vk:'mobile', im:'numeric', maxLen:10, ph:'Mobile the EUIN is registered to'},
+  {k:'euinValidFrom', l:'EUIN Valid From', t:'date'},
+  {k:'euinValidTo', l:'EUIN Valid Until', t:'date'},
 ];
+/* What is wrong with a set of ARN / EUIN details, or '' when nothing is. */
+function pjArnProblem(d){
+  const filled = PJ_ARN_GROUPS.filter(g=>PJ_ARN_FIELDS.some(f=>f.k.indexOf(g.number)===0 && String(d[f.k]||'').trim()));
+  if(!filled.length) return 'Enter the ARN or the EUIN — at least one of them. Either is optional on its own.';
+  for(const g of filled){
+    const need = PJ_ARN_FIELDS.filter(f=>f.k.indexOf(g.number)===0 && !String(d[f.k]||'').trim());
+    if(need.length) return 'For the ' + g.what + ', fill in: ' + need.map(f=>f.l.replace(g.what + ' ', '')).join(', ') + '.';
+    if(!/^[6-9]\d{9}$/.test(String(d[g.number + 'Mobile']).replace(/\D/g,'').slice(-10))) return 'The ' + g.what + ' registered mobile has to be a 10-digit mobile number.';
+    if(String(d[g.number + 'ValidTo']) <= String(d[g.number + 'ValidFrom'])) return 'The ' + g.what + ' has to be valid until a date after the one it is valid from.';
+  }
+  return '';
+}
+function pjArnVerifiers(r){ return (r && r.arnVerifierIds) || pjVerifiersFor((r && (r.arnSubmittedBy || r.assignedTo)) || currentUser, r && r.assignedTo); }
+function pjMayVerifyArn(r){ return pjMayVerify(pjArnVerifiers(r), r && r.arnSubmittedBy); }
+function pjArnNotYours(r){
+  return (r && r.arnSubmittedBy===currentUser && !isAdmin()) ? 'You entered these details, so you cannot verify them. They are waiting for ' + pjNames(pjArnVerifiers(r)) + '.'
+    : 'These details are waiting for ' + pjNames(pjArnVerifiers(r)) + ' to verify.';
+}
 function pjOpenArnModal(module, id, tid){
   const r = pjPartners().find(x=>x.id===id);
   if(!r) return;
-  openModal('ARN / EUIN Registration', `<div class="field-grid">${PJ_ARN_FIELDS.map(x=>fieldInput(x, r[x.k])).join('')}</div>
+  openModal('ARN / EUIN Registration', `<p class="small-note" style="margin-top:0">Fill in the ARN, the EUIN, or both — at least one. Whichever is filled in needs its name, registered mobile and validity. Saving sends them to ${esc(pjNames(pjVerifiersFor(currentUser)))} to verify.</p>
+      <div class="field-grid">${PJ_ARN_FIELDS.map(x=>fieldInput(x, r[x.k])).join('')}</div>
       <div class="field"><label>Logo (optional)</label>
         <input type="file" id="pjArnLogo" accept="image/png,image/jpeg,image/svg+xml,image/webp">
         ${r.logo ? `<div style="margin-top:6px"><img src="${esc(r.logo)}" alt="logo" style="max-height:48px"></div>` : ''}
@@ -50200,17 +50331,21 @@ async function pjSaveStageFields(module, id, tid, which){
   const data = readFields(f);
   if(!validateRequired(f, data)) return;
   if(which==='arn'){
-    for(const [a, b, what] of [['arnValidFrom','arnValidTo','ARN'], ['euinValidFrom','euinValidTo','EUIN']]){
-      if(String(data[b]) <= String(data[a])){ alert('The ' + what + ' has to be valid until a date after the one it is valid from.'); return; }
-    }
+    const why = pjArnProblem(data);
+    if(why){ alert(why); return; }
+    PJ_ARN_GROUPS.forEach(g=>{ if(data[g.number + 'Mobile']) data[g.number + 'Mobile'] = String(data[g.number + 'Mobile']).replace(/\D/g,'').slice(-10); });
     let logo = null;
     try { logo = await pjReadLogo(); } catch(e){ alert(e.message); return; }
     if(logo) data.logo = logo;
     data.arnSubmittedAt = new Date().toISOString(); data.arnSubmittedBy = currentUser;
+    data.arnVerifierIds = pjVerifiersFor(currentUser); data.arnVerifiedAt = ''; data.arnVerifiedBy = '';
   }
   Object.assign(r, data);
   closeModal();
   await doTransition(module, id, tid);
+  if(which==='arn' && stateOf('PMS', r)==='arnVerification')
+    await pjAskVerifiers(r.arnVerifierIds, {what: 'ARN / EUIN details', name: pjName(r), module: 'PMS', recordId: r.id, view: 'pms',
+      details: PJ_ARN_GROUPS.filter(g=>r[g.number]).map(g=>g.what + ' ' + r[g.number] + ' (' + r[g.number + 'Name'] + ', valid until ' + fmtDate(r[g.number + 'ValidTo']) + ')').join(' · ')});
 }
 
 /* ---------- the letters and forms the steps carry ---------- */
@@ -50375,7 +50510,7 @@ function pjOpenMeetingModal(module, id, tid){
   const r = pjPartners().find(x=>x.id===id);
   const step = PJ_MEETING_STEPS[tid];
   if(!r || !step) return;
-  if(tid==='arnVerifiedT' && !(isAdmin() || can('PMS','approve'))){ alert('Verifying ARN / EUIN details needs Approve permission on Partners.'); return; }
+  if(tid==='arnVerifiedT' && !pjMayVerifyArn(r)){ alert(pjArnNotYours(r)); return; }
   const was = r[step.store] || {};
   const vals = {videoLink: was.videoLink || pjConfig().onboardingVideoLink || '', mtDate: was.date || '', mtTime: was.time || '', mtLink: was.link || ''};
   openModal(step.title + ' — ' + pjName(r),
@@ -50592,12 +50727,15 @@ const PJ_SETTINGS_FIELDS = [
   {k:'reminderDaysBefore', l:'Start reminding (days before the session)', t:'number'},
   {k:'reminderTimes', l:'Reminder times each day', t:'text', ph:'10:00, 18:00', h:'Indian time, comma separated. Two times means twice a day.'},
   {k:'linkHoursBefore', l:'Send the joining link (hours before)', t:'number'},
+  {k:'manualSessionSends', l:'Also offer the reminder and joining link as buttons', t:'select', opts:['No','Yes'],
+    h:'They go out by themselves and move the stage. Yes adds a button to send one by hand as well.'},
   {k:'expiryAlerts', l:'Warn about ARN / EUIN expiry', t:'select', opts:['Yes','No']},
   {k:'expiryMonths', l:'Start warning (months before expiry)', t:'number'},
   {k:'expiryEmailPartner', l:'Also email the partner each week', t:'select', opts:['Yes','No']},
 ];
 const PJ_SETTINGS_DEFAULTS = {fee: 1999, courses: 'Module 1, Module 2, Module 3, NISM, IRDA', autoReminders: 'Yes',
-  reminderDaysBefore: 2, reminderTimes: '10:00, 18:00', linkHoursBefore: 24, expiryAlerts: 'Yes', expiryMonths: 6, expiryEmailPartner: 'Yes'};
+  reminderDaysBefore: 2, reminderTimes: '10:00, 18:00', linkHoursBefore: 24, manualSessionSends: 'No',
+  expiryAlerts: 'Yes', expiryMonths: 6, expiryEmailPartner: 'Yes'};
 function pjReminderPlanText(){
   const c = Object.assign({}, PJ_SETTINGS_DEFAULTS, pjConfig());
   const times = String(c.reminderTimes||'').split(',').map(x=>x.trim()).filter(Boolean);
@@ -50659,6 +50797,7 @@ async function migratePartnerJourneyBlueprints(){
       }
       if((t.id==='arnNoT' || t.id==='arnYesT') && /Admission Form/.test(had.label||'')){ had.label = t.label; touched = true; }
       if(t.id==='remindersT' && /3, 2 & 1/.test(had.label||'')){ had.label = t.label; touched = true; }
+      if((t.id==='remindersT' || t.id==='sessionDayT') && had.showIfRule!==t.showIfRule){ had.showIfRule = t.showIfRule; touched = true; }
     });
   });
   if(touched) await save('config');
@@ -50722,13 +50861,14 @@ function pjStagePanelHtml(module, r, cur){
     const w = pjWebinars().find(x=>x.id===r.webinarId);
     const auto = pjConfig().autoReminders !== 'No';
     if((cur==='acknowledged' || cur==='remindersSent') && w && auto) return note('Reminders go out by themselves before “' + esc(w.title||'the session')
-      + '” on ' + esc(fmtDate(w.date)||'—') + ' — ' + esc(pjReminderPlanText()) + ' — and the joining link 24 hours before it. The stage moves as they go; the button sends one now.')
+      + '” on ' + esc(fmtDate(w.date)||'—') + ' — ' + esc(pjReminderPlanText()) + ' — and the joining link ' + esc(String(Number(pjConfig().linkHoursBefore)||24)) + ' hours before it. Nothing to press: the stage moves on its own as they go'
+      + (pjConfig().manualSessionSends==='Yes' ? ', and the button sends one now.' : '.'))
       + pjFormStatusNote(r);
     if(cur==='acknowledged' || cur==='remindersSent') return (w ? '' : note('Register them against a webinar with Edit, and the reminders go out by themselves.')) + pjFormStatusNote(r);
     if(cur==='sessionDay') return note('After the LIVE session: did they attend? Those who did get the payment link and the expression of interest form at the session end.');
     if(cur==='paymentLinkSent') return note('Payment link sent for the ' + esc(money(pjFee())) + ' fee. If it is not paid, the RM calls to follow up.');
     if(cur==='paymentVerification') return note('Payment of ' + esc(money(r.feeAmount)) + ' by ' + esc(r.feeMode||'—') + ', reference <b>' + esc(r.feeRef||'—')
-      + '</b>. Check it against the bank before verifying' + (pjMayVerifyPayment() ? '.' : ' — that needs Approve permission on Partners.'));
+      + '</b>. Check it against the bank before verifying' + (pjMayVerifyPayment(r) ? '.' : '. ' + esc(pjNotYoursToVerify(r))));
     if(cur==='community') return note('Kept warm in the marketing and education community. Invite them to the next session when one is planned.');
     return '';
   }
@@ -50738,9 +50878,9 @@ function pjStagePanelHtml(module, r, cur){
     if(cur==='gurukulAccess') return note('Who is the lead owner? Choosing books the one-to-one discussion and emails them the meeting link.');
     if(cur==='admissionForm1' || cur==='admissionForm2') return note(pjMeetingLine('Partner Induction', r.inductionMeeting) + ' When it is done, write its minutes.');
     if(cur==='nismRegistration') return note(pjMeetingLine('Doubt solving session', r.doubtMeeting) + ' When it is held, write its minutes.');
-    if(cur==='arnVerification') return note('ARN ' + esc(r.arn||'—') + ' (' + esc(r.arnName||'') + ') valid ' + esc(fmtDate(r.arnValidFrom)||'—') + ' to ' + esc(fmtDate(r.arnValidTo)||'—')
-      + ' · EUIN ' + esc(r.euin||'—') + ' (' + esc(r.euinName||'') + ') valid ' + esc(fmtDate(r.euinValidFrom)||'—') + ' to ' + esc(fmtDate(r.euinValidTo)||'—')
-      + '. Paused until somebody checks them.');
+    if(cur==='arnVerification') return note(PJ_ARN_GROUPS.filter(g=>r[g.number]).map(g=>esc(g.what) + ' ' + esc(r[g.number]) + ' (' + esc(r[g.number + 'Name']||'')
+        + ', mobile ' + esc(r[g.number + 'Mobile']||'—') + ') valid ' + esc(fmtDate(r[g.number + 'ValidFrom'])||'—') + ' to ' + esc(fmtDate(r[g.number + 'ValidTo'])||'—')).join(' · ')
+      + '. Paused until ' + esc(pjNames(pjArnVerifiers(r))) + ' checks them' + (pjMayVerifyArn(r) ? '.' : ' — ' + esc(pjArnNotYours(r))));
     if(cur==='onboardingVideo') return note(pjMeetingLine('Onboarding meeting', r.onboardingMeeting) + ' If they want a one-to-one as well, book it; otherwise mark them onboarded.');
     if(cur==='onboardingOneToOne') return note(pjMeetingLine('Onboarding one-to-one', r.onboardingOneToOne));
     if(cur==='oneToOne') return note('One-to-one by ' + esc(r.leadOwner==='Master Sherpa / Monk'
@@ -50941,13 +51081,15 @@ function viewPMSDetail(id){
           ['Referral', esc(r.referralCode ? r.referralCode + ' · ' + (r.referralName||'') : '')],
           ['Onboarded', r.onboardedAt ? fmtDate(r.onboardedAt) : ''], ['Notes', esc(r.notes||'')],
         ]),
-        (r.arnName || r.arnValidTo || r.logo) ? profCard('ARN / EUIN', [
+        (r.arnName || r.euinName || r.arnValidTo || r.euinValidTo || r.logo) ? profCard('ARN / EUIN', [
           ['Logo', r.logo ? `<img src="${esc(r.logo)}" alt="logo" style="max-height:44px">` : ''],
-          ['ARN', esc(r.arn||'')], ['ARN Name', esc(r.arnName||'')],
-          ['ARN Valid', esc((fmtDate(r.arnValidFrom)||'—') + ' to ' + (fmtDate(r.arnValidTo)||'—'))],
-          ['EUIN', esc(r.euin||'')], ['EUIN Name', esc(r.euinName||'')],
-          ['EUIN Valid', esc((fmtDate(r.euinValidFrom)||'—') + ' to ' + (fmtDate(r.euinValidTo)||'—'))],
-          ['Verified', r.arnVerifiedAt ? fmtDate(r.arnVerifiedAt) + ' · ' + esc(teamName(r.arnVerifiedBy)) : 'Not yet'],
+          ['ARN', esc(r.arn||'')], ['ARN Name', esc(r.arnName||'')], ['ARN Registered Mobile', esc(r.arnMobile||'')],
+          ['ARN Valid', r.arn ? esc((fmtDate(r.arnValidFrom)||'—') + ' to ' + (fmtDate(r.arnValidTo)||'—')) : ''],
+          ['EUIN', esc(r.euin||'')], ['EUIN Name', esc(r.euinName||'')], ['EUIN Registered Mobile', esc(r.euinMobile||'')],
+          ['EUIN Valid', r.euin ? esc((fmtDate(r.euinValidFrom)||'—') + ' to ' + (fmtDate(r.euinValidTo)||'—')) : ''],
+          ['Submitted', r.arnSubmittedAt ? fmtDate(r.arnSubmittedAt) + ' · ' + esc(teamName(r.arnSubmittedBy)) : ''],
+          ['Verified', r.arnVerifiedAt ? fmtDate(r.arnVerifiedAt) + ' · ' + esc(teamName(r.arnVerifiedBy))
+            : stateOf('PMS', r)==='arnVerification' ? 'Waiting for ' + esc(pjNames(pjArnVerifiers(r))) : 'Not yet'],
           ['Expiry', pjExpiryBadges(r) || (r.arnValidTo ? 'Not due' : '')],
         ]) : '',
         profCard('Fee', [['Amount', r.feeAmount ? money(r.feeAmount) : ''], ['Paid On', fmtDate(r.feePaidOn)||''],
@@ -51295,7 +51437,7 @@ const POB_STAGE_GROUPS = [
 MODULE_STAGE_GROUPS.POB = ()=>POB_STAGE_GROUPS;
 MODULE_DASHBOARD.POB = POB_STAGE_GROUPS.map(g=>g[0]);
 RECORD_DOORS.POB = {perm:'Partners', noun:'onboarding', back:'pob', find:id=>pobRecords().find(x=>x.id===id),
-  owner:r=>r.assignedTo, branch:r=>r.branch};
+  owner:r=>pobWaitsForMe(r) || r.mentorId===currentUser ? currentUser : r.assignedTo, branch:r=>r.branch};
 
 function pobRecords(){ return Array.isArray(DB.pjOnboarding) ? DB.pjOnboarding : (DB.pjOnboarding = []); }
 function pobDocs(){ return Array.isArray(DB.pjDocuments) ? DB.pjDocuments : (DB.pjDocuments = []); }
@@ -51305,6 +51447,24 @@ function pobTraining(){ return Array.isArray(DB.pjTraining) ? DB.pjTraining : (D
 function pobReviews(){ return Array.isArray(DB.pjReviews) ? DB.pjReviews : (DB.pjReviews = []); }
 function pobLive(){ return pobRecords().filter(r=>!r.deletedAt); }
 function pobMayApprove(){ return isAdmin() || can('POB','approve'); }
+/* B2B changes 3. A due payment is verified by the reporting manager of
+   whoever recorded it (the mapped RM when the partner recorded it), the
+   evaluation is decided by the onboarding owner's reporting manager, and
+   a task is reviewed by the partner's mentor. An administrator can always
+   act. See pjVerifiersFor(). */
+function pobPayVerifiers(r, p){ return (p && p.verifierIds) || pjVerifiersFor((p && p.recordedBy) || r.assignedTo, r.assignedTo); }
+function pobMayVerifyPayment(r, p){ return pjMayVerify(pobPayVerifiers(r, p), p && p.recordedBy); }
+function pobEvaluators(r){ return r.evaluatorIds || pjVerifiersFor(r.assignedTo); }
+function pobMayEvaluate(r){ return pjMayVerify(pobEvaluators(r), r.assignedTo); }
+function pobNotEvaluator(r){ return 'The evaluation is for ' + pjNames(pobEvaluators(r)) + ' — the reporting manager of ' + teamName(r.assignedTo) + ', or an administrator.'; }
+function pobMentor(r){ return r.mentorId || r.assignedTo; }
+function pobMayReviewTask(r){ return isAdmin() || (!!pobMentor(r) && pobMentor(r)===currentUser); }
+function pobWaitsForMe(r){
+  if(!r) return false;
+  if(stateOf('POB', r)==='evaluation' && (r.evaluatorIds||[]).includes(currentUser)) return true;
+  if((r.payments||[]).some(p=>p.status==='Under Review' && (p.verifierIds||[]).includes(currentUser))) return true;
+  return pobMentor(r)===currentUser && pobLiveTasks(r).some(t=>t.status==='Pending Review');
+}
 function pobToday(){ return new Date().toISOString().slice(0,10); }
 function pobAddDays(ymd, n){ const d = new Date((ymd || pobToday()) + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + Number(n||0)); return d.toISOString().slice(0,10); }
 function pobAddMonths(ymd, n){ const d = new Date((ymd || pobToday()) + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + Number(n||0)); return d.toISOString().slice(0,10); }
@@ -51440,6 +51600,34 @@ const POB_DEFAULT_TASKS = {
   ],
 };
 const POB_METRICS = [['leads','Leads collected'], ['conversions','Leads converted'], ['clients','Clients onboarded']];
+/* The figures come from the partner's own leads (B2B changes 3): every lead
+   they put into the Client Journey, the ones that became clients (a
+   converted lead leaves LMS for CMS and keeps partnerPobId), and the
+   clients whose onboarding is done — their account is active, so they
+   have reached Mandate Registration. What was done outside the CRM is
+   added on by hand, as an adjustment. The server counts the same way
+   for the partner's own login (partner-portal.js). */
+const POB_CLIENT_ONBOARDED_FROM = 'mandateRegistration';
+function pobPartnerLeads(r){ return (DB.leads||[]).filter(l=>l && !l.deletedAt && l.partnerPobId===r.id); }
+function pobPartnerClients(r){ return (DB.clients||[]).filter(c=>c && !c.deletedAt && c.partnerPobId===r.id); }
+function pobMetrics(r){
+  const leads = pobPartnerLeads(r), clients = pobPartnerClients(r);
+  const states = getBlueprint('CMS').states.map(x=>x.id);
+  const from = states.indexOf(POB_CLIENT_ONBOARDED_FROM);
+  const crm = {leads: leads.length + clients.length, conversions: clients.length,
+    clients: from < 0 ? 0 : clients.filter(c=>states.indexOf(stateOf('CMS', c)) >= from).length};
+  const adjust = {};
+  POB_METRICS.forEach(([k])=>{ adjust[k] = Math.max(0, Math.floor(Number((r.metricsAdjust||{})[k]) || 0)); });
+  const out = {crm, adjust};
+  POB_METRICS.forEach(([k])=>{ out[k] = crm[k] + adjust[k]; });
+  return out;
+}
+/* The Client Journey opens to the partner once every required onboarding
+   task of their role is approved. */
+function pobClientJourneyOpen(r){
+  const req = pobRequiredOnboarding(r);
+  return !!r.role && req.length > 0 && req.every(t=>t.status==='Approved');
+}
 const POB_TASK_KINDS = [['task','Task / deliverable'], ['session','Role Clarity Session'], ['training','Training module'],
   ['milestone','Course unlock'], ['review','Recurring review']];
 /* Each task waits for the one before it in its own phase unless the
@@ -51468,6 +51656,19 @@ async function migratePartnerOnboarding(){
   });
   if(wf) await save('pjWorkflows');
   if(tr) await save('pjTraining');
+  /* B2B changes 3 renamed two task states after the mentor's review, and
+     made the figures count the partner's leads; figures typed in before
+     are kept, as the part done outside the CRM. */
+  let recs = false;
+  const renamed = {'Submitted for Review': 'Pending Review', 'Returned for Correction': 'Changes Required'};
+  pobRecords().forEach(r=>{
+    if(r.metrics && r.metricsAdjust===undefined){ r.metricsAdjust = Object.assign({}, r.metrics); recs = true; }
+    (r.tasks||[]).forEach(t=>{
+      if(renamed[t.status]){ t.status = renamed[t.status]; recs = true; }
+      (t.history||[]).forEach(h=>{ if(renamed[h.status]){ h.status = renamed[h.status]; recs = true; } });
+    });
+  });
+  if(recs) await save('pjOnboarding');
 }
 function pobLatestWorkflow(role){
   return pobWorkflows().filter(w=>w.role===role && !w.deletedAt).sort((a,b)=>(b.version||0)-(a.version||0))[0] || null;
@@ -51490,6 +51691,7 @@ function pobFields(){
     {k:'bankAccount', l:'Account Number', t:'text'},
     {k:'bankIfsc', l:'IFSC', t:'text', ph:'HDFC0001234'},
     {k:'assignedTo', l:'Onboarding Owner', t:'team', req:1},
+    {k:'mentorId', l:'Mentor', t:'team', h:'Reviews the partner’s tasks. The onboarding owner does, if this is left blank.'},
     {k:'branch', l:'Branch', t:'branch'},
   ];
 }
@@ -51602,18 +51804,21 @@ async function pobSavePayment(id, payId){
   const at = new Date().toISOString();
   if(p && p.status==='Paid'){ alert('A verified payment cannot be changed. Mark it Refunded first if it was returned.'); return; }
   if(!p){ p = {id: uid('PAY'), history: []}; r.payments.push(p); }
-  Object.assign(p, d, {status: 'Under Review', recordedBy: currentUser, recordedAt: at});
+  Object.assign(p, d, {status: 'Under Review', recordedBy: currentUser, recordedAt: at, verifierIds: pjVerifiersFor(currentUser)});
   if(file){ p.receiptFileId = file.id; p.receiptName = file.name; }
   p.history = (p.history||[]).concat([{at, by: currentUser, status: 'Under Review', note: 'Recorded ' + money(d.amount) + ' · ' + d.method + ' · ' + d.ref}]);
   await save('pjOnboarding');
   await logAudit('POB', id, 'Payment Recorded', [{field:'payment', oldValue:'', newValue: d.ref + ' · ' + money(d.amount)}]);
   closeModal(); navigate('pob', id);
+  await pjAskVerifiers(p.verifierIds, {what: 'Due payment', name: pjName(r), module: 'POB', recordId: r.id, view: 'pob',
+    details: money(d.amount) + ' · ' + d.method + ' · ' + d.ref + ' · paid ' + fmtDate(d.date)});
 }
 async function pobSetPaymentStatus(id, payId, status){
   const r = pobRecords().find(x=>x.id===id);
   const p = r && (r.payments||[]).find(x=>x.id===payId);
   if(!p) return;
-  if(!pobMayApprove()){ alert('Verifying a payment needs Approve permission on Partners.'); return; }
+  if(!pobMayVerifyPayment(r, p)){ alert(p.recordedBy===currentUser ? 'You recorded this payment, so you cannot verify it. It is waiting for ' + pjNames(pobPayVerifiers(r, p)) + '.'
+    : 'This payment is waiting for ' + pjNames(pobPayVerifiers(r, p)) + ' to verify.'); return; }
   let note = '';
   if(status!=='Paid'){
     note = prompt('Why is this payment ' + status.toLowerCase() + '?') || '';
@@ -51637,10 +51842,11 @@ function pobPaymentsHtml(r){
     <td>${esc(fmtDate(p.date)||'—')}</td><td>${esc(money(p.amount))} ${esc(p.currency||'')}</td><td>${esc(p.method||'')}</td>
     <td><b>${esc(p.ref||'')}</b></td><td>${esc(p.payer||'')}</td>
     <td>${p.receiptFileId ? `<a href="javascript:void(0)" onclick="pobOpenFile('${esc(p.receiptFileId)}')">receipt</a>` : '—'}</td>
-    <td>${statusBadge(p.status)}${p.verifiedAt ? `<div class="small-note" style="margin:0">${esc(teamName(p.verifiedBy))} · ${esc(fmtDate(p.verifiedAt))}</div>` : ''}</td>
-    <td>${pobMayApprove() && p.status==='Under Review' ? `<button class="btn sm primary" onclick="pobSetPaymentStatus('${esc(r.id)}','${esc(p.id)}','Paid')">Verify</button>
+    <td>${statusBadge(p.status)}${p.verifiedAt ? `<div class="small-note" style="margin:0">${esc(teamName(p.verifiedBy))} · ${esc(fmtDate(p.verifiedAt))}</div>` : ''}
+      ${p.status==='Under Review' ? `<div class="small-note" style="margin:0">Recorded by ${esc(p.recordedBy==='Partner' ? 'the partner' : teamName(p.recordedBy))} · with ${esc(pjNames(pobPayVerifiers(r, p)))}</div>` : ''}</td>
+    <td>${pobMayVerifyPayment(r, p) && p.status==='Under Review' ? `<button class="btn sm primary" onclick="pobSetPaymentStatus('${esc(r.id)}','${esc(p.id)}','Paid')">Verify</button>
         <button class="btn sm" onclick="pobSetPaymentStatus('${esc(r.id)}','${esc(p.id)}','Failed')">Failed</button>` : ''}
-      ${pobMayApprove() && p.status==='Paid' ? `<button class="btn sm ghost" onclick="pobSetPaymentStatus('${esc(r.id)}','${esc(p.id)}','Refunded')">Refunded</button>` : ''}
+      ${pobMayVerifyPayment(r, p) && p.status==='Paid' ? `<button class="btn sm ghost" onclick="pobSetPaymentStatus('${esc(r.id)}','${esc(p.id)}','Refunded')">Refunded</button>` : ''}
       ${can('POB','edit') && ['Under Review','Pending','Failed'].includes(p.status) ? `<button class="btn sm ghost" onclick="pobOpenPaymentForm('${esc(r.id)}','${esc(p.id)}')">Edit</button>` : ''}</td></tr>`);
   const hist = [];
   (r.payments||[]).forEach(p=>(p.history||[]).forEach(h=>hist.push(Object.assign({ref: p.ref}, h))));
@@ -51687,7 +51893,12 @@ async function pobOpenFile(fileId){
    does not verify the partner; every mandatory one has to be. */
 function pobDocOf(r, type){ return pobDocs().find(d=>!d.deletedAt && d.pobId===r.id && d.type===type) || null; }
 function pobDocRows(r){
-  const list = pobDocChecklist().map(c=>Object.assign({}, c, {doc: pobDocOf(r, c.type)}));
+  /* An agreement accepted another way than by uploading the signed copy —
+     online by the partner, in person, by email — does not wait for one. */
+  const ag = r.agreement;
+  const waived = !!(ag && ag.acceptedAt && ag.evidence && ag.evidence!=='Signed copy uploaded');
+  const list = pobDocChecklist().map(c=>Object.assign({}, c, {doc: pobDocOf(r, c.type),
+    mandatory: c.mandatory && !(waived && c.type==='Signed Agreement')}));
   pobDocs().filter(d=>!d.deletedAt && d.pobId===r.id && !list.some(x=>x.type===d.type))
     .forEach(d=>list.push({type: d.type, mandatory: false, doc: d}));
   return list.map(x=>Object.assign(x, {status: x.doc ? x.doc.status : 'Not Submitted'}));
@@ -51734,7 +51945,8 @@ async function pobAddDocVersion(r, type, file, note){
 async function pobReviewDoc(docId, decision){
   const d = pobDocs().find(x=>x.id===docId);
   if(!d) return;
-  if(!pobMayApprove()){ alert('Reviewing a document needs Approve permission on Partners.'); return; }
+  const owner = pobRecords().find(x=>x.id===d.pobId);
+  if(!owner || !pobMayEvaluate(owner)){ alert(owner ? pobNotEvaluator(owner) : 'Not found.'); return; }
   let reason = '';
   if(decision==='Rejected'){
     reason = (prompt('Why is the ' + d.type + ' rejected? The partner is told this, so be specific.') || '').trim();
@@ -51759,9 +51971,9 @@ function pobDocsHtml(r){
       <td>${statusBadge(x.status)}${x.status==='Rejected' && rej ? `<div class="small-note" style="margin:0">${esc(rej.reason)}</div>` : ''}</td>
       <td>${last ? `<a href="javascript:void(0)" onclick="pobOpenFile('${esc(last.fileId)}')">${esc(last.name)}</a> <span class="small-note">v${last.v} · ${esc(fmtDate(last.uploadedAt))} · ${esc(teamName(last.uploadedBy))}</span>` : '—'}</td>
       <td>${can('POB','edit') && x.status!=='Approved' ? `<button class="btn sm" onclick="pobOpenDocUpload('${esc(r.id)}', ${esc(JSON.stringify(x.type))})">${d ? (x.status==='Rejected' ? 'Resubmit' : 'New Version') : 'Upload'}</button>` : ''}
-        ${pobMayApprove() && d && ['Submitted','Resubmitted','Under Review'].includes(x.status) ? `<button class="btn sm primary" onclick="pobReviewDoc('${esc(d.id)}','Approved')">Approve</button>
+        ${pobMayEvaluate(r) && d && ['Submitted','Resubmitted','Under Review'].includes(x.status) ? `<button class="btn sm primary" onclick="pobReviewDoc('${esc(d.id)}','Approved')">Approve</button>
           <button class="btn sm" onclick="pobReviewDoc('${esc(d.id)}','Rejected')">Reject</button>` : ''}
-        ${pobMayApprove() && d && x.status==='Approved' ? `<button class="btn sm ghost" onclick="pobReviewDoc('${esc(d.id)}','Under Review')">Reopen</button>` : ''}</td></tr>`;
+        ${pobMayEvaluate(r) && d && x.status==='Approved' ? `<button class="btn sm ghost" onclick="pobReviewDoc('${esc(d.id)}','Under Review')">Reopen</button>` : ''}</td></tr>`;
   });
   const trail = [];
   pobDocs().filter(d=>!d.deletedAt && d.pobId===r.id).forEach(d=>(d.reviews||[]).forEach(x=>trail.push(Object.assign({type: d.type}, x))));
@@ -51806,10 +52018,53 @@ async function pobSaveEmpanelment(id){
   await logAudit('POB', id, 'Edit', diffFields(before, r, fields));
   closeModal(); navigate('pob', id);
 }
+/* The agreements a partner signs. Each one ticked is part of what they
+   accept; at least one has to be. */
+const POB_AGREEMENT_TYPES = ['Mutual Fund Agreement', 'Wealth Agreement', 'Broker Agreement'];
+/* ONE FORM FOR THE PARTNER (B2B changes 3). The empanelment form, the
+   agreement and the documents go to the partner as one page of their
+   own, filled in with what is on file, on a token of its own
+   (/empanelment, served by partner-portal.js). What comes back is
+   written on the record, and submitting it sends the application for
+   evaluation. The three boxes on the stage stay, for the team to fill
+   in for a partner who would rather not. */
+function pobEmpFormUrl(r){ return location.origin + '/empanelment?t=' + encodeURIComponent(r.empFormToken || ''); }
+async function pobSendEmpForm(id, how){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !can('POB','edit')) return;
+  if(!r.empFormToken){ r.empFormToken = pjNewFormToken(); }
+  const url = pobEmpFormUrl(r);
+  const at = new Date().toISOString();
+  if(how==='open'){
+    await save('pjOnboarding');
+    window.open(url, '_blank', 'noopener');
+    return;
+  }
+  if(how==='whatsapp'){
+    const phone = String(r.mobile||'').replace(/\D/g,'').slice(-10);
+    if(!phone){ alert('There is no mobile number on this record.'); return; }
+    const text = 'Dear ' + pjName(r) + ', please fill in your Freedom LifeX empanelment form — your details, documents and the partner agreement, in one place: ' + url;
+    window.open('https://wa.me/91' + phone + '?text=' + encodeURIComponent(text), '_blank', 'noopener');
+    DB.communications = DB.communications || [];
+    DB.communications.push({id: uid('COM'), channel: 'WhatsApp', direction: 'Outbound', status: 'Opened in WhatsApp',
+      statusNote: 'Opened in WhatsApp for the RM to send; BOSS cannot confirm it was sent.', subject: 'Empanelment form', body: text,
+      address: phone, module: 'POB', recordId: r.id, label: 'Empanelment form (WhatsApp)', at, by: currentUser});
+    await save('communications');
+  } else {
+    if(!r.email){ alert('There is no email address on this record. Add one on the empanelment form first.'); return; }
+    const res = await pjMail('POB', r, 'pobEmpanelmentForm', {FormLink: url, PartnerCode: r.partnerCode, ApplicationId: r.applicationId}, 'Empanelment form');
+    pjSaidMail(res, 'The empanelment form');
+  }
+  r.empFormSentAt = at; r.empFormSentBy = currentUser; r.empFormChannel = how;
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Empanelment Form Sent', [{field:'channel', oldValue:'', newValue: how==='whatsapp' ? 'WhatsApp' : 'Email'}]);
+  render();
+}
 function pobAgreementHtml(r){
   const a = r.agreement;
   return profCard('Agreement', [
     ['Status', a && a.acceptedAt ? '<span class="badge ok">Accepted</span>' : '<span class="badge warn">Not accepted yet</span>'],
+    ['Agreements', esc(a && (a.types||[]).length ? a.types.join(', ') : '')],
     ['Version', esc(a ? a.version : pobAgreementVersion())], ['Accepted On', a ? esc(fmtDateTime(a.acceptedAt)) : ''],
     ['Signed As', esc(a ? a.signedName : '')], ['Evidence', a && a.evidence ? esc(a.evidence) : ''], ['Recorded By', a ? esc(teamName(a.by)) : ''],
   ], can('POB','edit') ? `<div style="margin-top:8px"><button class="btn sm" onclick="pobOpenAgreement('${esc(r.id)}')">${a && a.acceptedAt ? 'View / Re-accept' : 'Record Acceptance'}</button></div>` : '');
@@ -51818,10 +52073,16 @@ function pobOpenAgreement(id){
   const r = pobRecords().find(x=>x.id===id);
   if(!r) return;
   openModal('Freedom LifeX Partner Agreement', `<div class="card" style="padding:12px;white-space:pre-wrap;font-size:13.5px;margin:0 0 10px">${esc(pobConfig().agreement)}</div>
-    <p class="small-note">Version ${esc(pobAgreementVersion())}. Upload the signed copy under Documents › Signed Agreement as the evidence of signature.</p>
+    <p class="small-note">Version ${esc(pobAgreementVersion())}.</p>
+    <div class="field"><label>Agreements accepted <span class="req">*</span></label>
+      ${POB_AGREEMENT_TYPES.map(x=>`<label style="display:flex;gap:8px;align-items:center;font-size:14px;margin:3px 0"><input type="checkbox" class="pob-ag-type" value="${esc(x)}"${((r.agreement||{}).types||POB_AGREEMENT_TYPES).includes(x)?' checked':''}> ${esc(x)}</label>`).join('')}</div>
     ${fieldInput({k:'agSigned', l:'Accepted by (full name as signed)', t:'text', req:1}, pjName(r))}
-    ${fieldInput({k:'agEvidence', l:'How it was accepted', t:'select', opts:['Signed copy uploaded','Signed in person','Accepted by email','E-sign']}, 'Signed copy uploaded')}`,
+    ${fieldInput({k:'agEvidence', l:'How it was accepted', t:'select', opts:['Signed copy uploaded','Signed in person','Accepted by email','E-sign']}, 'Signed copy uploaded')}
+    <div class="field" id="pobAgFileWrap"><label>Signed agreement <span class="req">*</span></label><input type="file" id="pobAgFile" accept="application/pdf,image/png,image/jpeg,image/webp">
+      <div class="small-note" style="margin-top:4px">Needed when the signed copy is uploaded. PDF or an image, up to 5 MB. It is filed under Documents › Signed Agreement.</div></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveAgreement('${esc(id)}')">Record Acceptance</button>`);
+  const sel = document.getElementById('f_agEvidence'), wrap = document.getElementById('pobAgFileWrap');
+  if(sel && wrap){ const sync = ()=>{ wrap.style.display = sel.value==='Signed copy uploaded' ? '' : 'none'; }; sel.addEventListener('change', sync); sync(); }
 }
 async function pobSaveAgreement(id){
   const r = pobRecords().find(x=>x.id===id);
@@ -51829,7 +52090,18 @@ async function pobSaveAgreement(id){
   const f = [{k:'agSigned', l:'Accepted by', req:1}, {k:'agEvidence', l:'How'}];
   const d = readFields(f);
   if(!validateRequired(f, d)) return;
-  r.agreement = {acceptedAt: new Date().toISOString(), by: currentUser, signedName: d.agSigned, evidence: d.agEvidence, version: pobAgreementVersion()};
+  const types = Array.from(document.querySelectorAll('.pob-ag-type')).filter(x=>x.checked).map(x=>x.value);
+  if(!types.length){ alert('Tick the agreements accepted — at least one of the ' + POB_AGREEMENT_TYPES.join(', ') + '.'); return; }
+  /* Uploading the signed copy is the evidence, so choosing it makes the
+     upload mandatory. */
+  let file = null;
+  if(d.agEvidence==='Signed copy uploaded'){
+    try { file = await pobUploadInput('pobAgFile'); } catch(e){ alert(e.message); return; }
+    if(!file){ alert('Upload the signed agreement — you chose “Signed copy uploaded”, so the signed copy is required.'); return; }
+    await pobAddDocVersion(r, 'Signed Agreement', file, 'Uploaded with the agreement acceptance');
+  }
+  r.agreement = {acceptedAt: new Date().toISOString(), by: currentUser, signedName: d.agSigned, evidence: d.agEvidence, version: pobAgreementVersion(),
+    types, signedFileId: file ? file.id : ((r.agreement||{}).signedFileId || '')};
   await save('pjOnboarding');
   await logAudit('POB', id, 'Agreement Accepted', [{field:'agreement', oldValue:'', newValue: r.agreement.version + ' · ' + d.agSigned}]);
   closeModal(); navigate('pob', id);
@@ -51843,7 +52115,7 @@ function pobCriteriaState(r){
 function pobOpenEvaluation(id){
   const r = pobRecords().find(x=>x.id===id);
   if(!r) return;
-  if(!pobMayApprove()){ alert('The evaluation is for someone with Approve permission on Partners.'); return; }
+  if(!pobMayEvaluate(r)){ alert(pobNotEvaluator(r)); return; }
   openModal('Evaluation Checklist — ' + pjName(r), `<p class="small-note" style="margin-top:0">Tick each criterion the application meets, with a note where it helps.</p>`
     + pobCriteriaState(r).map((x, i)=>`<div style="border-bottom:1px solid var(--line);padding:6px 0">
         <label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" class="pob-crit" data-i="${i}"${x.ok?' checked':''}> ${esc(x.c)}</label>
@@ -51852,7 +52124,7 @@ function pobOpenEvaluation(id){
 }
 async function pobSaveEvaluation(id){
   const r = pobRecords().find(x=>x.id===id);
-  if(!r || !pobMayApprove()) return;
+  if(!r || !pobMayEvaluate(r)) return;
   const crit = pobCriteria();
   const notes = Array.from(document.querySelectorAll('.pob-crit-note'));
   const out = {};
@@ -51875,7 +52147,7 @@ function pobOpenDecisionModal(module, id, tid){
   const r = pobRecords().find(x=>x.id===id);
   const d = POB_DECISIONS[tid];
   if(!r || !d) return;
-  if(!pobMayApprove()){ alert('Deciding the evaluation needs Approve permission on Partners.'); return; }
+  if(!pobMayEvaluate(r)){ alert(pobNotEvaluator(r)); return; }
   if(tid==='obApproveT'){
     const why = pobGuard(r, {id: tid}, true);
     if(why){ alert(why); return; }
@@ -51913,7 +52185,7 @@ function pobEvaluationHtml(r){
   return profTable('Evaluation Checklist — ' + cs.filter(x=>x.ok).length + ' of ' + cs.length + ' met', ['Criterion','Met','Note','By'],
       cs.map(x=>`<tr><td>${esc(x.c)}</td><td>${x.ok ? '<span class="badge ok">Yes</span>' : '<span class="badge warn">No</span>'}</td>
         <td>${esc(x.note)}</td><td>${esc(x.by ? teamName(x.by) : '')}</td></tr>`), 'No criteria set (POB › Settings).',
-      pobMayApprove() ? `<button class="btn sm" onclick="pobOpenEvaluation('${esc(r.id)}')">Update Checklist</button> <button class="btn sm ghost" onclick="pobEscalate('${esc(r.id)}')">Escalate</button>` : '')
+      pobMayEvaluate(r) ? `<button class="btn sm" onclick="pobOpenEvaluation('${esc(r.id)}')">Update Checklist</button> <button class="btn sm ghost" onclick="pobEscalate('${esc(r.id)}')">Escalate</button>` : '')
     + profTable('Review Attempts', ['Attempt','Submitted','Decision','Reason','By','When'],
       (r.attempts||[]).slice().reverse().map(a=>`<tr><td>${a.n}</td><td>${esc(fmtDateTime(a.submittedAt))}</td>
         <td>${a.decision ? statusBadge(a.decision) : '<span class="badge info">Under Review</span>'}</td><td>${esc(a.reason||'')}</td>
@@ -51927,27 +52199,50 @@ function pobOpenLoginModal(module, id, tid){
   const r = pobRecords().find(x=>x.id===id);
   if(!r) return;
   const l = r.login || {};
-  openModal('Create Login Access — ' + pjName(r), `<p class="small-note" style="margin-top:0">Record the Freedom LifeX account created for ${esc(pjName(r))}. The login details go to <b>${esc(r.email||'no address on file')}</b>. This is their account, not their activation as a partner: that comes at the end, after the readiness review.</p>`
-    + fieldInput({k:'lgUser', l:'Login ID', t:'text', req:1}, l.userId || r.email || '')
-    + fieldInput({k:'lgLink', l:'Activation / password setup link', t:'text', req:1, h:'From the Freedom LifeX platform. Never a password.'}, l.link || pobConfig().loginLink || '')
+  openModal('Create Login Access — ' + pjName(r), `<p class="small-note" style="margin-top:0">Creates ${esc(pjName(r))}’s own Freedom LifeX partner login, and emails <b>${esc(r.email||'no address on file')}</b> a link to set their password. Signed in at <b>${esc(location.origin)}/partner</b>, they see their dashboard, their own profile, empanelment, agreement and documents, and their tasks — nobody else’s, and nothing of BOSS. This is their account, not their activation as a partner: that comes at the end, after the readiness review.</p>`
+    + fieldInput({k:'lgUser', l:'Login ID (email)', t:'text', vk:'email', req:1}, l.userId || r.email || '')
     + fieldInput({k:'lgAccess', l:'Initial access', t:'select', opts:['Onboarding tasks only','Onboarding + learning']}, l.access || 'Onboarding tasks only'),
-    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveLogin('${esc(id)}','${esc(tid)}')">Record &amp; Send Login Details</button>`);
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveLogin('${esc(id)}','${esc(tid)}')">Create &amp; Send Login</button>`);
+}
+/* The partner's account lives on the server, in its own table beside the
+   staff accounts, never in the store the CRM hands to every browser.
+   Asked for here; the server answers with the one-time link that sets
+   the password. */
+async function pobPortalCall(path, body){
+  try{
+    const res = await fetch('/api/partner-portal/' + path, {method:'POST', headers: Object.assign({'Content-Type':'application/json'}, apiHeaders()),
+      body: JSON.stringify(body || {})});
+    const j = await res.json().catch(()=>({}));
+    if(!res.ok || !j.ok) return {ok: false, message: j.message || ('The server said ' + res.status)};
+    return j;
+  }catch(e){ return {ok: false, message: 'Could not reach the server: ' + e.message}; }
 }
 async function pobSaveLogin(id, tid){
   const r = pobRecords().find(x=>x.id===id);
   if(!r) return;
-  const f = [{k:'lgUser', l:'Login ID', req:1}, {k:'lgLink', l:'Activation link', req:1}, {k:'lgAccess', l:'Access'}];
+  const f = [{k:'lgUser', l:'Login ID', req:1, vk:'email'}, {k:'lgAccess', l:'Access'}];
   const d = readFields(f);
   if(!validateRequired(f, d)) return;
   const taken = pobLive().find(x=>x.id!==id && x.login && String(x.login.userId).toLowerCase()===String(d.lgUser).trim().toLowerCase());
   if(taken){ alert('The login ID ' + d.lgUser + ' already belongs to ' + pjName(taken) + '.'); return; }
+  const acct = await pobPortalCall('accounts', {pobId: id, email: d.lgUser.trim()});
+  if(!acct.ok){ alert('The login could not be created: ' + acct.message); return; }
   const at = new Date().toISOString();
-  r.login = Object.assign({}, r.login, {userId: d.lgUser.trim(), link: d.lgLink.trim(), access: d.lgAccess, status: 'Created', createdAt: at, createdBy: currentUser,
+  r.login = Object.assign({}, r.login, {userId: d.lgUser.trim(), link: acct.loginUrl, portal: true, access: d.lgAccess, status: 'Created', createdAt: at, createdBy: currentUser,
     history: ((r.login||{}).history||[]).concat([{at, by: currentUser, status: 'Created', note: d.lgAccess}])});
   closeModal();
-  const res = await pjMail('POB', r, 'pobLogin', {LoginId: r.login.userId, LoginLink: r.login.link, PartnerCode: r.partnerCode}, 'Login access');
+  const res = await pjMail('POB', r, 'pobLogin', {LoginId: r.login.userId, LoginLink: acct.setupUrl, PartnerCode: r.partnerCode}, 'Login access');
   await doTransition('POB', id, tid);
   pjSaidMail(res, 'The login letter');
+}
+async function pobResendLogin(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !r.login || !can('POB','edit')) return;
+  const acct = await pobPortalCall('accounts', {pobId: id, email: r.login.userId});
+  if(!acct.ok){ alert('A new link could not be made: ' + acct.message); return; }
+  const res = await pjMail('POB', r, 'pobLogin', {LoginId: r.login.userId, LoginLink: acct.setupUrl, PartnerCode: r.partnerCode}, 'Login access (new link)');
+  alert(res && res.status==='Sent' ? 'A new password link is on its way to ' + r.login.userId + '.' : 'The letter was not sent: ' + ((res && (res.note || res.status)) || '') + '\n\nThe link is: ' + acct.setupUrl);
+  render();
 }
 async function pobSetLoginStatus(id, status){
   const r = pobRecords().find(x=>x.id===id);
@@ -51955,6 +52250,8 @@ async function pobSetLoginStatus(id, status){
   if(!pobMayApprove()){ alert('Changing account access needs Approve permission on Partners.'); return; }
   const note = status==='Suspended' ? (prompt('Why is the account suspended?') || '').trim() : '';
   if(status==='Suspended' && !note){ alert('Say why, so the record shows it.'); return; }
+  const acct = await pobPortalCall('accounts/status', {pobId: id, active: status!=='Suspended'});
+  if(!acct.ok && r.login.portal){ alert('The account could not be changed: ' + acct.message); return; }
   const was = r.login.status;
   r.login.status = status;
   r.login.history = (r.login.history||[]).concat([{at: new Date().toISOString(), by: currentUser, status, note}]);
@@ -51990,7 +52287,8 @@ function pobRoleFields(r, change){
   return [
     {k:'roRole', l:'Business Role', t:'select', opts: POB_ROLES, req:1},
     {k:'roReason', l: change ? 'Reason for the change' : 'Why this role', t:'textarea', req: change ? 1 : 0},
-  ].concat(change ? [] : [{k:'roMinutes', l:'Minutes of the one-to-one', t:'textarea', req:1}]);
+  ].concat(change ? [] : [{k:'roMinutes', l:'Minutes of the one-to-one', t:'textarea', req:1},
+    {k:'roMentor', l:'Mentor', t:'team', h:'Reviews the partner’s tasks: approves each one, or sends it back with comments.'}]);
 }
 function pobOpenRoleModal(module, id, tid){
   const r = pobRecords().find(x=>x.id===id);
@@ -52003,7 +52301,8 @@ function pobOpenRoleModal(module, id, tid){
     `<p class="small-note" style="margin-top:0">${esc(r.applicationId)} · verification ${esc(r.applicationStatus||'')}${r.role ? ' · current role <b>' + esc(r.role) + '</b>' : ''}${r.proposedRole ? ' · proposed ' + esc(r.proposedRole) : ''}.
       The role decides the workflow. ${change ? 'Changing it keeps every task already done and replaces the ones still to do.' : ''}</p>
      ${POB_ROLES.map(role=>`<div class="small-note" style="margin:2px 0"><b>${esc(role)}</b>: ${esc(preview(role))}</div>`).join('')}
-     <div class="field-grid" style="margin-top:8px">${pobRoleFields(r, change).map(f=>fieldInput(f, f.k==='roRole' ? (r.role || (POB_ROLES.includes(r.proposedRole) ? r.proposedRole : '')) : '')).join('')}</div>`,
+     <div class="field-grid" style="margin-top:8px">${pobRoleFields(r, change).map(f=>fieldInput(f, f.k==='roRole' ? (r.role || (POB_ROLES.includes(r.proposedRole) ? r.proposedRole : ''))
+       : f.k==='roMentor' ? (r.mentorId || r.assignedTo || '') : '')).join('')}</div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveRole('${esc(id)}','${esc(tid||'')}')">${change ? 'Change Role' : 'Confirm Role'}</button>`);
 }
 async function pobSaveRole(id, tid){
@@ -52015,6 +52314,7 @@ async function pobSaveRole(id, tid){
   if(!validateRequired(f, d)) return;
   if(change && d.roRole===r.role){ alert(r.role + ' is the role already.'); return; }
   if(!change) r.roleMeeting = Object.assign({}, r.roleMeeting, {minutes: d.roMinutes, heldAt: new Date().toISOString()});
+  if(!change && d.roMentor) r.mentorId = d.roMentor;
   closeModal();
   await pobAssignRole(r, d.roRole, d.roReason || '');
   if(tid) await doTransition('POB', id, tid);
@@ -52096,7 +52396,7 @@ function pobTaskState(r, t){
   const waits = (t.dependsOn||[]).map(k=>tasks.find(x=>x.key===k)).filter(x=>x && x.status!=='Approved' && !(x.status==='Cancelled' && x.required===false));
   if(waits.length) return {open: false, overdue, reason: 'Waits for “' + waits[0].title + '”'};
   if(t.metric && t.count){
-    const have = Number((r.metrics||{})[t.metric]) || 0;
+    const have = Number(pobMetrics(r)[t.metric]) || 0;
     if(have < Number(t.count)) return {open: false, overdue, reason: 'Needs ' + t.count + ' ' + (POB_METRICS.find(m=>m[0]===t.metric)||[,''])[1].toLowerCase() + ' — ' + have + ' so far'};
   }
   return {open: true, overdue, reason: ''};
@@ -52142,8 +52442,9 @@ async function pobTaskAction(id, taskId, action){
   const r = pobRecords().find(x=>x.id===id);
   const t = r && (r.tasks||[]).find(x=>x.id===taskId);
   if(!t) return;
-  if(!can('POB','edit')){ alert('You do not have permission.'); return; }
+  if(!can('POB','edit') && !((action==='approve' || action==='return') && pobMayReviewTask(r))){ alert('You do not have permission.'); return; }
   const s = pobTaskState(r, t);
+  let submitted = false, reviewed = '';
   if(action==='start'){
     if(!s.open){ alert('“' + t.title + '” is not open yet: ' + s.reason + '.'); return; }
     if(t.kind==='session') return pobOpenSessionForm(id, taskId);
@@ -52164,17 +52465,28 @@ async function pobTaskAction(id, taskId, action){
       if(!ev){ alert('Say what was done, so it can be reviewed.'); return; }
       t.evidence = ev;
     }
-    if(t.approval){ pobTaskAppend(t, 'Submitted for Review', t.evidence || ''); t.submittedAt = new Date().toISOString(); }
+    if(t.approval){
+      pobTaskAppend(t, 'Pending Review', t.evidence || ''); t.submittedAt = new Date().toISOString(); t.submittedBy = currentUser;
+      submitted = true;
+    }
     else { pobTaskAppend(t, 'Approved', 'Done — needs no approval'); t.approvedAt = new Date().toISOString(); t.approvedBy = currentUser; }
   } else if(action==='approve' || action==='return'){
-    if(!pobMayApprove()){ alert('Approving a task needs Approve permission on Partners.'); return; }
-    if(t.status!=='Submitted for Review'){ alert('Only a task submitted for review can be approved or returned.'); return; }
-    if(action==='approve'){ pobTaskAppend(t, 'Approved'); t.approvedAt = new Date().toISOString(); t.approvedBy = currentUser; }
-    else {
-      const why = (prompt('What has to be corrected?') || '').trim();
-      if(!why){ alert('Say what has to be corrected.'); return; }
-      pobTaskAppend(t, 'Returned for Correction', why); t.evidence = '';
+    /* The mentor reviews. Approving opens whatever waited for this task;
+       asking for changes sends it back to the partner with the comment. */
+    if(!pobMayReviewTask(r)){ alert('“' + t.title + '” is for ' + teamName(pobMentor(r)) + ', the partner’s mentor, to review.'); return; }
+    if(t.status!=='Pending Review'){ alert('Only a task that is pending review can be approved or sent back.'); return; }
+    if(action==='approve'){
+      const c = prompt('Approve “' + t.title + '”. Any comment for the partner? (optional)');
+      if(c===null) return;
+      pobTaskAppend(t, 'Approved', c.trim()); t.approvedAt = new Date().toISOString(); t.approvedBy = currentUser;
+      t.reviews = (t.reviews||[]).concat([{at: t.approvedAt, by: currentUser, decision: 'Approved', comments: c.trim()}]);
+    } else {
+      const why = (prompt('What has to change? The partner reads this.') || '').trim();
+      if(!why){ alert('Say what has to change.'); return; }
+      pobTaskAppend(t, 'Changes Required', why); t.evidence = '';
+      t.reviews = (t.reviews||[]).concat([{at: new Date().toISOString(), by: currentUser, decision: 'Changes Required', comments: why}]);
     }
+    reviewed = action;
   } else if(action==='rework'){
     pobTaskAppend(t, 'In Progress', 'Being corrected');
   } else if(action==='block'){
@@ -52187,24 +52499,37 @@ async function pobTaskAction(id, taskId, action){
     if(t.required !== false){ alert('“' + t.title + '” is required by the workflow. It cannot be skipped.'); return; }
     pobTaskAppend(t, 'Cancelled', 'Optional — skipped');
   }
-  await pobRefreshTasks(r);
+  const opened = await pobRefreshTasks(r);
   await save('pjOnboarding');
   await logAudit('POB', id, 'Task ' + t.status, [{field: t.title, oldValue: '', newValue: t.status}]);
   render();
+  if(submitted) await pjAskVerifiers([pobMentor(r)], {what: 'A task for review', name: pjName(r), module: 'POB', recordId: r.id, view: 'pob',
+    details: t.title + (t.evidence ? '\n' + t.evidence : '')});
+  if(reviewed) await pobTellTaskReviewed(r, t, opened);
+}
+/* The partner hears what their mentor decided, and what opened because of it. */
+async function pobTellTaskReviewed(r, t, opened){
+  const last = (t.reviews||[]).slice(-1)[0] || {};
+  const ok = t.status==='Approved';
+  const res = await pjMail('POB', r, 'pobTaskReviewed', {Task: t.title, Decision: ok ? 'Approved' : 'Changes Required',
+    Comments: last.comments ? 'Comments: ' + last.comments : '', Mentor: teamName(pobMentor(r)), PortalLink: location.origin + '/partner',
+    NextStep: ok ? ((opened||[]).length ? 'Now open for you: ' + opened.map(x=>x.title).join(', ') + '.' : 'Well done.')
+      : 'Make the changes and submit it again.'}, 'Task review — ' + t.title);
+  pjSaidMail(res, 'The letter to the partner');
 }
 function pobTaskButtons(r, t){
   const s = pobTaskState(r, t), b = [];
   const btn = (label, action, kind) => `<button class="btn sm ${kind||''}" onclick="pobTaskAction('${esc(r.id)}','${esc(t.id)}','${action}')">${label}</button>`;
-  if(!can('POB','edit')) return '';
+  if(!can('POB','edit')) return t.status==='Pending Review' && pobMayReviewTask(r) ? btn('Approve', 'approve', 'primary') + ' ' + btn('Changes Required', 'return') : '';
   if(t.status==='Not Started' && s.open) b.push(btn(t.kind==='session' ? 'Schedule Session' : t.kind==='review' ? 'Schedule Review' : t.kind==='milestone' ? 'Unlock Course' : 'Start', 'start', 'primary'));
   if(t.status==='In Progress'){
     if(t.kind==='training') b.push(`<button class="btn sm" onclick="pobOpenAttempt('${esc(r.id)}','${esc(t.id)}')">Record Result</button>`);
     if(t.kind==='session' && t.sessionId) b.push(`<button class="btn sm" onclick="pobOpenSessionComplete('${esc(t.sessionId)}')">Session Outcome</button>`);
     if(t.kind!=='review' && t.kind!=='milestone') b.push(btn(t.approval ? 'Submit for Review' : 'Mark Done', 'submit', 'primary'));
   }
-  if(t.status==='Returned for Correction') b.push(btn('Correct', 'rework'));
-  if(t.status==='Submitted for Review' && pobMayApprove()){ b.push(btn('Approve', 'approve', 'primary')); b.push(btn('Return', 'return')); }
-  if(['Not Started','In Progress','Returned for Correction'].includes(t.status) && s.open) b.push(btn('Block', 'block', 'ghost'));
+  if(t.status==='Changes Required') b.push(btn('Correct', 'rework'));
+  if(t.status==='Pending Review' && pobMayReviewTask(r)){ b.push(btn('Approve', 'approve', 'primary')); b.push(btn('Changes Required', 'return')); }
+  if(['Not Started','In Progress','Changes Required'].includes(t.status) && s.open) b.push(btn('Block', 'block', 'ghost'));
   if(t.status==='Blocked') b.push(btn('Unblock', 'unblock'));
   if(t.required===false && !['Approved','Cancelled'].includes(t.status)) b.push(btn('Skip', 'cancel', 'ghost'));
   return b.join(' ');
@@ -52217,7 +52542,7 @@ function pobTasksHtml(r){
     <div class="row" style="gap:6px">
       ${pobMayApprove() && latest && wf && latest.version > wf.version ? `<button class="btn sm" onclick="pobMigrateWorkflow('${esc(r.id)}')">Move to v${latest.version}</button>` : ''}
       ${pobMayApprove() ? `<button class="btn sm" onclick="pobOpenRoleModal('POB','${esc(r.id)}')">Change Role</button>` : ''}
-      ${can('POB','edit') ? `<button class="btn sm" onclick="pobOpenMetrics('${esc(r.id)}')">Update Figures</button>` : ''}</div></div>`;
+      ${pobMayApprove() ? `<button class="btn sm" onclick="pobOpenMetrics('${esc(r.id)}')">Adjust Figures</button>` : ''}</div></div>`;
   const kindLabel = k => (POB_TASK_KINDS.find(x=>x[0]===k)||[,k])[1];
   const table = phase => {
     const list = pobLiveTasks(r).filter(t=>t.phase===phase).sort((a,b)=>(a.order||0)-(b.order||0));
@@ -52227,13 +52552,19 @@ function pobTasksHtml(r){
         return `<tr><td>${i+1}</td><td><b>${esc(t.title)}</b>${t.required===false ? ' <span class="small-note">optional</span>' : ''}
             ${!s.open && s.reason ? `<div class="small-note" style="margin:0">🔒 ${esc(s.reason)}</div>` : ''}
             ${t.evidence ? `<div class="small-note" style="margin:0">${esc(t.evidence)}</div>` : ''}
-            ${t.status==='Returned for Correction' ? `<div class="small-note" style="margin:0;color:var(--danger)">${esc(((t.history||[]).slice(-1)[0]||{}).note||'')}</div>` : ''}</td>
+            ${t.status==='Changes Required' ? `<div class="small-note" style="margin:0;color:var(--danger)">${esc(((t.history||[]).slice(-1)[0]||{}).note||'')}</div>` : ''}
+            ${t.status==='Pending Review' ? `<div class="small-note" style="margin:0">Submitted by ${esc(t.submittedBy==='Partner' ? 'the partner' : teamName(t.submittedBy))} · with ${esc(teamName(pobMentor(r)))} (mentor)</div>` : ''}
+            ${t.status==='Approved' && (t.reviews||[]).length && (t.reviews.slice(-1)[0].comments) ? `<div class="small-note" style="margin:0">Mentor: ${esc(t.reviews.slice(-1)[0].comments)}</div>` : ''}</td>
           <td>${esc(kindLabel(t.kind))}</td><td>${esc(pobTaskOwner(r, t))}</td><td>${esc(fmtDate(t.dueDate)||'—')}</td>
           <td>${statusBadge(t.status)}${s.overdue ? ' <span class="badge danger">Overdue</span>' : ''}</td><td>${pobTaskButtons(r, t)}</td></tr>`;
       }), 'No tasks in this phase.');
   };
   const retired = (r.tasks||[]).filter(t=>t.retired);
-  return head + profCard('Figures', POB_METRICS.map(([k, l])=>[l, esc(String((r.metrics||{})[k]||0))])) + table('onboarding') + table('growth')
+  const fig = pobMetrics(r);
+  return head + profCard('Figures — from the partner’s leads in the Client Journey', POB_METRICS.map(([k, l])=>[l, esc(String(fig[k]))
+      + (fig.adjust[k] ? ' <span class="small-note">(' + esc(String(fig.crm[k])) + ' in the CRM, ' + (fig.adjust[k] > 0 ? '+' : '') + esc(String(fig.adjust[k])) + ' adjusted)</span>' : '')])
+      .concat([['Client Journey', pobClientJourneyOpen(r) ? '<span class="badge ok">Open to the partner</span>' : '<span class="badge warn">Opens once the onboarding tasks are approved</span>']]))
+    + table('onboarding') + table('growth')
     + (retired.length ? profTable('From an Earlier Role or Version', ['Task','Status','Note'], retired.map(t=>`<tr><td>${esc(t.title)}</td><td>${statusBadge(t.status)}</td>
         <td>${esc(((t.history||[]).slice(-1)[0]||{}).note||'')}</td></tr>`), '') : '')
     + profTable('Role History', ['When','From','To','Reason','By','Workflow'], (r.roleHistory||[]).slice().reverse().map(h=>`<tr><td>${esc(fmtDateTime(h.at))}</td>
@@ -52242,20 +52573,22 @@ function pobTasksHtml(r){
 function pobOpenMetrics(id){
   const r = pobRecords().find(x=>x.id===id);
   if(!r) return;
-  openModal('Update Figures — ' + pjName(r), `<p class="small-note" style="margin-top:0">The course unlocks open from these counts.</p>`
-    + POB_METRICS.map(([k, l])=>fieldInput({k:'mt_' + k, l, t:'number'}, (r.metrics||{})[k] || 0)).join(''),
+  const fig = pobMetrics(r);
+  openModal('Adjust Figures — ' + pjName(r), `<p class="small-note" style="margin-top:0">The figures count the partner’s own leads in the Client Journey by themselves: ${POB_METRICS.map(([k, l])=>esc(l.toLowerCase()) + ' <b>' + fig.crm[k] + '</b>').join(', ')}. Add business done outside the CRM here; it is added to those counts. The course unlocks open from the totals.</p>`
+    + POB_METRICS.map(([k, l])=>fieldInput({k:'mt_' + k, l: l + ' — outside the CRM', t:'number'}, fig.adjust[k] || 0)).join(''),
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveMetrics('${esc(id)}')">Save</button>`);
 }
 async function pobSaveMetrics(id){
   const r = pobRecords().find(x=>x.id===id);
-  if(!r || !can('POB','edit')) return;
+  if(!r || !pobMayApprove()) return;
   const d = readFields(POB_METRICS.map(([k, l])=>({k:'mt_' + k, l})));
-  const before = Object.assign({}, r.metrics);
-  r.metrics = {};
-  POB_METRICS.forEach(([k])=>{ r.metrics[k] = Math.max(0, Math.floor(Number(d['mt_' + k]) || 0)); });
+  const before = Object.assign({}, r.metricsAdjust);
+  r.metricsAdjust = {};
+  POB_METRICS.forEach(([k])=>{ r.metricsAdjust[k] = Math.max(0, Math.floor(Number(d['mt_' + k]) || 0)); });
+  r.metrics = pobMetrics(r);
   const opened = await pobRefreshTasks(r);
   await save('pjOnboarding');
-  await logAudit('POB', id, 'Figures Updated', POB_METRICS.map(([k, l])=>({field: l, oldValue: String(before[k]||0), newValue: String(r.metrics[k])})));
+  await logAudit('POB', id, 'Figures Adjusted', POB_METRICS.map(([k, l])=>({field: l + ' (outside the CRM)', oldValue: String(before[k]||0), newValue: String(r.metricsAdjust[k])})));
   closeModal(); navigate('pob', id);
   if(opened.length) alert('Now open: ' + opened.map(t=>t.title).join(', '));
 }
@@ -52713,7 +53046,7 @@ function pobGuard(r, t, skipToken){
     if(left.length) return 'The application cannot go for evaluation yet:\n\n• ' + left.join('\n• ');
   }
   if(id==='obApproveT'){
-    if(!pobMayApprove()) return 'Deciding the evaluation needs Approve permission on Partners.';
+    if(!pobMayEvaluate(r)) return pobNotEvaluator(r);
     const left = [];
     pobCriteriaState(r).filter(x=>!x.ok).forEach(x=>left.push('Checklist — ' + x.c));
     pobDocsVerification(r).pending.forEach(x=>left.push(x.type + ' — ' + x.status));
@@ -52721,7 +53054,7 @@ function pobGuard(r, t, skipToken){
     if(!skipToken && !(r._decision && r._decision.tid===id)) return 'Approve the evaluation from the stage button.';
   }
   if(id==='obMoreInfoT' || id==='obRejectT'){
-    if(!pobMayApprove()) return 'Deciding the evaluation needs Approve permission on Partners.';
+    if(!pobMayEvaluate(r)) return pobNotEvaluator(r);
     if(!(r._decision && r._decision.tid===id && r._decision.reason)) return 'Give the reason from the stage button.';
   }
   if(id==='obLoginT' && !r.login) return 'Record the login access from the stage button.';
@@ -52752,8 +53085,12 @@ async function pobSideEffect(r, t){
       d.status = 'Under Review'; d.reviews = (d.reviews||[]).concat([{at, by: currentUser, decision: 'Under Review', reason: 'Application submitted'}]);
     });
     await save('pjDocuments');
-    const team = Array.from(new Set([r.assignedTo].concat(DB.team.filter(m=>isMemberActive(m) && isAdmin(m)).map(m=>m.id)))).filter(x=>x && x!==currentUser);
-    await notifyUsers(team, {title: 'Empanelment ' + (t.id==='obResubmitT' ? 'resubmitted' : 'submitted') + ' — ' + pjName(r), body: r.applicationId + ' is waiting for evaluation.', view:'pob', arg:r.id, kind:'pob'});
+    r.submittedBy = currentUser;
+    r.evaluatorIds = pjVerifiersFor(r.assignedTo);
+    if(r.assignedTo && r.assignedTo!==currentUser) await notifyUser(r.assignedTo, {title: 'Empanelment ' + (t.id==='obResubmitT' ? 'resubmitted' : 'submitted') + ' — ' + pjName(r),
+      body: r.applicationId + ' is with ' + pjNames(r.evaluatorIds) + ' for evaluation.', view:'pob', arg:r.id, kind:'pob'});
+    await pjAskVerifiers(r.evaluatorIds, {what: 'An empanelment for evaluation', name: pjName(r), module: 'POB', recordId: r.id, view: 'pob',
+      details: r.applicationId + ' · partner code ' + r.partnerCode + ' · attempt ' + r.attempts.length});
   }
   if(['obApproveT','obMoreInfoT','obRejectT'].includes(t.id)){
     const d = POB_DECISIONS[t.id];
@@ -52801,14 +53138,18 @@ function pobStagePanelHtml(r, cur){
     return (last && last.decision==='More Information Requested' ? note('<b>More information requested:</b> ' + esc(last.reason)) : '')
       + note('Form ' + (r.empanelmentSavedAt ? '✅' : '⬜') + ' · Agreement ' + (r.agreement && r.agreement.acceptedAt ? '✅' : '⬜')
       + ' · Documents ' + (dv.total - dv.missing.length) + ' of ' + dv.total + ' uploaded.')
+      + (r.empFormSentAt ? note('Empanelment form sent ' + esc(fmtDateTime(r.empFormSentAt)) + (r.empFormSubmittedAt ? ' · <span class="badge ok">submitted by the partner ' + esc(fmtDateTime(r.empFormSubmittedAt)) + '</span>' : ' · not back yet') + '.') : '')
+      + (can('POB','edit') ? btn('Send Empanelment Form — Email', `pobSendEmpForm('${id}','email')`) + btn('Send on WhatsApp', `pobSendEmpForm('${id}','whatsapp')`)
+          + btn('Open the Form', `pobSendEmpForm('${id}','open')`) : '')
       + (can('POB','edit') ? btn('Empanelment Form', `pobOpenEmpanelment('${id}')`) + btn('Agreement', `pobOpenAgreement('${id}')`) : '')
       + btn('Documents', `window._pobTabRec='documents'; render()`);
   }
   if(cur==='evaluation'){
     const cs = pobCriteriaState(r), dv = pobDocsVerification(r);
-    return note('Attempt ' + ((r.attempts||[]).length) + ' · checklist ' + cs.filter(x=>x.ok).length + ' of ' + cs.length + ' · documents ' + dv.approved + ' of ' + dv.total + ' approved.'
-        + (pobMayApprove() ? '' : ' Deciding it needs Approve permission on Partners.'))
-      + (pobMayApprove() ? btn('Evaluation Checklist', `pobOpenEvaluation('${id}')`) + btn('Review Documents', `window._pobTabRec='documents'; render()`) + btn('Escalate', `pobEscalate('${id}')`) : '');
+    return note('Attempt ' + ((r.attempts||[]).length) + ' · checklist ' + cs.filter(x=>x.ok).length + ' of ' + cs.length + ' · documents ' + dv.approved + ' of ' + dv.total + ' approved'
+        + (r.submittedBy==='Partner' ? ' · submitted by the partner' : '') + '. With ' + esc(pjNames(pobEvaluators(r))) + ' for evaluation.'
+        + (pobMayEvaluate(r) ? '' : ' ' + esc(pobNotEvaluator(r))))
+      + (pobMayEvaluate(r) ? btn('Evaluation Checklist', `pobOpenEvaluation('${id}')`) + btn('Review Documents', `window._pobTabRec='documents'; render()`) + btn('Escalate', `pobEscalate('${id}')`) : '');
   }
   if(cur==='rejected'){ const a = (r.attempts||[]).slice(-1)[0]; return note('Rejected' + (a && a.reason ? ': ' + esc(a.reason) : '') + '. A resubmission opens a new review; this decision stays on record.'); }
   if(cur==='loginAccess') return note('Create their Freedom LifeX account and record it here. Operational activation comes later, after the readiness review.');
@@ -52833,16 +53174,19 @@ function pobStagePanelHtml(r, cur){
 /* ---------- the screens ---------- */
 function pobApprovalQueue(){
   const out = [];
-  const mine = visibleRecords(pobLive(), r=>r.assignedTo, r=>r.branch);
+  /* A verifier is often not the owner, so what waits for me is looked
+     for beyond the records I own. */
+  const mineIds = new Set(visibleRecords(pobLive(), r=>r.assignedTo, r=>r.branch).map(r=>r.id));
+  const mine = pobLive().filter(r=>mineIds.has(r.id) || pobWaitsForMe(r));
   mine.forEach(r=>{
-    (r.payments||[]).filter(p=>p.status==='Under Review').forEach(p=>out.push({r, what:'Payment', detail: money(p.amount) + ' · ' + p.ref, at: p.recordedAt, tab:'payments'}));
-    pobDocs().filter(d=>!d.deletedAt && d.pobId===r.id && ['Submitted','Resubmitted','Under Review'].includes(d.status))
+    (r.payments||[]).filter(p=>p.status==='Under Review' && pobMayVerifyPayment(r, p)).forEach(p=>out.push({r, what:'Payment', detail: money(p.amount) + ' · ' + p.ref, at: p.recordedAt, tab:'payments'}));
+    if(pobMayEvaluate(r)) pobDocs().filter(d=>!d.deletedAt && d.pobId===r.id && ['Submitted','Resubmitted','Under Review'].includes(d.status))
       .forEach(d=>out.push({r, what:'Document', detail: d.type + ' (' + d.status + ', v' + (d.versions||[]).length + ')', at: d.submittedAt, tab:'documents'}));
-    if(stateOf('POB', r)==='evaluation') out.push({r, what:'Application', detail: r.applicationId + ' · attempt ' + (r.attempts||[]).length, at: r.submittedAt, tab:'evaluation'});
-    pobLiveTasks(r).filter(t=>t.status==='Submitted for Review').forEach(t=>out.push({r, what:'Task', detail: t.title, at: t.submittedAt, tab:'tasks'}));
+    if(stateOf('POB', r)==='evaluation' && pobMayEvaluate(r)) out.push({r, what:'Application', detail: r.applicationId + ' · attempt ' + (r.attempts||[]).length, at: r.submittedAt, tab:'evaluation'});
+    if(pobMayReviewTask(r)) pobLiveTasks(r).filter(t=>t.status==='Pending Review').forEach(t=>out.push({r, what:'Task', detail: t.title + ' · mentor ' + teamName(pobMentor(r)), at: t.submittedAt, tab:'tasks'}));
     pobSessions().filter(s=>s.pobId===r.id && s.status==='Scheduled' && s.scheduledAt && s.scheduledAt.slice(0,10) <= pobToday())
       .forEach(s=>out.push({r, what:'Session outcome', detail: 'Role Clarity Session ' + fmtDate(s.scheduledAt.slice(0,10)), at: s.scheduledAt, tab:'sessions'}));
-    if(stateOf('POB', r)==='readiness') out.push({r, what:'Activation', detail: r.role + ' · ' + pobReadiness(r).filter(x=>x.ok).length + ' of ' + pobReadiness(r).length + ' met', at: '', tab:'readiness'});
+    if(stateOf('POB', r)==='readiness' && pobMayApprove()) out.push({r, what:'Activation', detail: r.role + ' · ' + pobReadiness(r).filter(x=>x.ok).length + ' of ' + pobReadiness(r).length + ' met', at: '', tab:'readiness'});
   });
   return out;
 }
@@ -52954,7 +53298,7 @@ function viewPOBDetail(id){
           ['Name', esc(pjName(r))], ['Partner Code', esc(r.partnerCode)], ['Application ID', esc(r.applicationId)],
           ['Email', esc(r.email||'')], ['Phone', esc(r.mobile||'')], ['Address', esc(r.address||'')], ['City', esc(r.city||'')], ['PAN', esc(r.pan||'')],
           ['Proposed Role', esc(r.proposedRole||'')], ['Business Role', esc(r.role||'Not assigned')], ['Registration Date', esc(fmtDate(r.registrationDate)||'')],
-          ['Onboarding Owner', esc(teamName(r.assignedTo))], ['Branch', esc(r.branch||'')], ['Created', esc(fmtDateTime(r.createdAt))], ['Updated', esc(r.updatedAt ? fmtDateTime(r.updatedAt) : '')],
+          ['Onboarding Owner', esc(teamName(r.assignedTo))], ['Mentor', esc(teamName(pobMentor(r)))], ['Branch', esc(r.branch||'')], ['Created', esc(fmtDateTime(r.createdAt))], ['Updated', esc(r.updatedAt ? fmtDateTime(r.updatedAt) : '')],
         ])
         + profCard('Status', [
           ['Stage', esc(stateLabel('POB', st))], ['Application', statusBadge(r.applicationStatus)], ['Payment', statusBadge(pobPaymentStatus(r))],
@@ -52967,7 +53311,8 @@ function viewPOBDetail(id){
           ['Activated', esc(r.activatedAt ? fmtDate(r.activatedAt) : '')],
         ], r.login && pobMayApprove() ? `<div class="row" style="gap:6px;margin-top:8px">
           ${r.login.status!=='Activated' ? `<button class="btn sm" onclick="pobSetLoginStatus('${esc(id)}','Activated')">Activate Account</button>` : ''}
-          ${r.login.status!=='Suspended' ? `<button class="btn sm ghost" onclick="pobSetLoginStatus('${esc(id)}','Suspended')">Suspend Account</button>` : ''}</div>` : '')
+          ${r.login.status!=='Suspended' ? `<button class="btn sm ghost" onclick="pobSetLoginStatus('${esc(id)}','Suspended')">Suspend Account</button>` : ''}
+          <button class="btn sm ghost" onclick="pobResendLogin('${esc(id)}')">Send a New Password Link</button></div>` : '')
         + profTable('Pending & Due', ['Task','Status','Owner','Due'], pobLiveTasks(r).filter(t=>!['Approved','Cancelled'].includes(t.status) && pobTaskState(r, t).open)
             .map(t=>`<tr><td>${esc(t.title)}</td><td>${statusBadge(t.status)}${pobTaskState(r, t).overdue ? ' <span class="badge danger">Overdue</span>' : ''}</td>
               <td>${esc(pobTaskOwner(r, t))}</td><td>${esc(fmtDate(t.dueDate)||'—')}</td></tr>`), r.role ? 'Nothing open right now.' : 'Tasks arrive with the role.');
@@ -74960,6 +75305,15 @@ const MAIL_TEMPLATE_DEFS = [
   {group:'Partner Onboarding', key:'pobPaymentAck', label:'POB — payment acknowledgement',
    when:'Sent from Send Payment Acknowledgement, once the due payment is verified.',
    vars:['Name','Amount','Reference','PaidOn','PartnerCode','ApplicationId','RMName','FirmName']},
+  {group:'Partner Journey', key:'pjVerifyRequest', label:'Verification request to the verifier',
+   when:'Sent to whoever has to verify something: a fee or due payment, ARN / EUIN details, an empanelment for evaluation, or a task for its mentor. They are the reporting manager of whoever put it in, the mapped RM when the partner put it in, or an administrator.',
+   vars:['VerifierName','What','Name','Details','SubmittedBy','Link','FirmName']},
+  {group:'Partner Onboarding', key:'pobEmpanelmentForm', label:'POB — the empanelment form, sent to the partner',
+   when:'Sent from Send Empanelment Form. The one form carries the partner\u2019s details, their documents and the agreement, filled in with what is on file.',
+   vars:['Name','FormLink','PartnerCode','ApplicationId','RMName','FirmName']},
+  {group:'Partner Onboarding', key:'pobTaskReviewed', label:'POB — a task reviewed by the mentor',
+   when:'Sent to the partner when their mentor approves a task or asks for changes.',
+   vars:['Name','Task','Decision','Comments','NextStep','Mentor','PortalLink','FirmName']},
   {group:'Partner Onboarding', key:'pobLogin', label:'POB — login access',
    when:'Sent from Login Access Created, with the login ID and the password setup link.',
    vars:['Name','LoginId','LoginLink','PartnerCode','FirmName']},

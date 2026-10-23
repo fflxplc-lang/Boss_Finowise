@@ -142,8 +142,14 @@ suite({mail: true}, async t => {
       document.getElementById('f_proposedRole').value = 'Ninja';
       await pobSaveEmpanelment(id);
       pobOpenAgreement(id);
+      // Signed copy uploaded is the default, so the upload is required.
+      await pobSaveAgreement(id);
+      const refused = !(pobRecords().find(x=>x.id===id).agreement);
+      const signed = new File([new Blob(['%PDF-1.4 signed'], {type: 'application/pdf'})], 'signed.pdf', {type: 'application/pdf'});
+      const sdt = new DataTransfer(); sdt.items.add(signed); document.getElementById('pobAgFile').files = sdt.files;
       await pobSaveAgreement(id);
       const o = pobRecords().find(x=>x.id===id);
+      if(!refused || !o.agreement || !(o.agreement.types||[]).length || !o.agreement.signedFileId) return {agreement: o.agreement || null, refused};
       // A real upload, through the server, for one; the rest straight in.
       const blob = new Blob(['%PDF-1.4 test'], {type: 'application/pdf'});
       const file = new File([blob], 'pan.pdf', {type: 'application/pdf'});
@@ -212,11 +218,10 @@ suite({mail: true}, async t => {
   await step('login access is recorded and written to them', async () => {
     const r = await t.eval(async id=>{
       pobOpenLoginModal('POB', id, 'obLoginT');
-      document.getElementById('f_lgLink').value = 'https://app.freedomlifex.in/activate/xyz';
       await pobSaveLogin(id, 'obLoginT');
       const o = pobRecords().find(x=>x.id===id);
       const m = pjComms('POB', id).find(c=>c.label==='Login access');
-      return {stage: stateOf('POB', o), login: o.login.status, user: o.login.userId, mail: !!(m && m.body.includes('activate/xyz'))};
+      return {stage: stateOf('POB', o), login: o.login.status, user: o.login.userId, mail: !!(m && /\/partner\/setup\?t=/.test(m.body))};
     }, pob);
     if(r.stage !== 'roleMeeting' || r.login !== 'Created' || r.user !== 'kiran.shah@example.com' || !r.mail) throw new Error(JSON.stringify(r));
     return 'account Created (not yet activated), letter sent';
@@ -289,8 +294,8 @@ suite({mail: true}, async t => {
       await pobTaskAction(id, task.id, 'approve');
       return {s1, s2, s3: task.status, evidence: task.evidence};
     }, pob);
-    if(r.s1 !== 'Submitted for Review' || r.s2 !== 'Returned for Correction' || r.s3 !== 'Approved' || r.evidence !== 'Plan v2 link') throw new Error(JSON.stringify(r));
-    return 'Submitted → Returned → Approved';
+    if(r.s1 !== 'Pending Review' || r.s2 !== 'Changes Required' || r.s3 !== 'Approved' || r.evidence !== 'Plan v2 link') throw new Error(JSON.stringify(r));
+    return 'Pending Review → Changes Required → Approved';
   });
 
   await step('training has to be passed, not just opened', async () => {
@@ -353,7 +358,7 @@ suite({mail: true}, async t => {
       for(const t of pobRequiredOnboarding(o).filter(x=>x.status!=='Approved')){
         await pobTaskAction(id, t.id, 'start');
         if(t.kind==='training'){ pobOpenAttempt(id, t.id); document.getElementById('f_atResult').value = 'Completed'; await pobSaveAttempt(id, t.id); }
-        else { await pobTaskAction(id, t.id, 'submit'); if(t.status==='Submitted for Review') await pobTaskAction(id, t.id, 'approve'); }
+        else { await pobTaskAction(id, t.id, 'submit'); if(t.status==='Pending Review') await pobTaskAction(id, t.id, 'approve'); }
       }
       await doTransition('POB', id, 'obReadyT');
       const ready = stateOf('POB', o);
@@ -462,7 +467,7 @@ suite({mail: true}, async t => {
   await step('the letters are in Setup › Email Templates under Partner Onboarding', async () => {
     const r = await t.eval(()=>MAIL_TEMPLATE_DEFS.filter(d=>d.group==='Partner Onboarding').map(d=>d.key)
       .filter(k=>DB.config.mailTemplates[k] && DB.config.mailTemplates[k].subject));
-    if(r.length !== 6) throw new Error(r.join());
+    if(r.length !== 8) throw new Error(r.join());
     return r.join(', ');
   });
 });

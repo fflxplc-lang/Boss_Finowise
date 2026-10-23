@@ -267,8 +267,8 @@ suite(async t => {
       await pjSaveStageFields('PMS', id, 'examDateT', 'exam');
       await doTransition('PMS', id, 'examPassT');
       pjOpenArnModal('PMS', id, 'arnSubmitT');
-      set('arn', 'ARN-123456'); set('arnName', 'Asha Rao'); set('arnValidFrom', '2027-02-01'); set('arnValidTo', '2027-01-01');
-      set('euin', 'E123456'); set('euinName', 'Asha Rao'); set('euinValidFrom', '2027-02-01'); set('euinValidTo', '2030-01-31');
+      set('arn', 'ARN-123456'); set('arnName', 'Asha Rao'); set('arnMobile', '9876543210'); set('arnValidFrom', '2027-02-01'); set('arnValidTo', '2027-01-01');
+      set('euin', 'E123456'); set('euinName', 'Asha Rao'); set('euinMobile', '9876543210'); set('euinValidFrom', '2027-02-01'); set('euinValidTo', '2030-01-31');
       await pjSaveStageFields('PMS', id, 'arnSubmitT', 'arn');
       const backwards = stateOf('PMS', pjPartners().find(x=>x.id===id));
       set('arnValidTo', '2030-01-31');
