@@ -37,5 +37,26 @@ export function requireAdmin(req, res, next) {
   next();
 }
 
-// Admins see everything; everyone else is scoped to their own earnings.
-export const scopeUser = (req) => (req.user.role === 'admin' ? null : req.user.id);
+// Whose data a request may see: null for an admin (everything), otherwise a
+// list of payout user ids. Ops and partners see their own; a mentor sees their
+// own and that of everyone who reports to them directly.
+const directReports = db.prepare('SELECT id FROM users WHERE parent_id = ? AND active = 1');
+export function scopeIds(req) {
+  if (req.user.role === 'admin') return null;
+  const ids = [req.user.id];
+  if (req.user.role === 'mentor') for (const u of directReports.all(req.user.id)) ids.push(u.id);
+  return ids;
+}
+// The same scope as one SQL parameter: `col IN (SELECT value FROM json_each(?))`
+// takes it, so a query keeps one placeholder however many people are in scope.
+export const scopeUser = (req) => { const ids = scopeIds(req); return ids && JSON.stringify(ids); };
+export const IN_SCOPE = 'IN (SELECT value FROM json_each(?))';
+// Whose personal numbers (monthly, invoice, logs): an admin may pick anyone,
+// a mentor anyone in their scope, everyone else only themselves.
+export function targetUser(req) {
+  const asked = req.query.userId ? Number(req.query.userId) : null;
+  if (!asked) return req.user.id;
+  const ids = scopeIds(req);
+  if (!ids || ids.includes(asked)) return asked;
+  throw Object.assign(new Error('You can only see your own payouts and your direct reports\''), { status: 403 });
+}

@@ -2,7 +2,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { db, audit, tx, getSetting, setSetting } from '../db.js';
-import { requireAdmin, scopeUser } from '../auth.js';
+import { requireAdmin, scopeIds } from '../auth.js';
 import { parsePartner } from '../parsers/registrar.js';
 import { parseJSON, upper } from '../util.js';
 
@@ -62,13 +62,13 @@ const live = "JOIN batches t ON t.id = p.batch_id AND t.status = 'live'";
 r.get('/', (req, res) => {
   const partner = upper(req.query.partner || 'MOFSL');
   const month = req.query.month || '';
-  const uid = scopeUser(req);
+  const ids = scopeIds(req);
   const where = `p.partner = ? AND (? = '' OR p.period = ?)`;
   const args = [partner, month, month];
   const rows = db.prepare(`SELECT p.* FROM partner_rows p ${live} WHERE ${where}`).all(...args);
   const per = payoutRows(rows, partner);
   const users = new Map(db.prepare('SELECT id, name, code, level FROM users').all().map((u) => [u.id, u]));
-  const payouts = [...per.entries()].map(([id, amount]) => ({ ...users.get(id), amount })).filter((x) => !uid || x.id === uid).sort((a, b) => b.amount - a.amount);
+  const payouts = [...per.entries()].map(([id, amount]) => ({ ...users.get(id), amount })).filter((x) => !ids || ids.includes(x.id)).sort((a, b) => b.amount - a.amount);
   const sum = (k) => rows.reduce((s, x) => s + (x[k] || 0), 0);
   const months = db.prepare(`SELECT p.period, COUNT(*) rows, COUNT(DISTINCT p.code) codes, SUM(p.total) total, SUM(p.mentor) mentor, SUM(p.partner_share) partner_share,
       COUNT(DISTINCT CASE WHEN p.client_id IS NULL THEN p.code END) unmapped

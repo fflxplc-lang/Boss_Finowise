@@ -1,26 +1,30 @@
 import { Router } from 'express';
 import { db, audit, tx, LEVEL_NAMES } from '../db.js';
-import { requireAdmin } from '../auth.js';
+import { requireAdmin, scopeIds, scopeUser, IN_SCOPE } from '../auth.js';
 import { publicUser } from './auth.js';
 import { recalculate, rebuildHierarchies } from '../services/payout.js';
 import { parseJSON } from '../util.js';
 
 const r = Router();
 
+// Admins list the whole team; anyone else only the people in their own scope.
 r.get('/', (req, res) => {
   const q = `%${req.query.q || ''}%`;
+  const scope = scopeUser(req);
   const rows = db.prepare(`
     SELECT u.*, p.name parent_name,
       (SELECT COUNT(DISTINCT c.id) FROM clients c, json_each(c.hierarchy) j WHERE j.value = u.id) clients
     FROM users u LEFT JOIN users p ON p.id = u.parent_id
-    WHERE u.name LIKE ? OR u.email LIKE ? OR COALESCE(u.code,'') LIKE ?
-    ORDER BY u.level, u.name`).all(q, q, q);
+    WHERE (u.name LIKE ? OR u.email LIKE ? OR COALESCE(u.code,'') LIKE ?) ${scope ? `AND u.id ${IN_SCOPE}` : ''}
+    ORDER BY u.level, u.name`).all(q, q, q, ...(scope ? [scope] : []));
   res.json(rows.map((u) => ({ ...publicUser(u), parent_name: u.parent_name, clients: u.clients, level_name: LEVEL_NAMES[u.level] })));
 });
 
 r.get('/levels', (_req, res) => res.json(LEVEL_NAMES));
 
 r.get('/:id', (req, res) => {
+  const ids = scopeIds(req);
+  if (ids && !ids.includes(Number(req.params.id))) throw Object.assign(new Error('Not in your team'), { status: 403 });
   const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!u) throw new Error('User not found');
   res.json(publicUser(u));
@@ -36,7 +40,7 @@ function fieldsFrom(body) {
     pan: body.pan?.trim()?.toUpperCase() || null,
     parent_id: body.parent_id ? Number(body.parent_id) : null,
     sharing_pct: Number(body.sharing_pct) || 0,
-    role: ['admin', 'ops', 'partner'].includes(body.role) ? body.role : 'ops',
+    role: ['admin', 'mentor', 'ops', 'partner'].includes(body.role) ? body.role : 'ops',
     level: Math.min(7, Math.max(1, Number(body.level) || 1)),
     extra_levels: JSON.stringify(levels),
     bank: JSON.stringify(body.bank || {}),

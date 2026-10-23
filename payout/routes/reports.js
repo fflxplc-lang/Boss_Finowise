@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { db, getSetting, setSetting, audit, notify, tx, LEVEL_NAMES } from '../db.js';
-import { requireAdmin, scopeUser } from '../auth.js';
+import { requireAdmin, scopeUser, scopeIds, targetUser, IN_SCOPE } from '../auth.js';
 import { recalculate, chainFor, leadByError } from '../services/payout.js';
 import { invoiceTax } from '../services/tax.js';
 import { linkFolio } from '../services/mapping.js';
@@ -22,13 +22,11 @@ function periodFilter(q) {
   return { sql: '1 = 1', args: [], label: 'All periods' };
 }
 
-// Whose numbers: admins may look at anyone via ?userId, others only at themselves.
-const targetUser = (req) => (req.user.role === 'admin' && req.query.userId ? Number(req.query.userId) : req.user.id);
 
 r.get('/summary', (req, res) => {
   const pf = periodFilter(req.query);
   const uid = scopeUser(req);
-  const mine = uid ? 'AND b.id IN (SELECT brokerage_id FROM payout_lines WHERE user_id = ?)' : '';
+  const mine = uid ? `AND b.id IN (SELECT brokerage_id FROM payout_lines WHERE user_id ${IN_SCOPE})` : '';
   const a = (...x) => (uid ? [...x, uid] : x);
   const totals = db.prepare(`SELECT COALESCE(SUM(b.amount),0) gross, COUNT(*) c FROM brokerage b ${LIVE} WHERE ${pf.sql} ${mine}`).get(...a(...pf.args));
   const myNet = db.prepare(`SELECT COALESCE(SUM(l.amount),0) s FROM payout_lines l JOIN brokerage b ON b.id = l.brokerage_id ${LIVE} WHERE ${pf.sql} AND l.user_id = ?`).get(...pf.args, req.user.id).s;
@@ -116,7 +114,7 @@ r.get('/client-wise', (req, res) => {
   const uid = scopeUser(req);
   const me = req.user.id;
   const latest = latestPeriod();
-  const mine = uid ? 'AND b.id IN (SELECT brokerage_id FROM payout_lines WHERE user_id = ?)' : '';
+  const mine = uid ? `AND b.id IN (SELECT brokerage_id FROM payout_lines WHERE user_id ${IN_SCOPE})` : '';
   const rows = db.prepare(`
     SELECT COALESCE(c.name, MAX(b.investor), 'unknown') name, COALESCE(c.pan, MAX(b.pan)) pan, c.id client_id,
       COUNT(*) txs, SUM(b.amount) gross,
@@ -152,7 +150,7 @@ r.get('/team', (req, res) => {
         AND b.id IN (SELECT brokerage_id FROM payout_lines WHERE user_id = u.id)), 0) gross,
       COALESCE((SELECT SUM(l.amount) FROM payout_lines l JOIN brokerage b ON b.id = l.brokerage_id ${LIVE}
         WHERE ${pf.sql} AND l.user_id = u.id), 0) earnings
-    FROM users u WHERE u.active = 1 ${uid ? 'AND u.id = ?' : ''} ORDER BY u.level DESC, earnings DESC`).all(...pf.args, ...pf.args, ...(uid ? [uid] : []))
+    FROM users u WHERE u.active = 1 ${uid ? `AND u.id ${IN_SCOPE}` : ''} ORDER BY u.level DESC, earnings DESC`).all(...pf.args, ...pf.args, ...(uid ? [uid] : []))
     .map((u) => ({ ...u, level_name: u.role === 'admin' ? 'ADMIN' : LEVEL_NAMES[u.level], pctOfGross: u.gross ? (u.earnings / u.gross) * 100 : 0, status: 'CALCULATED' }));
   res.json({ rows, label: pf.label });
 });
@@ -174,7 +172,7 @@ r.get('/growth', (req, res) => {
   const uid = scopeUser(req);
 
   const stats = (range, userId) => {
-    const scope = userId ? 'AND b.id IN (SELECT brokerage_id FROM payout_lines WHERE user_id = ?)' : '';
+    const scope = userId ? `AND b.id IN (SELECT brokerage_id FROM payout_lines WHERE user_id ${IN_SCOPE})` : '';
     const a = userId ? [...range, userId] : range;
     const avg = db.prepare(`SELECT COALESCE(SUM(b.aum),0) s FROM brokerage b ${LIVE} WHERE b.period BETWEEN ? AND ? ${scope}`).get(...a).s;
     // Snapshot: latest AUM per folio at or before the period end.
@@ -182,13 +180,13 @@ r.get('/growth', (req, res) => {
         SELECT b.folio, b.aum, ROW_NUMBER() OVER (PARTITION BY b.folio ORDER BY b.period DESC, b.id DESC) rn
         FROM brokerage b ${LIVE} WHERE b.period <= ? ${scope}) x WHERE x.rn = 1`).get(...(userId ? [range[1], userId] : [range[1]])).s;
     const share = userId
-      ? db.prepare(`SELECT COALESCE(SUM(l.amount),0) s FROM payout_lines l WHERE l.period BETWEEN ? AND ? AND l.user_id = ?`).get(...range, userId).s
+      ? db.prepare(`SELECT COALESCE(SUM(l.amount),0) s FROM payout_lines l WHERE l.period BETWEEN ? AND ? AND l.user_id ${IN_SCOPE}`).get(...range, userId).s
       : db.prepare(`SELECT COALESCE(SUM(l.amount),0) s FROM payout_lines l WHERE l.period BETWEEN ? AND ? AND l.user_id IS NOT NULL`).get(...range).s;
     return { avgAum: avg, snapAum: snap, share };
   };
 
-  const members = db.prepare(`SELECT id, name, code, level FROM users WHERE active = 1 ${uid ? 'AND id = ?' : ''} ORDER BY name`).all(...(uid ? [uid] : []))
-    .map((u) => ({ ...u, prev: stats(prev, u.id), cur: stats(cur, u.id) }));
+  const members = db.prepare(`SELECT id, name, code, level FROM users WHERE active = 1 ${uid ? `AND id ${IN_SCOPE}` : ''} ORDER BY name`).all(...(uid ? [uid] : []))
+    .map((u) => ({ ...u, prev: stats(prev, JSON.stringify([u.id])), cur: stats(cur, JSON.stringify([u.id])) }));
   res.json({ mode, cur, prev, hasData: has, totals: { prev: stats(prev, uid), cur: stats(cur, uid) }, members });
 });
 

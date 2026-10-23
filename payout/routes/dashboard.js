@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { scopeUser } from '../auth.js';
+import { scopeIds, scopeUser, IN_SCOPE } from '../auth.js';
 import { shiftPeriod, isRedemption } from '../util.js';
 
 const r = Router();
@@ -20,20 +20,20 @@ function rangeFor(scope) {
 }
 
 r.get('/', (req, res) => {
-  const uid = scopeUser(req);
+  const ids = scopeIds(req), uid = ids && JSON.stringify(ids);
   const [from, to] = rangeFor(req.query.range);
   const inRange = 'b.period BETWEEN ? AND ?';
 
   // Restrict a non-admin to brokerage on clients where they earn something.
-  const mine = uid ? 'AND b.id IN (SELECT brokerage_id FROM payout_lines WHERE user_id = ?)' : '';
+  const mine = uid ? `AND b.id IN (SELECT brokerage_id FROM payout_lines WHERE user_id ${IN_SCOPE})` : '';
   const p = (...a) => (uid ? [...a, uid] : a);
 
   const gross = db.prepare(`SELECT COALESCE(SUM(b.amount),0) s, COUNT(*) c FROM brokerage b ${LIVE} WHERE ${inRange} ${mine}`).get(...p(from, to));
   const pool = uid
-    ? db.prepare(`SELECT COALESCE(SUM(l.amount),0) s FROM payout_lines l JOIN brokerage b ON b.id = l.brokerage_id ${LIVE} WHERE ${inRange} AND l.user_id = ?`).get(from, to, uid)
+    ? db.prepare(`SELECT COALESCE(SUM(l.amount),0) s FROM payout_lines l JOIN brokerage b ON b.id = l.brokerage_id ${LIVE} WHERE ${inRange} AND l.user_id ${IN_SCOPE}`).get(from, to, uid)
     : db.prepare(`SELECT COALESCE(SUM(l.amount),0) s FROM payout_lines l JOIN brokerage b ON b.id = l.brokerage_id ${LIVE} WHERE ${inRange} AND l.user_id IS NOT NULL`).get(from, to);
   const clients = uid
-    ? db.prepare(`SELECT COUNT(DISTINCT b.client_id) c FROM brokerage b ${LIVE} WHERE b.id IN (SELECT brokerage_id FROM payout_lines WHERE user_id = ?)`).get(uid).c
+    ? db.prepare(`SELECT COUNT(DISTINCT b.client_id) c FROM brokerage b ${LIVE} WHERE b.id IN (SELECT brokerage_id FROM payout_lines WHERE user_id ${IN_SCOPE})`).get(uid).c
     : db.prepare('SELECT COUNT(*) c FROM clients').get().c;
   const txCount = db.prepare(`SELECT COUNT(*) c FROM transactions x JOIN batches t ON t.id = x.batch_id AND t.status='live'`).get().c + gross.c;
 
@@ -41,7 +41,7 @@ r.get('/', (req, res) => {
   const soon = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
   const compliance = [];
   for (const u of db.prepare('SELECT id, name, code, arn, arn_valid, euin, euin_valid FROM users WHERE active = 1 ORDER BY name').all()) {
-    if (uid && u.id !== uid) continue;
+    if (ids && !ids.includes(u.id)) continue;
     for (const [k, v, d] of [['ARN', u.arn, u.arn_valid], ['EUIN', u.euin, u.euin_valid]]) {
       if (!v) compliance.push({ userId: u.id, name: u.name, code: u.code, kind: k, status: 'MISSING' });
       else if (d && d <= soon) compliance.push({ userId: u.id, name: u.name, code: u.code, kind: k, status: d < new Date().toISOString().slice(0, 10) ? 'EXPIRED' : 'EXPIRING', date: d });
@@ -63,7 +63,7 @@ r.get('/', (req, res) => {
   let redemptions = [];
   if (lastTx) {
     const since = new Date(new Date(lastTx).getTime() - 60 * 864e5).toISOString().slice(0, 10);
-    const own = uid ? `AND x.client_id IN (SELECT DISTINCT b.client_id FROM brokerage b JOIN payout_lines l ON l.brokerage_id = b.id WHERE l.user_id = ?)` : '';
+    const own = uid ? `AND x.client_id IN (SELECT DISTINCT b.client_id FROM brokerage b JOIN payout_lines l ON l.brokerage_id = b.id WHERE l.user_id ${IN_SCOPE})` : '';
     redemptions = db.prepare(`SELECT x.investor, x.scheme, x.trxn_date, x.trxn_type, x.amount FROM transactions x
       JOIN batches t ON t.id = x.batch_id AND t.status='live' WHERE x.trxn_date >= ? ${own} ORDER BY x.trxn_date DESC LIMIT 400`).all(...(uid ? [since, uid] : [since]))
       .filter((x) => isRedemption(x.trxn_type)).slice(0, 25);
@@ -73,7 +73,7 @@ r.get('/', (req, res) => {
   for (let i = 5; i >= 0; i--) months.push(shiftPeriod(latest, -i));
   const revenue = months.map((m) => {
     const g = db.prepare(`SELECT COALESCE(SUM(b.amount),0) s FROM brokerage b ${LIVE} WHERE b.period = ? ${mine}`).get(...p(m)).s;
-    const share = db.prepare(`SELECT COALESCE(SUM(l.amount),0) s FROM payout_lines l WHERE l.period = ? AND ${uid ? 'l.user_id = ?' : 'l.user_id IS NOT NULL'}`).get(...(uid ? [m, uid] : [m])).s;
+    const share = db.prepare(`SELECT COALESCE(SUM(l.amount),0) s FROM payout_lines l WHERE l.period = ? AND ${uid ? `l.user_id ${IN_SCOPE}` : 'l.user_id IS NOT NULL'}`).get(...(uid ? [m, uid] : [m])).s;
     return { period: m, gross: g, share };
   });
 
@@ -112,11 +112,12 @@ r.get('/search', (req, res) => {
   if (q === '%%') return res.json([]);
   const uid = scopeUser(req);
   // Non-admins only find clients they are mapped on.
-  const own = uid ? 'AND c.id IN (SELECT c2.id FROM clients c2, json_each(c2.hierarchy) j WHERE j.value = ?)' : '';
+  const own = uid ? `AND c.id IN (SELECT c2.id FROM clients c2, json_each(c2.hierarchy) j WHERE j.value ${IN_SCOPE})` : '';
   const o = uid ? [uid] : [];
   const clients = db.prepare(`SELECT c.id, c.name, c.pan FROM clients c WHERE (c.name LIKE ? OR c.pan LIKE ?) ${own} LIMIT 8`).all(q, q, ...o)
     .map((c) => ({ type: 'client', id: c.id, label: c.name, sub: c.pan }));
-  const users = uid ? [] : db.prepare('SELECT id, name, email FROM users WHERE name LIKE ? OR email LIKE ? OR code LIKE ? LIMIT 5').all(q, q, q)
+  // A mentor also finds the people in their team; ops and partners find nobody.
+  const users = uid && req.user.role !== 'mentor' ? [] : db.prepare(`SELECT id, name, email FROM users WHERE (name LIKE ? OR email LIKE ? OR code LIKE ?) ${uid ? `AND id ${IN_SCOPE}` : ''} LIMIT 5`).all(q, q, q, ...o)
     .map((u) => ({ type: 'user', id: u.id, label: u.name, sub: u.email }));
   const folios = db.prepare(`SELECT f.folio, c.name, c.id FROM folios f JOIN clients c ON c.id = f.client_id WHERE f.folio LIKE ? ${own} LIMIT 5`).all(q, ...o)
     .map((f) => ({ type: 'client', id: f.id, label: f.name, sub: `Folio ${f.folio}` }));
