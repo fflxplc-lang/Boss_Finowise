@@ -10397,6 +10397,7 @@ const PLAN_OWNED_STAGES = new Set(['planPrepared','readyForSecondMeeting']);
 function stageIsPlanOwned(module, cur){ return module==='LMS' && PLAN_OWNED_STAGES.has(cur); }
 function stagePanelHtml(module, record, cur, editable){
   if(module==='PPS' || module==='PMS') return pjStagePanelHtml(module, record, cur, editable);
+  if(module==='POB') return pobStagePanelHtml(record, cur);
   if(module==='LMS' && cur==='readyToQualify') return qualifyFqPanelHtml(record, editable);
   // That meeting is where the data is taken, so a sheet blueprint that
   // wants it has the sheet reachable from that meeting — the plan is not
@@ -12141,6 +12142,7 @@ async function doTransition(module, recordId, transitionId){
     if(currentView==='lms') navigate('lms', leadDetailId); else if(currentView==='cms') navigate('cms', clientDetailId);
     else if(currentView==='rms') navigate('rms', reviewDetailId);
     else if(currentView==='pps') navigate('pps', ppsDetailId); else if(currentView==='pms') navigate('pms', pmsDetailId);
+    else if(currentView==='pob') navigate('pob', pobDetailId);
     else navigate(currentView);
     return;
   }
@@ -12212,6 +12214,11 @@ async function doTransition(module, recordId, transitionId){
   }
   // A partner's fee is believed once somebody has checked it, by whatever
   // route the step is asked for.
+  // Partner Onboarding says why a step is not open yet, by name.
+  if(module==='POB'){
+    const why = pobGuard(record, t);
+    if(why){ alert(why); return; }
+  }
   if(module==='PPS' && t.id==='payVerifiedT'){
     if(!pjMayVerifyPayment()){ alert('Verifying a payment needs Approve permission on Partners.'); return; }
     if(!record.feeVerifiedAt){ record.feeVerifiedAt = new Date().toISOString(); record.feeVerifiedBy = currentUser; }
@@ -12317,6 +12324,7 @@ async function doTransition(module, recordId, transitionId){
   else if(currentView==='rms') navigate('rms', reviewDetailId);
   else if(currentView==='pps') navigate('pps', ppsDetailId);
   else if(currentView==='pms') navigate('pms', pmsDetailId);
+  else if(currentView==='pob') navigate('pob', pobDetailId);
   else navigate(currentView);
 }
 /* Instead of an alert telling the user to go edit the record separately,
@@ -28418,6 +28426,7 @@ async function submitSendIseq(module, recordId, transitionId){
 }
 async function handleBlueprintSideEffect(module, record, transition){
   if(module==='PPS' || module==='PMS') return pjSideEffect(module, record, transition);
+  if(module==='POB') return pobSideEffect(record, transition);
   if(module==='LMS'){
     const id = transition.id;
     /* THE NURTURE GROUP. A lead that does not qualify today is not a lead
@@ -32126,6 +32135,10 @@ let DB = { settings:{}, settingsAudit:[], workActivities:[], djtEntries:[], camp
               their queries, their payouts and the webinars they register for. */
            partnerProspects:[], pjPartners:[], partnerQueries:[], partnerPayouts:[], partnerWebinars:[],
            partnerReferrals:[],
+           /* Partner Onboarding (POB), after PMS: the onboarding record, its
+              documents, the role workflows, the sessions, the training
+              catalogue and the recurring reviews. */
+           pjOnboarding:[], pjDocuments:[], pjWorkflows:[], pjSessions:[], pjTraining:[], pjReviews:[],
            /* What the firm has wired BOSS to, what each run of it did, and
               what has been pushed in through a connector's own door and is
               waiting to be mapped. The credentials are not here: they live
@@ -32241,6 +32254,12 @@ async function loadAll(){
   DB.partnerPayouts = await sget('partnerPayouts', []);
   DB.partnerWebinars = await sget('partnerWebinars', []);
   DB.partnerReferrals = await sget('partnerReferrals', []);
+  DB.pjOnboarding = await sget('pjOnboarding', []);
+  DB.pjDocuments = await sget('pjDocuments', []);
+  DB.pjWorkflows = await sget('pjWorkflows', []);
+  DB.pjSessions = await sget('pjSessions', []);
+  DB.pjTraining = await sget('pjTraining', []);
+  DB.pjReviews = await sget('pjReviews', []);
   DB.hrSourceMaps = await sget('hrSourceMaps', []);
   DB.hrIncentives = await sget('hrIncentives', []);
   DB.hrAppraisals = await sget('hrAppraisals', []);
@@ -32722,6 +32741,18 @@ function defaultConfig(){
         body:"Dear {Name},\n\nAs requested, here is your one-to-one onboarding discussion.\n\n📅 Date: {Date}\n⏰ Time: {Time}\n🔗 Meeting Link: {MeetingLink}\n\n{Signature}"},
       pjArnExpiry: {subject:"Your {What} expires on {ExpiresOn}",
         body:"Dear {Name},\n\nYour {What} ({Number}) is valid until {ExpiresOn} — {DaysLeft} days from today.\n\nPlease start the renewal now so your work as a partner is not interrupted, and send us the renewed details once you have them.\n\n{Signature}"},
+      pobPaymentAck: {subject:"Payment received — {PartnerCode}",
+        body:"Dear {Name},\n\nThank you. We have received and verified your payment of {Amount} (reference {Reference}) on {PaidOn}.\n\nYour partner code is {PartnerCode} and your application is {ApplicationId}. Next, we will send you the Freedom LifeX empanelment form and agreement, and ask for your documents.\n\n{Signature}"},
+      pobLogin: {subject:"Your Freedom LifeX login",
+        body:"Dear {Name},\n\nYour Freedom LifeX account is ready.\n\n👤 Login ID: {LoginId}\n🔗 Set your password here: {LoginLink}\n\nFor now it opens your onboarding tasks. Your full access as a partner comes once your onboarding is complete.\n\n{Signature}"},
+      pobRoleMeeting: {subject:"One-to-one to confirm your role — {Date}",
+        body:"Dear {Name},\n\n{Host} would like to meet you one-to-one to confirm your role as a Freedom LifeX partner — Ninja, Super Ninja or Sherpa.\n\n📅 Date: {Date}\n⏰ Time: {Time}\n🔗 Meeting Link: {MeetingLink}\n\n{Signature}"},
+      pobSession: {subject:"Your Role Clarity Session — {Date}",
+        body:"Dear {Name},\n\nYour Role Clarity Session as a {Role} is booked with {Trainer}.\n\n📅 Date: {Date}\n⏰ Time: {Time}\n🔗 Meeting Link: {MeetingLink}\n\nTo prepare:\n{Preparation}\n\n{Signature}"},
+      pobCourseUnlocked: {subject:"Unlocked for you: {Course}",
+        body:"Dear {Name},\n\nWell done — you have reached the milestone that opens \"{Course}\" on Freedom Gurukul.\n\nYou can start here: {GurukulLink}\n\n{Signature}"},
+      pobActivated: {subject:"Welcome aboard — you are an active Freedom LifeX {Role}",
+        body:"Dear {Name},\n\nYour onboarding is complete and you are now an active Freedom LifeX {Role} (partner code {PartnerCode}).\n\nYour RM will meet you each month to set targets and review progress, and once a year for your annual review.\n\n{Signature}"},
       rmsMom: {subject:'{Meeting} — minutes of our discussion, {Date}',
         body:'Dear {ClientName},\n\nThank you for your time. Below are the minutes of our {Meeting}, for your records.\n\n{Minutes}\n\nAction points:\n{ActionPoints}\n\nNext step: {NextAction}\n\nDo come back to us with any question at all.\n\n{Signature}'},
     },
@@ -33512,6 +33543,8 @@ function navigate(view, arg){
     ppsDetailId = (arg!==undefined && arg!=='') ? arg : null;
   } else if(view==='pms'){
     pmsDetailId = (arg!==undefined && arg!=='') ? arg : null;
+  } else if(view==='pob'){
+    pobDetailId = (arg!==undefined && arg!=='') ? arg : null;
   } else if(['pqs','ppo','ppf'].includes(view)){
     /* list pages with nothing open on them */
   } else if(view==='dst'){
@@ -33600,6 +33633,7 @@ async function boot(){
   await migrateBlueprintLinks();
   await migrateBusinessDeclined();
   await migratePartnerJourneyBlueprints();
+  await migratePartnerOnboarding();
   await migrateMultiGoalBlueprint();
   await migrateConsentTransactions();
   await migrateSchemeAmcNames();
@@ -33685,6 +33719,8 @@ const LIVE_KEY_TO_DB = {
   hrAttendance:'hrAttendance', hrLeave:'hrLeave', hrSourceMaps:'hrSourceMaps', hrRegularizations:'hrRegularizations',
   partnerProspects:'partnerProspects', pjPartners:'pjPartners', partnerQueries:'partnerQueries',
   partnerPayouts:'partnerPayouts', partnerWebinars:'partnerWebinars', partnerReferrals:'partnerReferrals',
+  pjOnboarding:'pjOnboarding', pjDocuments:'pjDocuments', pjWorkflows:'pjWorkflows', pjSessions:'pjSessions',
+  pjTraining:'pjTraining', pjReviews:'pjReviews',
   hrIncentives:'hrIncentives', hrAppraisals:'hrAppraisals', hrConfig:'hrConfig',
   automationExecutionLog:'automationExecutionLog', webhooks:'webhooks', workActivities:'workActivities',
   config:'config', settings:'settings', slaRules:'slaRules', automationRules:'automationRules',
@@ -34108,6 +34144,7 @@ function render(){
     hrappraisal:['Appraisal Management','The existing records a future appraisal will be read from'],
     pps:['PPS · Partner Perspective System','Registration to the partner fee'],
     pms:['PMS · Partner Managing System','From the fee to the onboarding journey'],
+    pob:['POB · Partner Onboarding','From the due payment to an active partner'],
     pqs:['PQS · Partner Query System','Partner queries, worked to closed'],
     ppo:['Partner Payout System','What each partner is owed and paid'],
     ppf:['Partner Performance System','The funnel and each partner'],
@@ -34120,7 +34157,7 @@ function render(){
   // topbar one would just repeat it.
   const ownsHeader = (blueprintModuleFor(currentView) && window['_bpRec_'+blueprintModuleFor(currentView).type]
                       && planRecordOf(window['_bpRec_'+blueprintModuleFor(currentView).type]))
-    || ['lms','cms','rms','dst','queries','business','djt','campaigns','projects','calls','mis','pps','pms','pqs','ppo','ppf','analytics'].includes(currentView)
+    || ['lms','cms','rms','dst','queries','business','djt','campaigns','projects','calls','mis','pps','pms','pob','pqs','ppo','ppf','analytics'].includes(currentView)
     || (typeof pyIsView === 'function' && pyIsView(currentView))
     || (currentView==='settings' && !settingsTab)
     || (currentView==='lms' && leadDetailId) || (currentView==='cms' && clientDetailId)
@@ -34196,6 +34233,7 @@ function render(){
   else if(currentView==='hrappraisal') c.innerHTML = viewHrAppraisal();
   else if(currentView==='pps') c.innerHTML = ppsDetailId ? viewPPSDetail(ppsDetailId) : viewPPS();
   else if(currentView==='pms') c.innerHTML = pmsDetailId ? viewPMSDetail(pmsDetailId) : viewPMS();
+  else if(currentView==='pob') c.innerHTML = pobDetailId ? viewPOBDetail(pobDetailId) : viewPOB();
   else if(currentView==='pqs') c.innerHTML = viewPQS();
   else if(currentView==='ppo') c.innerHTML = viewPPO();
   else if(currentView==='ppf') c.innerHTML = viewPPF();
@@ -34341,7 +34379,7 @@ const NAV_ICONS = {
   fqtests:'🧮', iseqforms:'🛡️', cifforms:'🗂️', planforms:'📐', ctforms:'🤝', mailbox:'✉️', portfolio:'📈',
   systemarchitecture:'🏛️', settings:'⚙️', profile:'👤', teammembers:'🧑‍💼', dwt:'🗓️', arc:'🔁', djt:'📔',
   hrdashboard:'🧭', hrattendance:'⏱️', hrincentive:'💰', hrappraisal:'📈',
-  pps:'🌱', pms:'🤝', pqs:'🎫', ppo:'💸', ppf:'🏆',
+  pps:'🌱', pms:'🤝', pob:'🚀', pqs:'🎫', ppo:'💸', ppf:'🏆',
   pydash:'📊', pyimports:'⬆️', pyclients:'🗂️', pyreports:'🧾', pyrates:'💹', pypartner:'🤝', pyledger:'🏦', pyaudit:'📜', pysettings:'⚙️',
 };
 const NAV_LABELS = {
@@ -34356,7 +34394,7 @@ const NAV_LABELS = {
   queries:'QMS · Query Management', mailbox:'Mail', portfolio:'Portfolio Review',
   fqtests:'FQ Assessments', iseqforms:'ISEQ Forms', cifforms:'CIF Forms',
   planforms:'Plan Input Forms', ctforms:'C&T Forms',
-  pps:'PPS · Partner Perspective System', pms:'PMS · Partner Managing System', pqs:'PQS · Partner Query System',
+  pps:'PPS · Partner Perspective System', pms:'PMS · Partner Managing System', pob:'POB · Partner Onboarding', pqs:'PQS · Partner Query System',
   ppo:'Partner Payout System', ppf:'Partner Performance System',
   pydash:'Payout Dashboard', pyimports:'Data Import', pyclients:'Clients & Map', pyreports:'Reports & Payouts',
   pyrates:'Brokerage Rates', pypartner:'Partner Brokerage', pyledger:'Payouts Ledger', pyaudit:'Audit Log', pysettings:'Payout Settings',
@@ -34377,7 +34415,7 @@ const NAV_SHORT = {
   arc:'ARC', dwt:'DWT', djt:'DJT', dst:'DST', queries:'QMS', business:'DBT',
   fqtests:'FQ', iseqforms:'ISEQ', cifforms:'CIF', ctforms:'C&T',
   mis:'MIS',
-  pps:'PPS', pms:'PMS', pqs:'PQS', ppo:'Payout', ppf:'Performance',
+  pps:'PPS', pms:'PMS', pob:'Onboarding', pqs:'PQS', ppo:'Payout', ppf:'Performance',
 };
 /* The name to show, and the name to say when the pointer rests on it. */
 function navLabelOf(id){ return NAV_SHORT[id] || NAV_LABELS[id] || id; }
@@ -34397,7 +34435,7 @@ const NAV_GROUPS = [
   /* The same idea for partners: a prospect walks PPS to the fee, and as a
      partner walks PMS to onboarding. Queries, payouts and performance hang
      off the partner. */
-  {id:'partnerjourney', icon:'🤝', label:'Partner Journey', items:['pps','pms','pqs','ppo','ppf'],
+  {id:'partnerjourney', icon:'🤝', label:'Partner Journey', items:['pps','pms','pob','pqs','ppo','ppf'],
    about:'A partner from first registration, through the fee and the exams, to onboarding, payouts and performance.'},
   /* Portfolio Review and Mail were sections of their own here for a day.
      They belong to a review, not to the sidebar — the firm asked for them
@@ -39351,7 +39389,7 @@ function bulkFieldsFor(module){
   const LATE = {Queries: queryFieldDefs, Calls: callFieldDefs, Team: teamBulkFieldDefs};
   /* The Partner Journey's forms are built from what is on file (the
      webinars, the partners), so they are asked for rather than listed. */
-  Object.assign(LATE, {PPS: ()=>ppsFields(), PMS: ()=>pmsFields(), PQS: ()=>pqsFields(), PPO: ()=>ppoFields()});
+  Object.assign(LATE, {PPS: ()=>ppsFields(), PMS: ()=>pmsFields(), PQS: ()=>pqsFields(), PPO: ()=>ppoFields(), POB: ()=>pobFields()});
   const raw = module === 'CMS' ? cmsFieldsFlatVisible()
             : LATE[module] ? withOpts(module, LATE[module]()).filter(f=>fieldVisible(module, f))
             : moduleFieldsVisible(module);
@@ -39690,6 +39728,7 @@ async function softDeleteRecord(module, id){
   else if(module==='RMS'){ reviewDetailId=null; navigate('rms'); }
   else if(module==='PPS'){ ppsDetailId=null; navigate('pps'); }
   else if(module==='PMS'){ pmsDetailId=null; navigate('pms'); }
+  else if(module==='POB'){ pobDetailId=null; navigate('pob'); }
   else { navigate(MODULE_VIEW[module]); }
 }
 function viewRecycleBin(){
@@ -50667,6 +50706,9 @@ async function pjSideEffect(module, record, t){
     }
     if(t.id==='onboardedT' || t.id==='onboardedAfterMeetT') record.onboardedAt = new Date().toISOString();
     await save('pjPartners');
+    /* Onboarded in PMS is where Partner Onboarding begins: the due
+       payment, the empanelment and the role (POB). */
+    if(t.to==='onboarded' && !pobFor(record.id)) await pobStart(record.id);
   }
 }
 
@@ -50868,6 +50910,8 @@ function viewPMSDetail(id){
     actions: [
       {label:'Back', icon:'←', onclick:"navigate('pms')"},
       r.prospectId && {label:'PPS Record', icon:'←', onclick:`navigate('pps','${esc(r.prospectId)}')`},
+      pobFor(id) ? {label:'Partner Onboarding', icon:'🚀', onclick:`navigate('pob','${esc(pobFor(id).id)}')`}
+        : (stateOf('PMS', r)==='onboarded' && can('POB','create') && {label:'Start Onboarding', icon:'🚀', onclick:`pobStartFromPms('${esc(id)}')`}),
       can('PQS','create') && {label:'Raise Query', icon:'🎫', onclick:`pjOpenQueryForm(null,'${esc(id)}')`},
       can('PPO','create') && {label:'Add Payout', icon:'₹', onclick:`pjOpenPayoutForm(null,'${esc(id)}')`},
       can('PMS','edit') && {label:'Edit', icon:'✎', onclick:`pjOpenPartnerEdit('${esc(id)}')`},
@@ -51154,6 +51198,1781 @@ function viewPPF(){
           <td>${openQ ? `<span class="badge warn">${openQ}</span>` : '0'}</td></tr>`;
       }).join('') || `<tr><td colspan="7" class="empty">No partners yet.</td></tr>`}</tbody>
     </table></div>`;
+}
+
+/* =====================================================================
+   POB — PARTNER ONBOARDING
+
+   What happens after PMS says "Partner Onboarded" (B2B changes 2). The
+   flowchart's common spine first — the due payment from the
+   Freedompreneur, its acknowledgement, empanelment with the Freedom LifeX
+   form and agreement, the evaluation against the checklist, the login
+   access, and the one-to-one with the internal RM that confirms the
+   role — and then the role's own road: Ninja, Super Ninja or Sherpa.
+
+   The spine is a blueprint, so Stage Management, stage permissions and
+   the stage history treat it as they treat PMS. The role's road is not
+   a fixed sequence: it is a workflow template, one per role, versioned,
+   that the administrator edits under POB › Workflows. Assigning a role
+   copies that template's tasks onto the partner, and the partner keeps
+   the version they started on until somebody migrates them.
+
+   Kept apart from the PMS partner so nothing here muddles its trail:
+
+     DB.pjOnboarding   one onboarding record per partner (POB-…)
+     DB.pjDocuments    each required document, its versions and reviews
+     DB.pjWorkflows    the role workflow templates, every version kept
+     DB.pjSessions     Role Clarity Sessions, a record each
+     DB.pjTraining     the training catalogue
+     DB.pjReviews      the recurring reviews after activation
+
+   Everything is under the Partners permission. Approve on Partners is
+   what verifies a payment, reviews a document, decides the evaluation,
+   approves a task and activates a partner.
+
+   The partner does not sign in to BOSS. "Login Access" records the
+   Freedom LifeX account the firm creates for them, and its state —
+   created, activated, suspended — separately from the partner's
+   operational activation at the end.
+   ===================================================================== */
+let pobDetailId = null;
+const POB_ROLES = ['Ninja', 'Super Ninja', 'Sherpa'];
+
+const BLUEPRINT_POB = {
+  startState: 'duePayment',
+  states: [
+    {id:'duePayment',  label:'Receive Due Payment from Freedompreneur'},
+    {id:'paymentAck',  label:'Payment Acknowledgement'},
+    {id:'empanelment', label:'Empanelment — Freedom LifeX Form & Agreement'},
+    {id:'evaluation',  label:'Evaluation / Audit by Freedom LifeX Team'},
+    {id:'loginAccess', label:'Create Login Access for Freedom LifeX'},
+    {id:'roleMeeting', label:'One-to-One by Internal RM — Role Confirmation'},
+    {id:'roleWorkflow', label:'Role Onboarding Tasks'},
+    {id:'readiness',   label:'Business Readiness Review'},
+    {id:'active',      label:'Active Partner', terminal:true, color:'ok'},
+    {id:'rejected',    label:'Application Rejected', terminal:true, color:'danger'},
+  ],
+  transitions: [
+    {id:'obPaidT',     from:'duePayment', to:'paymentAck', label:'Payment Verified', kind:'forward', color:'ok'},
+    {id:'obAckT',      from:'paymentAck', to:'empanelment', label:'Send Payment Acknowledgement', kind:'forward'},
+    {id:'obSubmitT',   from:'empanelment', to:'evaluation', label:'Submit Empanelment for Evaluation', kind:'forward'},
+    {id:'obApproveT',  from:'evaluation', to:'loginAccess', label:'Evaluation Approved', kind:'forward', color:'ok'},
+    {id:'obMoreInfoT', from:'evaluation', to:'empanelment', label:'Request More Information', kind:'forward', color:'warn'},
+    {id:'obRejectT',   from:'evaluation', to:'rejected', label:'Reject Application', kind:'forward', color:'danger'},
+    {id:'obResubmitT', from:'rejected', to:'evaluation', label:'Resubmit for a New Review', kind:'forward'},
+    {id:'obLoginT',    from:'loginAccess', to:'roleMeeting', label:'Login Access Created', kind:'forward'},
+    {id:'obRoleT',     from:'roleMeeting', to:'roleWorkflow', label:'Confirm the Role', kind:'forward', color:'ok'},
+    {id:'obReadyT',    from:'roleWorkflow', to:'readiness', label:'Onboarding Tasks Done — Review Readiness', kind:'forward'},
+    {id:'obNotReadyT', from:'readiness', to:'roleWorkflow', label:'Not Ready — Back to Tasks', kind:'forward', color:'warn'},
+    {id:'obActivateT', from:'readiness', to:'active', label:'Approve & Activate', kind:'forward', color:'ok'},
+  ],
+};
+BLUEPRINTS.POB = BLUEPRINT_POB;
+RECORD_STATE_FIELD.POB = 'pobStage';
+RECORD_DB.POB = 'pjOnboarding';
+MODULE_DB_KEY.POB = 'pjOnboarding';
+MODULE_VIEW.POB = 'pob';
+PERM_MODULE_ALIAS.POB = 'Partners';
+bulkSelection.POB = bulkSelection.POB || new Set();
+TIMELINE_DATE_OF.POB = r => r && r.createdAt;
+STAGE_FORM_HANDLERS.obAckT = 'pobOpenAckModal';
+STAGE_FORM_HANDLERS.obApproveT = 'pobOpenDecisionModal';
+STAGE_FORM_HANDLERS.obMoreInfoT = 'pobOpenDecisionModal';
+STAGE_FORM_HANDLERS.obRejectT = 'pobOpenDecisionModal';
+STAGE_FORM_HANDLERS.obLoginT = 'pobOpenLoginModal';
+STAGE_FORM_HANDLERS.obRoleT = 'pobOpenRoleModal';
+STAGE_FORM_HANDLERS.obActivateT = 'pobOpenActivateModal';
+const POB_STAGE_GROUPS = [
+  ['Payment',      ['duePayment','paymentAck'],     'info'],
+  ['Empanelment',  ['empanelment'],                 'info'],
+  ['Evaluation',   ['evaluation'],                  'purple'],
+  ['Access & Role',['loginAccess','roleMeeting'],   'warn'],
+  ['Role Tasks',   ['roleWorkflow'],                'purple'],
+  ['Readiness',    ['readiness'],                   'warn'],
+  ['Active',       ['active'],                      'ok'],
+  ['Rejected',     ['rejected'],                    'danger'],
+];
+MODULE_STAGE_GROUPS.POB = ()=>POB_STAGE_GROUPS;
+MODULE_DASHBOARD.POB = POB_STAGE_GROUPS.map(g=>g[0]);
+RECORD_DOORS.POB = {perm:'Partners', noun:'onboarding', back:'pob', find:id=>pobRecords().find(x=>x.id===id),
+  owner:r=>r.assignedTo, branch:r=>r.branch};
+
+function pobRecords(){ return Array.isArray(DB.pjOnboarding) ? DB.pjOnboarding : (DB.pjOnboarding = []); }
+function pobDocs(){ return Array.isArray(DB.pjDocuments) ? DB.pjDocuments : (DB.pjDocuments = []); }
+function pobWorkflows(){ return Array.isArray(DB.pjWorkflows) ? DB.pjWorkflows : (DB.pjWorkflows = []); }
+function pobSessions(){ return Array.isArray(DB.pjSessions) ? DB.pjSessions : (DB.pjSessions = []); }
+function pobTraining(){ return Array.isArray(DB.pjTraining) ? DB.pjTraining : (DB.pjTraining = []); }
+function pobReviews(){ return Array.isArray(DB.pjReviews) ? DB.pjReviews : (DB.pjReviews = []); }
+function pobLive(){ return pobRecords().filter(r=>!r.deletedAt); }
+function pobMayApprove(){ return isAdmin() || can('POB','approve'); }
+function pobToday(){ return new Date().toISOString().slice(0,10); }
+function pobAddDays(ymd, n){ const d = new Date((ymd || pobToday()) + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + Number(n||0)); return d.toISOString().slice(0,10); }
+function pobAddMonths(ymd, n){ const d = new Date((ymd || pobToday()) + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + Number(n||0)); return d.toISOString().slice(0,10); }
+function pobFor(partnerId){ return pobLive().find(r=>r.partnerId===partnerId) || null; }
+
+/* ---------- POB › Settings ---------- */
+const POB_SETTINGS_FIELDS = [
+  {k:'dueFee', l:'Due Payment (₹)', t:'number', h:'What the Freedompreneur pays at empanelment. 0 means no payment is due.'},
+  {k:'currency', l:'Currency', t:'text'},
+  {k:'docs', l:'Documents to collect', t:'textarea', h:'One per line. End a line with * to make it mandatory.'},
+  {k:'criteria', l:'Evaluation checklist', t:'textarea', h:'One criterion per line. Every one has to be met before the evaluation is approved.'},
+  {k:'agreement', l:'Agreement text', t:'textarea', h:'What the partner accepts at empanelment. Changing it raises the agreement version.'},
+  {k:'loginLink', l:'Freedom LifeX login link', t:'text', h:'Goes out with the login access email.'},
+  {k:'taskDueDays', l:'Days to finish an onboarding task', t:'number', h:'Counted from the day the task opens. A task past it is Overdue.'},
+  {k:'monthlyEvery', l:'Monthly review — every (months)', t:'number'},
+  {k:'annualReview', l:'Schedule the annual review', t:'select', opts:['Yes','No']},
+];
+const POB_SETTINGS_DEFAULTS = {
+  dueFee: 0, currency: 'INR',
+  docs: 'PAN Card*\nAadhaar Card*\nCancelled Cheque*\nPassport Photograph*\nSigned Agreement*\nQualification Certificate',
+  criteria: 'KYC documents match the application\nPAN verified\nBank details verified\nNo duplicate empanelment\nAgreement accepted and signed\nARN / EUIN valid (if an ARN holder)',
+  agreement: 'I agree to work as a Freedom LifeX partner on the terms of the Freedom LifeX partner agreement, to follow its code of conduct and the regulations that apply to the products I distribute, and to keep client information confidential.',
+  loginLink: '', taskDueDays: 7, monthlyEvery: 1, annualReview: 'Yes',
+};
+function pobConfig(){ return Object.assign({}, POB_SETTINGS_DEFAULTS, (DB.config && DB.config.partnerOnboarding) || {}); }
+function pobLines(text){ return String(text||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean); }
+function pobDocChecklist(){
+  return pobLines(pobConfig().docs).map(l=>({type: l.replace(/\*+$/,'').trim(), mandatory: /\*$/.test(l)}));
+}
+function pobCriteria(){ return pobLines(pobConfig().criteria); }
+function pobAgreementVersion(){
+  const t = String(pobConfig().agreement||'');
+  let h = 0; for(let i=0;i<t.length;i++) h = (h*31 + t.charCodeAt(i)) >>> 0;
+  return 'v' + (h % 100000);
+}
+function pobSettingsHtml(){
+  const c = pobConfig();
+  return `<div class="card" style="padding:16px">
+    <div class="field-grid">${POB_SETTINGS_FIELDS.map(f=>fieldInput(f, c[f.k])).join('')}</div>
+    <div class="row" style="gap:8px;margin-top:10px"><button class="btn primary" onclick="pobSaveSettings()">Save Settings</button></div>
+    <p class="small-note">The letters are in Setup › Email Templates, under Partner Onboarding. The role workflows are under Workflows.</p>
+  </div>`;
+}
+async function pobSaveSettings(){
+  if(!pjMaySetUp()){ alert('You do not have permission to change these settings.'); return; }
+  const d = readFields(POB_SETTINGS_FIELDS);
+  DB.config.partnerOnboarding = Object.assign({}, (DB.config.partnerOnboarding||{}), d);
+  await save('config');
+  alert('Saved.');
+  render();
+}
+
+/* ---------- the role workflows, as the flowchart draws them ----------
+   kind: task (a deliverable, submitted with evidence), session (a Role
+   Clarity Session record), training (a catalogue module, passed),
+   milestone (a course that unlocks at a count of conversions or
+   clients), review (a recurring review). phase: onboarding tasks come
+   before activation; growth tasks open once the partner is Active. */
+const POB_TRAINING_SEED = [
+  ['module1', 'Module #1 — How to Start and Grow Your Business'],
+  ['module2', 'Module #2 — How to Introduce / Launch Yourself'],
+  ['module3', 'Module #3 — How to Find Your First 100 Leads'],
+  ['excel', 'Module 4 — Excel Foundation Course'],
+  ['operations', 'Operations Course'],
+  ['products', 'Products Overview'],
+];
+function pobT(key, title, kind, phase, extra){
+  return Object.assign({key, title, kind, phase, required: true, approval: kind==='task' || kind==='training',
+    owner: kind==='session' || kind==='training' ? 'Trainer' : 'RM'}, extra || {});
+}
+const POB_DEFAULT_TASKS = {
+  'Ninja': [
+    pobT('rcs', 'Role Clarity Session', 'session', 'onboarding'),
+    pobT('bplan', 'Business Plan', 'task', 'onboarding'),
+    pobT('walk', 'Platform Walk Through', 'task', 'onboarding', {approval:false}),
+    pobT('m1', 'Module #1 — How to Start and Grow Your Business', 'training', 'onboarding', {trainingId:'TRN-module1'}),
+    pobT('m2', 'Module #2 — How to Introduce / Launch Yourself', 'training', 'onboarding', {trainingId:'TRN-module2'}),
+    pobT('m3', 'Module #3 — How to Find Your First 100 Leads', 'training', 'onboarding', {trainingId:'TRN-module3'}),
+    pobT('p100', 'Collection of 100 Prospects and data feed in CRM by RM', 'task', 'onboarding'),
+    pobT('mania', 'MANIA sheet updation by Ninja for lead qualification', 'task', 'onboarding'),
+    pobT('meetrm', 'Ninja to schedule a meeting of Lead with Client RM', 'task', 'onboarding'),
+    pobT('rmfollow', 'Further role of Client RM & follow-ups by Ninja', 'task', 'growth', {approval:false}),
+    pobT('invuni', 'Unlock "Investment Universe" Course after 1st conversion', 'milestone', 'growth', {metric:'conversions', count:1, course:'Investment Universe'}),
+    pobT('target', 'Target Setting, Monthly Review and Follow Up', 'review', 'growth', {reviewKind:'Monthly Review'}),
+    pobT('products', 'Products Overview', 'training', 'growth', {trainingId:'TRN-products'}),
+    pobT('ai', 'Unlock "AI Course" after 10 conversions', 'milestone', 'growth', {metric:'conversions', count:10, course:'AI Course'}),
+    pobT('opsc', 'Unlock "Onboarding and Operations Course" after 50 conversions', 'milestone', 'growth', {metric:'conversions', count:50, course:'Onboarding and Operations Course'}),
+    pobT('annual', 'Annual Review / Performance Evaluation and Goal Setting by Internal Master Sherpa (incl. Samurai plan)', 'review', 'growth', {reviewKind:'Annual Review'}),
+    pobT('mobile', 'Review "Mobile Marketing" course content for suitability to Ninja', 'task', 'growth', {required:false, approval:false}),
+  ],
+  'Super Ninja': [
+    pobT('rcs', 'Role Clarity Session', 'session', 'onboarding'),
+    pobT('bplan', 'Business Plan', 'task', 'onboarding'),
+    pobT('walk', 'Platform Walk Through', 'task', 'onboarding', {approval:false}),
+    pobT('ops', 'Operations Course', 'training', 'onboarding', {trainingId:'TRN-operations'}),
+    pobT('excel', 'Module 4 — Excel Foundation Course', 'training', 'onboarding', {trainingId:'TRN-excel'}),
+    pobT('mania', 'MANIA Sheet updation for lead qualification', 'task', 'growth'),
+    pobT('closing', 'Super Ninja to schedule a meeting for Closing with Client RM', 'task', 'growth'),
+    pobT('rr', 'Super Ninja to get RR Sheet from Client', 'task', 'growth'),
+    pobT('risk', 'Complete the risk profiling of client', 'task', 'growth'),
+    pobT('alloc', 'Send Investment Allocation Sheet to Client', 'task', 'growth'),
+    pobT('consent', 'Client Consent Received? (Refer Onboarding SOP)', 'task', 'growth'),
+    pobT('onbclient', 'Complete the onboarding of client', 'task', 'growth'),
+    pobT('txn', 'Complete the financial transactions', 'task', 'growth'),
+    pobT('mfp', 'Unlock "MFP" Course after 10 new clients', 'milestone', 'growth', {metric:'clients', count:10, course:'MFP'}),
+    pobT('target', 'Target Setting, Monthly Review and Follow Up', 'review', 'growth', {reviewKind:'Monthly Review'}),
+    pobT('rmm', 'Unlock "Review Meeting Mastery" after 50 clients', 'milestone', 'growth', {metric:'clients', count:50, course:'Review Meeting Mastery'}),
+    pobT('efp', 'Unlock "EFP" after 100 clients', 'milestone', 'growth', {metric:'clients', count:100, course:'EFP'}),
+    pobT('annual', 'Annual Review', 'review', 'growth', {reviewKind:'Annual Review'}),
+  ],
+  'Sherpa': [
+    pobT('rcs', 'Role Clarity Session', 'session', 'onboarding'),
+    pobT('bplan', 'Business Plan', 'task', 'onboarding'),
+    pobT('walk', 'Platform Walk Through', 'task', 'onboarding', {approval:false}),
+    pobT('m1', 'Module #1 — How to Start and Grow Your Business', 'training', 'onboarding', {trainingId:'TRN-module1'}),
+    pobT('m2', 'Module #2 — How to Introduce Yourself', 'training', 'onboarding', {trainingId:'TRN-module2'}),
+    pobT('m3', 'Module #3 — How to Find Your First 100 Leads', 'training', 'onboarding', {trainingId:'TRN-module3'}),
+    pobT('p100', 'Collection of 100 Prospects and data feed in CRM', 'task', 'onboarding'),
+    pobT('mania', 'MANIA sheet updation for lead qualification', 'task', 'onboarding'),
+    pobT('excel', 'Excel Foundation Course', 'training', 'onboarding', {trainingId:'TRN-excel'}),
+    pobT('lms', 'Follow LMS (Refer LMS SOP)', 'task', 'growth', {approval:false}),
+    pobT('converted', 'Is Lead converted to Client?', 'task', 'growth', {approval:false}),
+    pobT('ops', 'Operations Course', 'training', 'growth', {trainingId:'TRN-operations'}),
+    pobT('cms', 'Follow CMS (Refer CMS SOP)', 'task', 'growth', {approval:false}),
+    pobT('pm', 'Unlock "Personal Mastery" after 10 clients', 'milestone', 'growth', {metric:'clients', count:10, course:'Personal Mastery'}),
+    pobT('target', 'Target Setting, Monthly Review and Follow Up', 'review', 'growth', {reviewKind:'Monthly Review'}),
+    pobT('rmm', 'Unlock "Review Meeting Mastery" course', 'milestone', 'growth', {course:'Review Meeting Mastery'}),
+    pobT('rms', 'Conduct Client Reviews as per frequency (Refer RMS SOP)', 'task', 'growth', {approval:false}),
+    pobT('efp', 'Unlock "EFP" after 50 new clients', 'milestone', 'growth', {metric:'clients', count:50, course:'EFP'}),
+    pobT('mm', 'Unlock "Marketing Mastery" after 100 clients', 'milestone', 'growth', {metric:'clients', count:100, course:'Marketing Mastery'}),
+    pobT('annual', 'Annual Review', 'review', 'growth', {reviewKind:'Annual Review'}),
+    pobT('sm', 'Unlock "Sales Mastery" after 200 clients', 'milestone', 'growth', {metric:'clients', count:200, course:'Sales Mastery'}),
+  ],
+};
+const POB_METRICS = [['leads','Leads collected'], ['conversions','Leads converted'], ['clients','Clients onboarded']];
+const POB_TASK_KINDS = [['task','Task / deliverable'], ['session','Role Clarity Session'], ['training','Training module'],
+  ['milestone','Course unlock'], ['review','Recurring review']];
+/* Each task waits for the one before it in its own phase unless the
+   template says otherwise, which is the order the flowchart draws. */
+function pobDefaultDeps(tasks){
+  tasks.forEach((t, i)=>{
+    if(Array.isArray(t.dependsOn)) return;
+    const prev = tasks.slice(0, i).reverse().find(x=>x.phase===t.phase);
+    t.dependsOn = prev ? [prev.key] : [];
+  });
+  return tasks;
+}
+async function migratePartnerOnboarding(){
+  let wf = false, tr = false;
+  POB_ROLES.forEach(role=>{
+    if(pobWorkflows().some(w=>w.role===role)) return;
+    pobWorkflows().push({id: 'WF-' + role.toUpperCase().replace(/\s+/g,'') + '-1', role, name: role + ' onboarding', version: 1,
+      tasks: pobDefaultDeps(JSON.parse(JSON.stringify(POB_DEFAULT_TASKS[role]))), createdAt: new Date().toISOString(), createdBy: 'System'});
+    wf = true;
+  });
+  POB_TRAINING_SEED.forEach(([key, title])=>{
+    if(pobTraining().some(x=>x.id==='TRN-' + key)) return;
+    pobTraining().push({id: 'TRN-' + key, title, description: '', objectives: '', materials: '', passScore: '', maxAttempts: 3,
+      manualApproval: 'Yes', version: 1, createdAt: new Date().toISOString(), createdBy: 'System'});
+    tr = true;
+  });
+  if(wf) await save('pjWorkflows');
+  if(tr) await save('pjTraining');
+}
+function pobLatestWorkflow(role){
+  return pobWorkflows().filter(w=>w.role===role && !w.deletedAt).sort((a,b)=>(b.version||0)-(a.version||0))[0] || null;
+}
+function pobWorkflowOf(r){ return pobWorkflows().find(w=>w.id===r.workflowId) || null; }
+
+/* ---------- the onboarding record ---------- */
+function pobFields(){
+  return [
+    {k:'firstName', l:'First Name', t:'text', req:1, vk:'person'},
+    {k:'lastName', l:'Last Name', t:'text', vk:'person'},
+    {k:'email', l:'Email', t:'text', vk:'email', req:1},
+    {k:'mobile', l:'Phone', t:'text', vk:'mobile', im:'numeric', maxLen:10, req:1},
+    {k:'address', l:'Address', t:'textarea'},
+    {k:'city', l:'City', t:'text'},
+    {k:'pan', l:'PAN', t:'text', vk:'pan', ph:'ABCDE1234F'},
+    {k:'proposedRole', l:'Proposed Business Role', t:'select', opts: POB_ROLES.concat(['Not decided yet'])},
+    {k:'registrationDate', l:'Registration Date', t:'date', req:1},
+    {k:'bankName', l:'Bank', t:'text'},
+    {k:'bankAccount', l:'Account Number', t:'text'},
+    {k:'bankIfsc', l:'IFSC', t:'text', ph:'HDFC0001234'},
+    {k:'assignedTo', l:'Onboarding Owner', t:'team', req:1},
+    {k:'branch', l:'Branch', t:'branch'},
+  ];
+}
+function pobNextSeq(prefix, field){
+  let max = 0;
+  pobRecords().forEach(r=>{ const m = String(r[field]||'').match(/(\d+)$/); if(m && String(r[field]).indexOf(prefix)===0) max = Math.max(max, Number(m[1])); });
+  return prefix + String(max + 1).padStart(4, '0');
+}
+/* Started from the partner PMS has just onboarded, carrying what the
+   earlier forms already asked, so nobody types it twice. */
+async function pobStart(partnerId, opts){
+  const p = pjPartners().find(x=>x.id===partnerId);
+  if(!p) return null;
+  const had = pobFor(partnerId);
+  if(had) return had;
+  const a = p.admissionForm1 || p.admissionForm2 || {};
+  const r = {id: uid('POB'), partnerId: p.id, prospectId: p.prospectId || '', createdAt: new Date().toISOString(), createdBy: currentUser,
+    partnerCode: pobNextSeq('FLX-P-', 'partnerCode'),
+    applicationId: pobNextSeq('APP-' + new Date().getFullYear() + '-', 'applicationId'),
+    firstName: p.firstName || '', lastName: p.lastName || '', email: p.email || '', mobile: p.mobile || '', city: p.city || '',
+    address: a.afAddress || '', pan: a.afPan || '', registrationDate: pobToday(),
+    assignedTo: p.assignedTo || currentUser, branch: p.branch || '',
+    applicationStatus: 'Draft', payments: [], attempts: [], tasks: [], roleHistory: [], metrics: {leads:0, conversions:0, clients:0},
+    operationalStatus: 'Onboarding'};
+  initState('POB', r);
+  pobRecords().push(r);
+  await save('pjOnboarding');
+  await logAudit('POB', r.id, 'Create', [{field:'from PMS', oldValue: p.id, newValue: pjName(r)}]);
+  p.onboardingId = r.id;
+  await save('pjPartners');
+  if(!(opts && opts.quiet)) await notifyUser(r.assignedTo, {title: 'Partner onboarding started — ' + pjName(r),
+    body: r.partnerCode + ' · collect the due payment and the empanelment form.', view:'pob', arg:r.id, kind:'pob'});
+  return r;
+}
+async function pobStartFromPms(partnerId){
+  if(!can('POB','create')){ alert('You do not have permission.'); return; }
+  const r = await pobStart(partnerId);
+  if(r) navigate('pob', r.id);
+}
+function pobUnstartedPartners(){
+  return pjLivePartners().filter(p=>stateOf('PMS', p)==='onboarded' && !pobFor(p.id));
+}
+function pobOpenStartPicker(){
+  const list = pobUnstartedPartners();
+  if(!list.length){ alert('Every onboarded partner in PMS has an onboarding record already.'); return; }
+  openModal('Start Partner Onboarding', `<p class="small-note" style="margin-top:0">Onboarded in PMS, not started here yet.</p>`
+    + list.map(p=>`<div class="between" style="padding:6px 0;border-bottom:1px solid var(--line)">
+        <span><b>${esc(pjName(p))}</b> <span class="small-note">${esc(p.id)} · ${esc(p.mobile||'')}</span></span>
+        <button class="btn sm primary" onclick="closeModal(); pobStartFromPms('${esc(p.id)}')">Start</button></div>`).join(''),
+    `<button class="btn" onclick="closeModal()">Close</button>`);
+}
+
+/* ---------- payments ----------
+   A payment is Paid only when somebody with Approve has checked it
+   against the bank. A screenshot is evidence, not a verification. The
+   same transaction reference can be counted once. */
+const POB_PAY_STATUSES = ['Not Started','Pending','Under Review','Paid','Failed','Refunded'];
+const POB_PAY_FIELDS = [
+  {k:'amount', l:'Amount', t:'number', req:1},
+  {k:'currency', l:'Currency', t:'text', req:1},
+  {k:'method', l:'Payment Method', t:'select', opts:['UPI','Bank Transfer','Card','Cheque','Cash','Payment Gateway'], req:1},
+  {k:'ref', l:'Transaction Reference / UTR', t:'text', req:1},
+  {k:'date', l:'Paid On', t:'date', req:1},
+  {k:'payer', l:'Paid By', t:'text', req:1},
+];
+function pobDue(){ return Number(pobConfig().dueFee) || 0; }
+function pobPaidTotal(r){ return (r.payments||[]).filter(p=>p.status==='Paid').reduce((s,p)=>s + (Number(p.amount)||0), 0); }
+function pobPaymentStatus(r){
+  const pays = r.payments || [];
+  if(r.paymentWaived) return 'Paid';
+  if(!pays.length) return pobDue() ? 'Not Started' : 'Paid';
+  if(pobPaidTotal(r) >= pobDue() && pays.some(p=>p.status==='Paid')) return 'Paid';
+  if(pays.some(p=>p.status==='Under Review')) return 'Under Review';
+  if(pays.some(p=>p.status==='Pending')) return 'Pending';
+  return pays[pays.length-1].status || 'Pending';
+}
+function pobRefTaken(ref, exceptId){
+  const want = String(ref||'').trim().toUpperCase();
+  if(!want) return null;
+  for(const r of pobLive()) for(const p of (r.payments||[])){
+    if(p.id!==exceptId && String(p.ref||'').trim().toUpperCase()===want && p.status!=='Failed') return {r, p};
+  }
+  return null;
+}
+function pobOpenPaymentForm(id, payId){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  const p = (r.payments||[]).find(x=>x.id===payId) || {amount: pobDue() || '', currency: pobConfig().currency || 'INR',
+    date: pobToday(), payer: pjName(r)};
+  openModal((payId ? 'Payment ' + payId : 'Record Payment') + ' — ' + pjName(r),
+    `<p class="small-note" style="margin-top:0">Due: <b>${esc(money(pobDue()))}</b>. Saving sends the payment for verification; it counts as Paid only once somebody with Approve has checked it against the bank.</p>
+     <div class="field-grid">${POB_PAY_FIELDS.map(f=>fieldInput(f, p[f.k])).join('')}</div>
+     <div class="field"><label>Receipt (optional)</label><input type="file" id="pobReceipt" accept="application/pdf,image/png,image/jpeg,image/webp">
+       ${p.receiptFileId ? `<div class="small-note">On file: <a href="javascript:void(0)" onclick="pobOpenFile('${esc(p.receiptFileId)}')">${esc(p.receiptName||'receipt')}</a></div>` : ''}</div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSavePayment('${esc(id)}','${esc(payId||'')}')">Save &amp; Send for Verification</button>`);
+}
+async function pobSavePayment(id, payId){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !can('POB','edit')){ alert('You do not have permission.'); return; }
+  const d = readFields(POB_PAY_FIELDS);
+  if(!validateRequired(POB_PAY_FIELDS, d)) return;
+  d.ref = String(d.ref).trim();
+  if(!(Number(d.amount) > 0)){ alert('The amount has to be more than zero.'); return; }
+  const clash = pobRefTaken(d.ref, payId);
+  if(clash){ alert('The reference ' + d.ref + ' is already recorded against ' + pjName(clash.r) + ' (' + clash.p.status + '). A transaction can be counted once.'); return; }
+  let file = null;
+  try { file = await pobUploadInput('pobReceipt'); } catch(e){ alert(e.message); return; }
+  r.payments = r.payments || [];
+  let p = r.payments.find(x=>x.id===payId);
+  const at = new Date().toISOString();
+  if(p && p.status==='Paid'){ alert('A verified payment cannot be changed. Mark it Refunded first if it was returned.'); return; }
+  if(!p){ p = {id: uid('PAY'), history: []}; r.payments.push(p); }
+  Object.assign(p, d, {status: 'Under Review', recordedBy: currentUser, recordedAt: at});
+  if(file){ p.receiptFileId = file.id; p.receiptName = file.name; }
+  p.history = (p.history||[]).concat([{at, by: currentUser, status: 'Under Review', note: 'Recorded ' + money(d.amount) + ' · ' + d.method + ' · ' + d.ref}]);
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Payment Recorded', [{field:'payment', oldValue:'', newValue: d.ref + ' · ' + money(d.amount)}]);
+  closeModal(); navigate('pob', id);
+}
+async function pobSetPaymentStatus(id, payId, status){
+  const r = pobRecords().find(x=>x.id===id);
+  const p = r && (r.payments||[]).find(x=>x.id===payId);
+  if(!p) return;
+  if(!pobMayApprove()){ alert('Verifying a payment needs Approve permission on Partners.'); return; }
+  let note = '';
+  if(status!=='Paid'){
+    note = prompt('Why is this payment ' + status.toLowerCase() + '?') || '';
+    if(!note.trim()){ alert('Say why, so the record shows it.'); return; }
+  }
+  if(status==='Paid' && !confirm('Verify ' + money(p.amount) + ' (' + p.ref + ') as received in the bank?')) return;
+  const before = p.status;
+  p.status = status;
+  if(status==='Paid'){ p.verifiedBy = currentUser; p.verifiedAt = new Date().toISOString(); }
+  p.history = (p.history||[]).concat([{at: new Date().toISOString(), by: currentUser, status, note: note || 'Verified against the bank'}]);
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Payment ' + status, [{field: p.ref, oldValue: before, newValue: status}]);
+  if(status==='Paid' && pobPaymentStatus(r)==='Paid' && r.assignedTo && r.assignedTo!==currentUser)
+    await notifyUser(r.assignedTo, {title: 'Payment verified — ' + pjName(r), body: 'Send the payment acknowledgement.', view:'pob', arg:id, kind:'pob'});
+  render();
+}
+function pobPaymentsHtml(r){
+  const add = can('POB','edit') && ['duePayment','paymentAck'].includes(stateOf('POB', r))
+    ? `<button class="btn sm primary" onclick="pobOpenPaymentForm('${esc(r.id)}')">+ Record Payment</button>` : '';
+  const rows = (r.payments||[]).map(p=>`<tr>
+    <td>${esc(fmtDate(p.date)||'—')}</td><td>${esc(money(p.amount))} ${esc(p.currency||'')}</td><td>${esc(p.method||'')}</td>
+    <td><b>${esc(p.ref||'')}</b></td><td>${esc(p.payer||'')}</td>
+    <td>${p.receiptFileId ? `<a href="javascript:void(0)" onclick="pobOpenFile('${esc(p.receiptFileId)}')">receipt</a>` : '—'}</td>
+    <td>${statusBadge(p.status)}${p.verifiedAt ? `<div class="small-note" style="margin:0">${esc(teamName(p.verifiedBy))} · ${esc(fmtDate(p.verifiedAt))}</div>` : ''}</td>
+    <td>${pobMayApprove() && p.status==='Under Review' ? `<button class="btn sm primary" onclick="pobSetPaymentStatus('${esc(r.id)}','${esc(p.id)}','Paid')">Verify</button>
+        <button class="btn sm" onclick="pobSetPaymentStatus('${esc(r.id)}','${esc(p.id)}','Failed')">Failed</button>` : ''}
+      ${pobMayApprove() && p.status==='Paid' ? `<button class="btn sm ghost" onclick="pobSetPaymentStatus('${esc(r.id)}','${esc(p.id)}','Refunded')">Refunded</button>` : ''}
+      ${can('POB','edit') && ['Under Review','Pending','Failed'].includes(p.status) ? `<button class="btn sm ghost" onclick="pobOpenPaymentForm('${esc(r.id)}','${esc(p.id)}')">Edit</button>` : ''}</td></tr>`);
+  const hist = [];
+  (r.payments||[]).forEach(p=>(p.history||[]).forEach(h=>hist.push(Object.assign({ref: p.ref}, h))));
+  return profTable('Payments — due ' + money(pobDue()) + ' · ' + pobPaymentStatus(r), ['Paid On','Amount','Method','Reference','Payer','Receipt','Status',''],
+      rows, 'No payment recorded yet.', add)
+    + (hist.length ? profTable('Payment Audit', ['When','Reference','Status','Note','By'],
+      hist.sort((a,b)=>String(b.at).localeCompare(String(a.at))).map(h=>`<tr><td>${esc(fmtDateTime(h.at))}</td><td>${esc(h.ref||'')}</td>
+        <td>${statusBadge(h.status)}</td><td>${esc(h.note||'')}</td><td>${esc(teamName(h.by))}</td></tr>`), '') : '');
+}
+
+/* ---------- files, kept on the server ---------- */
+function pobUploadInput(inputId, maxMb){
+  const el = document.getElementById(inputId);
+  const file = el && el.files && el.files[0];
+  if(!file) return Promise.resolve(null);
+  if(file.size > (maxMb || 5) * 1024 * 1024) return Promise.reject(new Error('The file is ' + Math.round(file.size/1024/1024*10)/10 + ' MB. Keep it under ' + (maxMb||5) + ' MB.'));
+  return new Promise((resolve, reject)=>{
+    const fr = new FileReader();
+    fr.onerror = ()=>reject(new Error('The file could not be read.'));
+    fr.onload = async ()=>{
+      try{
+        const res = await fetch('/api/partner-docs', {method:'POST', headers: Object.assign({'Content-Type':'application/json'}, apiHeaders()),
+          body: JSON.stringify({name: file.name, mime: file.type, data: String(fr.result||'')})});
+        const j = await res.json();
+        if(!j.ok) return reject(new Error(j.message || 'The upload failed.'));
+        resolve({id: j.id, name: file.name, size: file.size, mime: file.type});
+      }catch(e){ reject(new Error('Could not reach the server: ' + e.message)); }
+    };
+    fr.readAsDataURL(file);
+  });
+}
+async function pobOpenFile(fileId){
+  try{
+    const res = await fetch('/api/partner-docs/' + encodeURIComponent(fileId), {headers: apiHeaders()});
+    if(!res.ok){ alert('The file could not be opened.'); return; }
+    const url = URL.createObjectURL(await res.blob());
+    window.open(url, '_blank', 'noopener');
+    setTimeout(()=>URL.revokeObjectURL(url), 60000);
+  }catch(e){ alert('Could not reach the server: ' + e.message); }
+}
+
+/* ---------- documents ----------
+   Every type on the checklist has its own status. One approved document
+   does not verify the partner; every mandatory one has to be. */
+function pobDocOf(r, type){ return pobDocs().find(d=>!d.deletedAt && d.pobId===r.id && d.type===type) || null; }
+function pobDocRows(r){
+  const list = pobDocChecklist().map(c=>Object.assign({}, c, {doc: pobDocOf(r, c.type)}));
+  pobDocs().filter(d=>!d.deletedAt && d.pobId===r.id && !list.some(x=>x.type===d.type))
+    .forEach(d=>list.push({type: d.type, mandatory: false, doc: d}));
+  return list.map(x=>Object.assign(x, {status: x.doc ? x.doc.status : 'Not Submitted'}));
+}
+function pobDocsVerification(r){
+  const rows = pobDocRows(r).filter(x=>x.mandatory);
+  return {rows, approved: rows.filter(x=>x.status==='Approved').length, total: rows.length,
+    missing: rows.filter(x=>x.status==='Not Submitted' || x.status==='Rejected'),
+    pending: rows.filter(x=>x.status!=='Approved')};
+}
+function pobOpenDocUpload(id, type){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  const d = pobDocOf(r, type);
+  openModal('Upload — ' + type, `<p class="small-note" style="margin-top:0">${d ? 'Version ' + ((d.versions||[]).length + 1) + '. Earlier versions and their reviews are kept.' : 'PDF, PNG, JPG, WEBP or Word, up to 5 MB. Kept on the server, outside the public site.'}</p>
+      <div class="field"><label>File <span class="req">*</span></label><input type="file" id="pobDocFile" accept="application/pdf,image/png,image/jpeg,image/webp,.doc,.docx"></div>
+      ${fieldInput({k:'docNote', l:'Note', t:'text'}, '')}`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveDoc('${esc(id)}', ${esc(JSON.stringify(type))})">Upload</button>`);
+}
+async function pobSaveDoc(id, type){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !can('POB','edit')){ alert('You do not have permission.'); return; }
+  let file;
+  try { file = await pobUploadInput('pobDocFile'); } catch(e){ alert(e.message); return; }
+  if(!file){ alert('Choose the file to upload.'); return; }
+  const note = (readFields([{k:'docNote'}]).docNote || '').trim();
+  await pobAddDocVersion(r, type, file, note);
+  closeModal(); window._pobTabRec = 'documents'; navigate('pob', id);
+}
+async function pobAddDocVersion(r, type, file, note){
+  const at = new Date().toISOString();
+  let d = pobDocOf(r, type);
+  if(!d){ d = {id: uid('PDOC'), pobId: r.id, type, versions: [], reviews: [], status: 'Not Submitted', createdAt: at}; pobDocs().push(d); }
+  const was = d.status;
+  d.versions = (d.versions||[]).concat([{v: (d.versions||[]).length + 1, fileId: file.id, name: file.name, size: file.size, mime: file.mime,
+    uploadedAt: at, uploadedBy: currentUser, note: note || ''}]);
+  d.status = was==='Rejected' ? 'Resubmitted' : 'Submitted';
+  d.submittedAt = at;
+  d.reviews = (d.reviews||[]).concat([{at, by: currentUser, decision: d.status, reason: note || ''}]);
+  await save('pjDocuments');
+  await logAudit('POB', r.id, 'Document ' + d.status, [{field: type, oldValue: was, newValue: d.status + ' (v' + d.versions.length + ')'}]);
+  return d;
+}
+async function pobReviewDoc(docId, decision){
+  const d = pobDocs().find(x=>x.id===docId);
+  if(!d) return;
+  if(!pobMayApprove()){ alert('Reviewing a document needs Approve permission on Partners.'); return; }
+  let reason = '';
+  if(decision==='Rejected'){
+    reason = (prompt('Why is the ' + d.type + ' rejected? The partner is told this, so be specific.') || '').trim();
+    if(!reason){ alert('A rejection needs a reason.'); return; }
+  }
+  const at = new Date().toISOString(), was = d.status;
+  // Reviewed means it was looked at: Under Review comes first, in the trail.
+  if(was!=='Under Review') d.reviews = (d.reviews||[]).concat([{at, by: currentUser, decision: 'Under Review', reason: ''}]);
+  d.status = decision;
+  d.reviewedAt = at; d.reviewedBy = currentUser;
+  d.reviews = (d.reviews||[]).concat([{at, by: currentUser, decision, reason, v: (d.versions||[]).length}]);
+  await save('pjDocuments');
+  await logAudit('POB', d.pobId, 'Document ' + decision, [{field: d.type, oldValue: was, newValue: decision + (reason ? ' — ' + reason : '')}]);
+  render();
+}
+function pobDocsHtml(r){
+  const v = pobDocsVerification(r);
+  const rows = pobDocRows(r).map(x=>{
+    const d = x.doc, last = d && (d.versions||[]).slice(-1)[0];
+    const rej = d && (d.reviews||[]).slice().reverse().find(y=>y.decision==='Rejected');
+    return `<tr><td><b>${esc(x.type)}</b>${x.mandatory ? ' <span class="req">*</span>' : ''}</td>
+      <td>${statusBadge(x.status)}${x.status==='Rejected' && rej ? `<div class="small-note" style="margin:0">${esc(rej.reason)}</div>` : ''}</td>
+      <td>${last ? `<a href="javascript:void(0)" onclick="pobOpenFile('${esc(last.fileId)}')">${esc(last.name)}</a> <span class="small-note">v${last.v} · ${esc(fmtDate(last.uploadedAt))} · ${esc(teamName(last.uploadedBy))}</span>` : '—'}</td>
+      <td>${can('POB','edit') && x.status!=='Approved' ? `<button class="btn sm" onclick="pobOpenDocUpload('${esc(r.id)}', ${esc(JSON.stringify(x.type))})">${d ? (x.status==='Rejected' ? 'Resubmit' : 'New Version') : 'Upload'}</button>` : ''}
+        ${pobMayApprove() && d && ['Submitted','Resubmitted','Under Review'].includes(x.status) ? `<button class="btn sm primary" onclick="pobReviewDoc('${esc(d.id)}','Approved')">Approve</button>
+          <button class="btn sm" onclick="pobReviewDoc('${esc(d.id)}','Rejected')">Reject</button>` : ''}
+        ${pobMayApprove() && d && x.status==='Approved' ? `<button class="btn sm ghost" onclick="pobReviewDoc('${esc(d.id)}','Under Review')">Reopen</button>` : ''}</td></tr>`;
+  });
+  const trail = [];
+  pobDocs().filter(d=>!d.deletedAt && d.pobId===r.id).forEach(d=>(d.reviews||[]).forEach(x=>trail.push(Object.assign({type: d.type}, x))));
+  return profTable('Documents — ' + v.approved + ' of ' + v.total + ' mandatory approved', ['Document','Status','Latest version',''], rows, 'No documents on the checklist (POB › Settings).')
+    + pobAgreementHtml(r)
+    + (trail.length ? profTable('Document History', ['When','Document','Decision','Reason','By'],
+      trail.sort((a,b)=>String(b.at).localeCompare(String(a.at))).map(x=>`<tr><td>${esc(fmtDateTime(x.at))}</td><td>${esc(x.type)}</td>
+        <td>${statusBadge(x.decision)}</td><td>${esc(x.reason||'')}</td><td>${esc(teamName(x.by))}</td></tr>`), '') : '');
+}
+
+/* ---------- empanelment: the Freedom LifeX form and agreement ---------- */
+function pobEmpanelmentMissing(r){
+  return pobFields().filter(f=>f.req && !String(r[f.k]||'').trim()).map(f=>f.l);
+}
+function pobDuplicateOf(r, data){
+  const email = String(data.email||'').trim().toLowerCase(), phone = String(data.mobile||'').replace(/\D/g,'').slice(-10);
+  return pobLive().find(x=>x.id!==r.id && ((email && String(x.email||'').trim().toLowerCase()===email)
+    || (phone && String(x.mobile||'').replace(/\D/g,'').slice(-10)===phone))) || null;
+}
+function pobMayEditApplication(r){
+  return can('POB','edit') && (!['Approved'].includes(r.applicationStatus) || pobMayApprove());
+}
+function pobOpenEmpanelment(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  if(!pobMayEditApplication(r)){ alert('The application is approved. Only someone with Approve on Partners can change it now.'); return; }
+  openModal('Empanelment Form — ' + r.applicationId, `<p class="small-note" style="margin-top:0">Partner code <b>${esc(r.partnerCode)}</b>. Filled in from what PMS already has; check it and complete the rest.</p>
+    <div class="field-grid">${pobFields().map(f=>fieldInput(f, r[f.k])).join('')}</div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveEmpanelment('${esc(id)}')">Save</button>`);
+}
+async function pobSaveEmpanelment(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !pobMayEditApplication(r)){ alert('You do not have permission.'); return; }
+  const fields = pobFields();
+  const data = readFields(fields);
+  if(!validateRequired(fields, data)) return;
+  const dup = pobDuplicateOf(r, data);
+  if(dup){ alert('Already registered: ' + pjName(dup) + ' (' + dup.partnerCode + ') has the same email or phone. One partner, one empanelment.'); return; }
+  const before = Object.assign({}, r);
+  Object.assign(r, data, {updatedAt: new Date().toISOString(), updatedBy: currentUser, empanelmentSavedAt: new Date().toISOString()});
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Edit', diffFields(before, r, fields));
+  closeModal(); navigate('pob', id);
+}
+function pobAgreementHtml(r){
+  const a = r.agreement;
+  return profCard('Agreement', [
+    ['Status', a && a.acceptedAt ? '<span class="badge ok">Accepted</span>' : '<span class="badge warn">Not accepted yet</span>'],
+    ['Version', esc(a ? a.version : pobAgreementVersion())], ['Accepted On', a ? esc(fmtDateTime(a.acceptedAt)) : ''],
+    ['Signed As', esc(a ? a.signedName : '')], ['Evidence', a && a.evidence ? esc(a.evidence) : ''], ['Recorded By', a ? esc(teamName(a.by)) : ''],
+  ], can('POB','edit') ? `<div style="margin-top:8px"><button class="btn sm" onclick="pobOpenAgreement('${esc(r.id)}')">${a && a.acceptedAt ? 'View / Re-accept' : 'Record Acceptance'}</button></div>` : '');
+}
+function pobOpenAgreement(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  openModal('Freedom LifeX Partner Agreement', `<div class="card" style="padding:12px;white-space:pre-wrap;font-size:13.5px;margin:0 0 10px">${esc(pobConfig().agreement)}</div>
+    <p class="small-note">Version ${esc(pobAgreementVersion())}. Upload the signed copy under Documents › Signed Agreement as the evidence of signature.</p>
+    ${fieldInput({k:'agSigned', l:'Accepted by (full name as signed)', t:'text', req:1}, pjName(r))}
+    ${fieldInput({k:'agEvidence', l:'How it was accepted', t:'select', opts:['Signed copy uploaded','Signed in person','Accepted by email','E-sign']}, 'Signed copy uploaded')}`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveAgreement('${esc(id)}')">Record Acceptance</button>`);
+}
+async function pobSaveAgreement(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !can('POB','edit')) return;
+  const f = [{k:'agSigned', l:'Accepted by', req:1}, {k:'agEvidence', l:'How'}];
+  const d = readFields(f);
+  if(!validateRequired(f, d)) return;
+  r.agreement = {acceptedAt: new Date().toISOString(), by: currentUser, signedName: d.agSigned, evidence: d.agEvidence, version: pobAgreementVersion()};
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Agreement Accepted', [{field:'agreement', oldValue:'', newValue: r.agreement.version + ' · ' + d.agSigned}]);
+  closeModal(); navigate('pob', id);
+}
+
+/* ---------- evaluation ---------- */
+function pobCriteriaState(r){
+  const done = (r.evaluation && r.evaluation.criteria) || {};
+  return pobCriteria().map(c=>({c, ok: !!(done[c] && done[c].ok), note: (done[c] && done[c].note) || '', by: done[c] && done[c].by}));
+}
+function pobOpenEvaluation(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  if(!pobMayApprove()){ alert('The evaluation is for someone with Approve permission on Partners.'); return; }
+  openModal('Evaluation Checklist — ' + pjName(r), `<p class="small-note" style="margin-top:0">Tick each criterion the application meets, with a note where it helps.</p>`
+    + pobCriteriaState(r).map((x, i)=>`<div style="border-bottom:1px solid var(--line);padding:6px 0">
+        <label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" class="pob-crit" data-i="${i}"${x.ok?' checked':''}> ${esc(x.c)}</label>
+        <input type="text" class="pob-crit-note" data-i="${i}" placeholder="Note" value="${esc(x.note)}" style="margin-top:4px;width:100%"></div>`).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveEvaluation('${esc(id)}')">Save Checklist</button>`);
+}
+async function pobSaveEvaluation(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !pobMayApprove()) return;
+  const crit = pobCriteria();
+  const notes = Array.from(document.querySelectorAll('.pob-crit-note'));
+  const out = {};
+  Array.from(document.querySelectorAll('.pob-crit')).forEach(cb=>{
+    const i = Number(cb.dataset.i);
+    const n = notes.find(x=>Number(x.dataset.i)===i);
+    out[crit[i]] = {ok: cb.checked, note: n ? n.value.trim() : '', by: currentUser, at: new Date().toISOString()};
+  });
+  r.evaluation = Object.assign({}, r.evaluation, {criteria: out});
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Evaluation Checklist', [{field:'criteria met', oldValue:'', newValue: Object.values(out).filter(x=>x.ok).length + ' of ' + crit.length}]);
+  closeModal(); navigate('pob', id);
+}
+const POB_DECISIONS = {
+  obApproveT:  {title:'Approve the Evaluation', decision:'Approved', reason:false},
+  obMoreInfoT: {title:'Request More Information', decision:'More Information Requested', reason:true},
+  obRejectT:   {title:'Reject the Application', decision:'Rejected', reason:true},
+};
+function pobOpenDecisionModal(module, id, tid){
+  const r = pobRecords().find(x=>x.id===id);
+  const d = POB_DECISIONS[tid];
+  if(!r || !d) return;
+  if(!pobMayApprove()){ alert('Deciding the evaluation needs Approve permission on Partners.'); return; }
+  if(tid==='obApproveT'){
+    const why = pobGuard(r, {id: tid}, true);
+    if(why){ alert(why); return; }
+  }
+  openModal(d.title + ' — ' + pjName(r), `<p class="small-note" style="margin-top:0">Attempt ${(r.attempts||[]).length || 1}. The decision is kept with the application, whatever happens next.</p>`
+    + fieldInput({k:'decReason', l: d.reason ? 'Reason' : 'Comments', t:'textarea', req: d.reason ? 1 : 0}, ''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveDecision('${esc(id)}','${esc(tid)}')">${esc(d.title)}</button>`);
+}
+async function pobSaveDecision(id, tid){
+  const r = pobRecords().find(x=>x.id===id);
+  const d = POB_DECISIONS[tid];
+  if(!r || !d) return;
+  const f = [{k:'decReason', l:'Reason', req: d.reason ? 1 : 0}];
+  const v = readFields(f);
+  if(!validateRequired(f, v)) return;
+  r._decision = {tid, reason: String(v.decReason||'').trim()};
+  closeModal();
+  await doTransition('POB', id, tid);
+}
+async function pobEscalate(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  const admins = DB.team.filter(t=>isMemberActive(t) && isAdmin(t) && t.id!==currentUser);
+  if(!admins.length){ alert('There is no other administrator to escalate to.'); return; }
+  const note = (prompt('What needs a manager’s decision on ' + pjName(r) + '?') || '').trim();
+  if(!note) return;
+  r.escalations = (r.escalations||[]).concat([{at: new Date().toISOString(), by: currentUser, note, to: admins.map(a=>a.id)}]);
+  await save('pjOnboarding');
+  await notifyUsers(admins.map(a=>a.id), {title: 'Escalated: ' + pjName(r) + ' (' + r.applicationId + ')', body: note, view:'pob', arg:id, kind:'pob'});
+  await logAudit('POB', id, 'Escalated', [{field:'note', oldValue:'', newValue: note}]);
+  render();
+}
+function pobEvaluationHtml(r){
+  const cs = pobCriteriaState(r);
+  return profTable('Evaluation Checklist — ' + cs.filter(x=>x.ok).length + ' of ' + cs.length + ' met', ['Criterion','Met','Note','By'],
+      cs.map(x=>`<tr><td>${esc(x.c)}</td><td>${x.ok ? '<span class="badge ok">Yes</span>' : '<span class="badge warn">No</span>'}</td>
+        <td>${esc(x.note)}</td><td>${esc(x.by ? teamName(x.by) : '')}</td></tr>`), 'No criteria set (POB › Settings).',
+      pobMayApprove() ? `<button class="btn sm" onclick="pobOpenEvaluation('${esc(r.id)}')">Update Checklist</button> <button class="btn sm ghost" onclick="pobEscalate('${esc(r.id)}')">Escalate</button>` : '')
+    + profTable('Review Attempts', ['Attempt','Submitted','Decision','Reason','By','When'],
+      (r.attempts||[]).slice().reverse().map(a=>`<tr><td>${a.n}</td><td>${esc(fmtDateTime(a.submittedAt))}</td>
+        <td>${a.decision ? statusBadge(a.decision) : '<span class="badge info">Under Review</span>'}</td><td>${esc(a.reason||'')}</td>
+        <td>${esc(a.by ? teamName(a.by) : '')}</td><td>${esc(a.decidedAt ? fmtDateTime(a.decidedAt) : '')}</td></tr>`), 'Not submitted for evaluation yet.')
+    + ((r.escalations||[]).length ? profTable('Escalations', ['When','By','Note'], r.escalations.slice().reverse().map(e=>`<tr>
+        <td>${esc(fmtDateTime(e.at))}</td><td>${esc(teamName(e.by))}</td><td>${esc(e.note)}</td></tr>`), '') : '');
+}
+
+/* ---------- login access ---------- */
+function pobOpenLoginModal(module, id, tid){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  const l = r.login || {};
+  openModal('Create Login Access — ' + pjName(r), `<p class="small-note" style="margin-top:0">Record the Freedom LifeX account created for ${esc(pjName(r))}. The login details go to <b>${esc(r.email||'no address on file')}</b>. This is their account, not their activation as a partner: that comes at the end, after the readiness review.</p>`
+    + fieldInput({k:'lgUser', l:'Login ID', t:'text', req:1}, l.userId || r.email || '')
+    + fieldInput({k:'lgLink', l:'Activation / password setup link', t:'text', req:1, h:'From the Freedom LifeX platform. Never a password.'}, l.link || pobConfig().loginLink || '')
+    + fieldInput({k:'lgAccess', l:'Initial access', t:'select', opts:['Onboarding tasks only','Onboarding + learning']}, l.access || 'Onboarding tasks only'),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveLogin('${esc(id)}','${esc(tid)}')">Record &amp; Send Login Details</button>`);
+}
+async function pobSaveLogin(id, tid){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  const f = [{k:'lgUser', l:'Login ID', req:1}, {k:'lgLink', l:'Activation link', req:1}, {k:'lgAccess', l:'Access'}];
+  const d = readFields(f);
+  if(!validateRequired(f, d)) return;
+  const taken = pobLive().find(x=>x.id!==id && x.login && String(x.login.userId).toLowerCase()===String(d.lgUser).trim().toLowerCase());
+  if(taken){ alert('The login ID ' + d.lgUser + ' already belongs to ' + pjName(taken) + '.'); return; }
+  const at = new Date().toISOString();
+  r.login = Object.assign({}, r.login, {userId: d.lgUser.trim(), link: d.lgLink.trim(), access: d.lgAccess, status: 'Created', createdAt: at, createdBy: currentUser,
+    history: ((r.login||{}).history||[]).concat([{at, by: currentUser, status: 'Created', note: d.lgAccess}])});
+  closeModal();
+  const res = await pjMail('POB', r, 'pobLogin', {LoginId: r.login.userId, LoginLink: r.login.link, PartnerCode: r.partnerCode}, 'Login access');
+  await doTransition('POB', id, tid);
+  pjSaidMail(res, 'The login letter');
+}
+async function pobSetLoginStatus(id, status){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !r.login) return;
+  if(!pobMayApprove()){ alert('Changing account access needs Approve permission on Partners.'); return; }
+  const note = status==='Suspended' ? (prompt('Why is the account suspended?') || '').trim() : '';
+  if(status==='Suspended' && !note){ alert('Say why, so the record shows it.'); return; }
+  const was = r.login.status;
+  r.login.status = status;
+  r.login.history = (r.login.history||[]).concat([{at: new Date().toISOString(), by: currentUser, status, note}]);
+  if(status==='Activated') r.login.activatedAt = new Date().toISOString();
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Login ' + status, [{field:'account', oldValue: was, newValue: status + (note ? ' — ' + note : '')}]);
+  render();
+}
+
+/* ---------- role confirmation and assignment ---------- */
+function pobOpenRoleMeeting(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  const m = r.roleMeeting || {};
+  openModal('One-to-One for Role Confirmation — ' + pjName(r), `<p class="small-note" style="margin-top:0">The internal RM meets the partner to confirm the role. The invitation goes to <b>${esc(r.email||'no address on file')}</b>.</p>`
+    + PJ_INDUCTION_FIELDS.map(f=>fieldInput(Object.assign({}, f, f.k==='mtDate' ? {l:'Meeting Date'} : {}), {mtDate:m.date, mtTime:m.time, mtLink:m.link}[f.k])).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveRoleMeeting('${esc(id)}')">Book &amp; Send Invitation</button>`);
+}
+async function pobSaveRoleMeeting(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  const m = readFields(PJ_INDUCTION_FIELDS);
+  if(!validateRequired(PJ_INDUCTION_FIELDS, m)) return;
+  r.roleMeeting = {date: m.mtDate, time: m.mtTime, link: m.mtLink, at: new Date().toISOString(), by: currentUser, host: r.assignedTo || currentUser};
+  await save('pjOnboarding');
+  closeModal();
+  const res = await pjMail('POB', r, 'pobRoleMeeting', {Date: fmtDate(m.mtDate), Time: m.mtTime, MeetingLink: m.mtLink, Host: teamName(r.assignedTo || currentUser)},
+    'Role confirmation one-to-one');
+  navigate('pob', id);
+  pjSaidMail(res, 'The invitation');
+}
+function pobRoleFields(r, change){
+  return [
+    {k:'roRole', l:'Business Role', t:'select', opts: POB_ROLES, req:1},
+    {k:'roReason', l: change ? 'Reason for the change' : 'Why this role', t:'textarea', req: change ? 1 : 0},
+  ].concat(change ? [] : [{k:'roMinutes', l:'Minutes of the one-to-one', t:'textarea', req:1}]);
+}
+function pobOpenRoleModal(module, id, tid){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  if(!pobMayApprove()){ alert('Assigning a business role needs Approve permission on Partners.'); return; }
+  if(!(r.roleMeeting && r.roleMeeting.date)){ alert('Book the one-to-one for role confirmation first — the role is confirmed in it.'); return; }
+  const change = !tid;
+  const preview = role => { const w = pobLatestWorkflow(role); return w ? (w.tasks||[]).filter(t=>t.phase==='onboarding').map(t=>t.title).join(' → ') : 'No workflow set up'; };
+  openModal((change ? 'Change Role — ' : 'Role Identification — ') + pjName(r),
+    `<p class="small-note" style="margin-top:0">${esc(r.applicationId)} · verification ${esc(r.applicationStatus||'')}${r.role ? ' · current role <b>' + esc(r.role) + '</b>' : ''}${r.proposedRole ? ' · proposed ' + esc(r.proposedRole) : ''}.
+      The role decides the workflow. ${change ? 'Changing it keeps every task already done and replaces the ones still to do.' : ''}</p>
+     ${POB_ROLES.map(role=>`<div class="small-note" style="margin:2px 0"><b>${esc(role)}</b>: ${esc(preview(role))}</div>`).join('')}
+     <div class="field-grid" style="margin-top:8px">${pobRoleFields(r, change).map(f=>fieldInput(f, f.k==='roRole' ? (r.role || (POB_ROLES.includes(r.proposedRole) ? r.proposedRole : '')) : '')).join('')}</div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveRole('${esc(id)}','${esc(tid||'')}')">${change ? 'Change Role' : 'Confirm Role'}</button>`);
+}
+async function pobSaveRole(id, tid){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !pobMayApprove()) return;
+  const change = !tid;
+  const f = pobRoleFields(r, change);
+  const d = readFields(f);
+  if(!validateRequired(f, d)) return;
+  if(change && d.roRole===r.role){ alert(r.role + ' is the role already.'); return; }
+  if(!change) r.roleMeeting = Object.assign({}, r.roleMeeting, {minutes: d.roMinutes, heldAt: new Date().toISOString()});
+  closeModal();
+  await pobAssignRole(r, d.roRole, d.roReason || '');
+  if(tid) await doTransition('POB', id, tid);
+  else navigate('pob', id);
+}
+/* One primary role at a time. A change keeps what is done and replaces
+   what is not, and says so in the role history. */
+async function pobAssignRole(r, role, reason){
+  await migratePartnerOnboarding();
+  const wf = pobLatestWorkflow(role);
+  if(!wf){ alert('There is no ' + role + ' workflow. Set one up under POB › Workflows.'); return; }
+  const at = new Date().toISOString();
+  const from = r.role || '';
+  r.roleHistory = (r.roleHistory||[]).concat([{from, to: role, by: currentUser, at, reason, workflow: wf.id, version: wf.version}]);
+  r.role = role;
+  pobApplyWorkflow(r, wf, from ? 'Role changed from ' + from + ' to ' + role : '');
+  await pobRefreshTasks(r);
+  await save('pjOnboarding');
+  await logAudit('POB', r.id, from ? 'Role Changed' : 'Role Assigned', [{field:'role', oldValue: from, newValue: role + (reason ? ' — ' + reason : '')}]);
+}
+/* The workflow's tasks onto the partner. A task already approved under
+   the same key is kept as it is; one still open from before is closed as
+   Cancelled with the reason, never deleted. */
+function pobApplyWorkflow(r, wf, why){
+  const old = r.tasks || [];
+  const at = new Date().toISOString();
+  const next = [];
+  (wf.tasks||[]).forEach((tt, i)=>{
+    const had = old.find(x=>x.key===tt.key && x.status!=='Cancelled');
+    if(had && had.status==='Approved'){ next.push(Object.assign(had, {order: i, dependsOn: tt.dependsOn || [], phase: tt.phase, required: tt.required !== false})); return; }
+    const t = Object.assign({id: uid('PTK'), status: 'Not Started', history: [], createdAt: at}, JSON.parse(JSON.stringify(tt)), {order: i});
+    if(had){ ['status','startedAt','history','attempts','evidence','sessionId','reviewId','eligibleAt','dueDate','unlockedAt'].forEach(k=>{ if(had[k]!==undefined) t[k] = had[k]; }); t.id = had.id; }
+    next.push(t);
+  });
+  old.forEach(x=>{
+    if(next.includes(x)) return;
+    if(next.some(n=>n.id===x.id)) return;
+    if(x.status==='Approved' || x.status==='Cancelled'){ next.push(Object.assign(x, {retired: true})); return; }
+    x.status = 'Cancelled'; x.retired = true;
+    x.history = (x.history||[]).concat([{at, by: currentUser, status: 'Cancelled', note: why || 'Not in workflow version ' + wf.version}]);
+    next.push(x);
+  });
+  r.tasks = next;
+  r.workflowId = wf.id; r.workflowVersion = wf.version;
+}
+async function pobMigrateWorkflow(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !r.role) return;
+  if(!pobMayApprove()){ alert('Moving a partner to a new workflow version needs Approve permission on Partners.'); return; }
+  const wf = pobLatestWorkflow(r.role);
+  if(!wf || wf.id===r.workflowId){ alert(pjName(r) + ' is on the latest ' + r.role + ' workflow already.'); return; }
+  if(!confirm('Move ' + pjName(r) + ' from version ' + r.workflowVersion + ' to version ' + wf.version + '? Approved tasks are kept; open tasks the new version does not have are cancelled.')) return;
+  const from = r.workflowVersion;
+  pobApplyWorkflow(r, wf, 'Migrated to workflow version ' + wf.version);
+  r.roleHistory = (r.roleHistory||[]).concat([{from: r.role, to: r.role, by: currentUser, at: new Date().toISOString(), reason: 'Workflow migrated v' + from + ' → v' + wf.version, workflow: wf.id, version: wf.version}]);
+  await pobRefreshTasks(r);
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Workflow Migrated', [{field:'workflow', oldValue:'v' + from, newValue:'v' + wf.version}]);
+  render();
+}
+
+/* ---------- the workflow engine ----------
+   Eligibility is worked out, never stored by hand: a task opens when
+   every task it depends on is approved (an optional one cancelled counts
+   as out of the way), its count is reached, and — for growth tasks — the
+   partner is active. */
+const POB_TASK_DONE = ['Approved'];
+function pobLiveTasks(r){ return (r.tasks||[]).filter(t=>!t.retired); }
+function pobTaskOwner(r, t){
+  if(t.owner==='Partner') return 'Partner';
+  if(t.ownerId) return teamName(t.ownerId);
+  return teamName(r.assignedTo);
+}
+function pobTaskState(r, t){
+  const tasks = pobLiveTasks(r);
+  const overdue = t.dueDate && t.dueDate < pobToday() && !['Approved','Cancelled'].includes(t.status);
+  if(['Approved','Cancelled'].includes(t.status)) return {open: false, done: t.status==='Approved', overdue: false, reason: ''};
+  if(t.phase==='growth' && stateOf('POB', r)!=='active') return {open: false, overdue, reason: 'Opens when the partner is active'};
+  const waits = (t.dependsOn||[]).map(k=>tasks.find(x=>x.key===k)).filter(x=>x && x.status!=='Approved' && !(x.status==='Cancelled' && x.required===false));
+  if(waits.length) return {open: false, overdue, reason: 'Waits for “' + waits[0].title + '”'};
+  if(t.metric && t.count){
+    const have = Number((r.metrics||{})[t.metric]) || 0;
+    if(have < Number(t.count)) return {open: false, overdue, reason: 'Needs ' + t.count + ' ' + (POB_METRICS.find(m=>m[0]===t.metric)||[,''])[1].toLowerCase() + ' — ' + have + ' so far'};
+  }
+  return {open: true, overdue, reason: ''};
+}
+function pobTaskStatusLabel(r, t){
+  const s = pobTaskState(r, t);
+  if(s.overdue) return t.status + ' · Overdue';
+  return t.status;
+}
+/* Run whenever something a task waits on changes. A task that has just
+   opened gets its due date, and the owner hears about it. */
+async function pobRefreshTasks(r){
+  const opened = [];
+  const days = Number(pobConfig().taskDueDays) || 7;
+  pobLiveTasks(r).forEach(t=>{
+    const s = pobTaskState(r, t);
+    if(s.open && !t.eligibleAt){
+      t.eligibleAt = new Date().toISOString();
+      if(!t.dueDate && t.kind!=='milestone' && t.kind!=='review') t.dueDate = pobAddDays(pobToday(), days);
+      opened.push(t);
+    }
+  });
+  if(opened.length && r.assignedTo) await notifyUser(r.assignedTo, {title: pjName(r) + ': ' + opened.length + ' task(s) open',
+    body: opened.map(t=>t.title).slice(0, 3).join(' · '), view:'pob', arg:r.id, kind:'pob'});
+  return opened;
+}
+function pobRequiredOnboarding(r){ return pobLiveTasks(r).filter(t=>t.phase==='onboarding' && t.required !== false); }
+function pobProgress(r){
+  const st = stateOf('POB', r);
+  const spine = ['duePayment','paymentAck','empanelment','evaluation','loginAccess','roleMeeting','roleWorkflow'];
+  const i = spine.indexOf(st);
+  const passed = st==='active' || st==='readiness' ? spine.length - 1 : st==='rejected' ? 3 : Math.max(0, i);
+  const req = pobRequiredOnboarding(r);
+  const done = req.filter(t=>t.status==='Approved').length;
+  const total = (spine.length - 1) + req.length + 1;
+  return Math.round(100 * (passed + done + (st==='active' ? 1 : 0)) / Math.max(1, total));
+}
+function pobTaskAppend(t, status, note){
+  t.history = (t.history||[]).concat([{at: new Date().toISOString(), by: currentUser, status, note: note || ''}]);
+  t.status = status;
+}
+async function pobTaskAction(id, taskId, action){
+  const r = pobRecords().find(x=>x.id===id);
+  const t = r && (r.tasks||[]).find(x=>x.id===taskId);
+  if(!t) return;
+  if(!can('POB','edit')){ alert('You do not have permission.'); return; }
+  const s = pobTaskState(r, t);
+  if(action==='start'){
+    if(!s.open){ alert('“' + t.title + '” is not open yet: ' + s.reason + '.'); return; }
+    if(t.kind==='session') return pobOpenSessionForm(id, taskId);
+    if(t.kind==='review') return pobOpenReviewSchedule(id, taskId);
+    if(t.kind==='milestone') return pobUnlockCourse(id, taskId);
+    pobTaskAppend(t, 'In Progress'); t.startedAt = t.startedAt || new Date().toISOString();
+  } else if(action==='submit'){
+    if(t.kind==='training'){
+      const why = pobTrainingGap(t);
+      if(why){ alert(why); return; }
+    }
+    if(t.kind==='session'){
+      const ses = pobSessions().find(x=>x.id===t.sessionId);
+      if(!ses || ses.status!=='Completed'){ alert('The Role Clarity Session has to be held and its completion confirmed first.'); return; }
+    }
+    if(t.kind==='task' && !(t.evidence||'').trim()){
+      const ev = (prompt('What was done? A note or a link to the deliverable — the reviewer reads this.') || '').trim();
+      if(!ev){ alert('Say what was done, so it can be reviewed.'); return; }
+      t.evidence = ev;
+    }
+    if(t.approval){ pobTaskAppend(t, 'Submitted for Review', t.evidence || ''); t.submittedAt = new Date().toISOString(); }
+    else { pobTaskAppend(t, 'Approved', 'Done — needs no approval'); t.approvedAt = new Date().toISOString(); t.approvedBy = currentUser; }
+  } else if(action==='approve' || action==='return'){
+    if(!pobMayApprove()){ alert('Approving a task needs Approve permission on Partners.'); return; }
+    if(t.status!=='Submitted for Review'){ alert('Only a task submitted for review can be approved or returned.'); return; }
+    if(action==='approve'){ pobTaskAppend(t, 'Approved'); t.approvedAt = new Date().toISOString(); t.approvedBy = currentUser; }
+    else {
+      const why = (prompt('What has to be corrected?') || '').trim();
+      if(!why){ alert('Say what has to be corrected.'); return; }
+      pobTaskAppend(t, 'Returned for Correction', why); t.evidence = '';
+    }
+  } else if(action==='rework'){
+    pobTaskAppend(t, 'In Progress', 'Being corrected');
+  } else if(action==='block'){
+    const why = (prompt('What is it blocked on?') || '').trim();
+    if(!why) return;
+    t.blockedFrom = t.status; pobTaskAppend(t, 'Blocked', why);
+  } else if(action==='unblock'){
+    pobTaskAppend(t, t.blockedFrom || 'In Progress', 'Unblocked');
+  } else if(action==='cancel'){
+    if(t.required !== false){ alert('“' + t.title + '” is required by the workflow. It cannot be skipped.'); return; }
+    pobTaskAppend(t, 'Cancelled', 'Optional — skipped');
+  }
+  await pobRefreshTasks(r);
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Task ' + t.status, [{field: t.title, oldValue: '', newValue: t.status}]);
+  render();
+}
+function pobTaskButtons(r, t){
+  const s = pobTaskState(r, t), b = [];
+  const btn = (label, action, kind) => `<button class="btn sm ${kind||''}" onclick="pobTaskAction('${esc(r.id)}','${esc(t.id)}','${action}')">${label}</button>`;
+  if(!can('POB','edit')) return '';
+  if(t.status==='Not Started' && s.open) b.push(btn(t.kind==='session' ? 'Schedule Session' : t.kind==='review' ? 'Schedule Review' : t.kind==='milestone' ? 'Unlock Course' : 'Start', 'start', 'primary'));
+  if(t.status==='In Progress'){
+    if(t.kind==='training') b.push(`<button class="btn sm" onclick="pobOpenAttempt('${esc(r.id)}','${esc(t.id)}')">Record Result</button>`);
+    if(t.kind==='session' && t.sessionId) b.push(`<button class="btn sm" onclick="pobOpenSessionComplete('${esc(t.sessionId)}')">Session Outcome</button>`);
+    if(t.kind!=='review' && t.kind!=='milestone') b.push(btn(t.approval ? 'Submit for Review' : 'Mark Done', 'submit', 'primary'));
+  }
+  if(t.status==='Returned for Correction') b.push(btn('Correct', 'rework'));
+  if(t.status==='Submitted for Review' && pobMayApprove()){ b.push(btn('Approve', 'approve', 'primary')); b.push(btn('Return', 'return')); }
+  if(['Not Started','In Progress','Returned for Correction'].includes(t.status) && s.open) b.push(btn('Block', 'block', 'ghost'));
+  if(t.status==='Blocked') b.push(btn('Unblock', 'unblock'));
+  if(t.required===false && !['Approved','Cancelled'].includes(t.status)) b.push(btn('Skip', 'cancel', 'ghost'));
+  return b.join(' ');
+}
+function pobTasksHtml(r){
+  if(!r.role) return `<div class="empty">No role yet. The tasks come from the role's workflow once the role is confirmed at the one-to-one.</div>`;
+  const wf = pobWorkflowOf(r), latest = pobLatestWorkflow(r.role);
+  const head = `<div class="between" style="margin-bottom:8px"><div><b>${esc(r.role)}</b> · workflow v${esc(String(r.workflowVersion||'—'))}
+      ${latest && wf && latest.version > wf.version ? ` <span class="badge warn">v${latest.version} available</span>` : ''}</div>
+    <div class="row" style="gap:6px">
+      ${pobMayApprove() && latest && wf && latest.version > wf.version ? `<button class="btn sm" onclick="pobMigrateWorkflow('${esc(r.id)}')">Move to v${latest.version}</button>` : ''}
+      ${pobMayApprove() ? `<button class="btn sm" onclick="pobOpenRoleModal('POB','${esc(r.id)}')">Change Role</button>` : ''}
+      ${can('POB','edit') ? `<button class="btn sm" onclick="pobOpenMetrics('${esc(r.id)}')">Update Figures</button>` : ''}</div></div>`;
+  const kindLabel = k => (POB_TASK_KINDS.find(x=>x[0]===k)||[,k])[1];
+  const table = phase => {
+    const list = pobLiveTasks(r).filter(t=>t.phase===phase).sort((a,b)=>(a.order||0)-(b.order||0));
+    return profTable(phase==='onboarding' ? 'Onboarding Tasks' : 'Growth Tasks (after activation)', ['#','Task','Type','Owner','Due','Status',''],
+      list.map((t, i)=>{
+        const s = pobTaskState(r, t);
+        return `<tr><td>${i+1}</td><td><b>${esc(t.title)}</b>${t.required===false ? ' <span class="small-note">optional</span>' : ''}
+            ${!s.open && s.reason ? `<div class="small-note" style="margin:0">🔒 ${esc(s.reason)}</div>` : ''}
+            ${t.evidence ? `<div class="small-note" style="margin:0">${esc(t.evidence)}</div>` : ''}
+            ${t.status==='Returned for Correction' ? `<div class="small-note" style="margin:0;color:var(--danger)">${esc(((t.history||[]).slice(-1)[0]||{}).note||'')}</div>` : ''}</td>
+          <td>${esc(kindLabel(t.kind))}</td><td>${esc(pobTaskOwner(r, t))}</td><td>${esc(fmtDate(t.dueDate)||'—')}</td>
+          <td>${statusBadge(t.status)}${s.overdue ? ' <span class="badge danger">Overdue</span>' : ''}</td><td>${pobTaskButtons(r, t)}</td></tr>`;
+      }), 'No tasks in this phase.');
+  };
+  const retired = (r.tasks||[]).filter(t=>t.retired);
+  return head + profCard('Figures', POB_METRICS.map(([k, l])=>[l, esc(String((r.metrics||{})[k]||0))])) + table('onboarding') + table('growth')
+    + (retired.length ? profTable('From an Earlier Role or Version', ['Task','Status','Note'], retired.map(t=>`<tr><td>${esc(t.title)}</td><td>${statusBadge(t.status)}</td>
+        <td>${esc(((t.history||[]).slice(-1)[0]||{}).note||'')}</td></tr>`), '') : '')
+    + profTable('Role History', ['When','From','To','Reason','By','Workflow'], (r.roleHistory||[]).slice().reverse().map(h=>`<tr><td>${esc(fmtDateTime(h.at))}</td>
+        <td>${esc(h.from||'—')}</td><td>${esc(h.to)}</td><td>${esc(h.reason||'')}</td><td>${esc(teamName(h.by))}</td><td>v${esc(String(h.version||''))}</td></tr>`), 'No role assigned yet.');
+}
+function pobOpenMetrics(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  openModal('Update Figures — ' + pjName(r), `<p class="small-note" style="margin-top:0">The course unlocks open from these counts.</p>`
+    + POB_METRICS.map(([k, l])=>fieldInput({k:'mt_' + k, l, t:'number'}, (r.metrics||{})[k] || 0)).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveMetrics('${esc(id)}')">Save</button>`);
+}
+async function pobSaveMetrics(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !can('POB','edit')) return;
+  const d = readFields(POB_METRICS.map(([k, l])=>({k:'mt_' + k, l})));
+  const before = Object.assign({}, r.metrics);
+  r.metrics = {};
+  POB_METRICS.forEach(([k])=>{ r.metrics[k] = Math.max(0, Math.floor(Number(d['mt_' + k]) || 0)); });
+  const opened = await pobRefreshTasks(r);
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Figures Updated', POB_METRICS.map(([k, l])=>({field: l, oldValue: String(before[k]||0), newValue: String(r.metrics[k])})));
+  closeModal(); navigate('pob', id);
+  if(opened.length) alert('Now open: ' + opened.map(t=>t.title).join(', '));
+}
+async function pobUnlockCourse(id, taskId){
+  const r = pobRecords().find(x=>x.id===id);
+  const t = r && (r.tasks||[]).find(x=>x.id===taskId);
+  if(!t) return;
+  const s = pobTaskState(r, t);
+  if(!s.open){ alert('Not yet: ' + s.reason + '.'); return; }
+  if(!confirm('Unlock "' + (t.course || t.title) + '" for ' + pjName(r) + ' and tell them?')) return;
+  pobTaskAppend(t, 'Approved', 'Course unlocked'); t.unlockedAt = new Date().toISOString(); t.approvedBy = currentUser; t.approvedAt = t.unlockedAt;
+  await pobRefreshTasks(r);
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Course Unlocked', [{field: t.course || t.title, oldValue:'', newValue:'Unlocked'}]);
+  const res = await pjMail('POB', r, 'pobCourseUnlocked', {Course: t.course || t.title, GurukulLink: pjConfig().gurukulLink || ''}, 'Course unlocked — ' + (t.course || t.title));
+  render();
+  pjSaidMail(res, 'The course letter');
+}
+
+/* ---------- Role Clarity Sessions, a record each ---------- */
+function pobOpenSessionForm(id, taskId, sessionId){
+  const r = pobRecords().find(x=>x.id===id);
+  const ses = sessionId ? pobSessions().find(x=>x.id===sessionId) : null;
+  if(!r) return;
+  const at = ses && ses.scheduledAt ? ses.scheduledAt : '';
+  const f = [{k:'sTrainer', l:'Trainer / Manager', t:'team', req:1}, {k:'sDate', l:'Date', t:'date', req:1}, {k:'sTime', l:'Time', t:'time', req:1},
+    {k:'sLink', l:'Meeting Link', t:'text', req:1, ph:'https://…'}, {k:'sPrep', l:'Preparation for the partner', t:'textarea',
+     h: r.role==='Sherpa' ? 'The Sherpa’s own responsibilities and material, not the Ninja’s.' : ''}];
+  openModal('Role Clarity Session — ' + pjName(r) + ' (' + (r.role||'') + ')',
+    `<div class="field-grid">${f.map(x=>fieldInput(x, {sTrainer: ses ? ses.trainerId : (r.assignedTo||currentUser), sDate: at.slice(0,10), sTime: at.slice(11,16),
+      sLink: ses ? ses.link : '', sPrep: ses ? ses.preparation : ''}[x.k])).join('')}</div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveSession('${esc(id)}','${esc(taskId||'')}','${esc(sessionId||'')}')">Schedule &amp; Invite</button>`);
+}
+async function pobSaveSession(id, taskId, sessionId){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !can('POB','edit')) return;
+  const f = [{k:'sTrainer', l:'Trainer', req:1}, {k:'sDate', l:'Date', req:1}, {k:'sTime', l:'Time', req:1}, {k:'sLink', l:'Link', req:1}, {k:'sPrep', l:'Preparation'}];
+  const d = readFields(f);
+  if(!validateRequired(f, d)) return;
+  const t = (r.tasks||[]).find(x=>x.id===taskId);
+  let ses = sessionId ? pobSessions().find(x=>x.id===sessionId) : (t && t.sessionId ? pobSessions().find(x=>x.id===t.sessionId) : null);
+  const at = new Date().toISOString();
+  if(!ses){ ses = {id: uid('RCS'), pobId: id, partnerId: r.partnerId, taskId: taskId || '', role: r.role || '', createdAt: at, createdBy: currentUser, history: []}; pobSessions().push(ses); }
+  const re = !!ses.scheduledAt;
+  Object.assign(ses, {trainerId: d.sTrainer, scheduledAt: d.sDate + 'T' + d.sTime, link: d.sLink, preparation: d.sPrep || '', status: 'Scheduled'});
+  ses.history = (ses.history||[]).concat([{at, by: currentUser, status: re ? 'Rescheduled' : 'Scheduled', note: d.sDate + ' ' + d.sTime}]);
+  if(t){ t.sessionId = ses.id; if(t.status==='Not Started'){ pobTaskAppend(t, 'In Progress', 'Session scheduled'); t.startedAt = at; } }
+  await save('pjSessions');
+  await save('pjOnboarding');
+  closeModal();
+  const res = await pjMail('POB', r, 'pobSession', {Role: ses.role, Trainer: teamName(ses.trainerId), Date: fmtDate(d.sDate), Time: d.sTime,
+    MeetingLink: d.sLink, Preparation: d.sPrep || '—'}, 'Role Clarity Session');
+  if(ses.trainerId && ses.trainerId!==currentUser) await notifyUser(ses.trainerId, {title: 'Role Clarity Session — ' + pjName(r),
+    body: fmtDate(d.sDate) + ' at ' + d.sTime, view:'pob', arg:id, kind:'pob'});
+  navigate('pob', id);
+  pjSaidMail(res, 'The session invitation');
+}
+function pobMayConfirmSession(ses){ return pobMayApprove() || (ses && ses.trainerId===currentUser); }
+function pobOpenSessionComplete(sessionId){
+  const ses = pobSessions().find(x=>x.id===sessionId);
+  if(!ses) return;
+  if(!pobMayConfirmSession(ses)){ alert('Only the trainer or someone with Approve on Partners can record the session.'); return; }
+  const f = [{k:'soStatus', l:'Outcome', t:'select', opts:['Completed','Follow-up Required','Cancelled'], req:1},
+    {k:'soNotes', l:'Session notes', t:'textarea', req:1}, {k:'soFollowDue', l:'Follow-up due', t:'date'}];
+  openModal('Session Outcome', f.map(x=>fieldInput(x, {soStatus: 'Completed', soNotes: ses.notes || '', soFollowDue: ses.followUpDueDate || ''}[x.k])).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveSessionOutcome('${esc(sessionId)}')">Save</button>`);
+}
+async function pobSaveSessionOutcome(sessionId){
+  const ses = pobSessions().find(x=>x.id===sessionId);
+  if(!ses || !pobMayConfirmSession(ses)) return;
+  const f = [{k:'soStatus', l:'Outcome', req:1}, {k:'soNotes', l:'Notes', req:1}, {k:'soFollowDue', l:'Follow-up due', t:'date'}];
+  const d = readFields(f);
+  if(!validateRequired(f, d)) return;
+  if(d.soStatus==='Follow-up Required' && !d.soFollowDue){ alert('Give the follow-up a date.'); return; }
+  const at = new Date().toISOString();
+  ses.notes = d.soNotes;
+  ses.followUpRequired = d.soStatus==='Follow-up Required';
+  ses.followUpDueDate = d.soFollowDue || '';
+  ses.status = d.soStatus;
+  if(d.soStatus==='Completed'){ ses.completionConfirmedBy = currentUser; ses.completedAt = at; }
+  ses.history = (ses.history||[]).concat([{at, by: currentUser, status: d.soStatus, note: d.soNotes}]);
+  const r = pobRecords().find(x=>x.id===ses.pobId);
+  const t = r && (r.tasks||[]).find(x=>x.id===ses.taskId);
+  /* A held session is the task done. One that needs a follow-up or was
+     cancelled leaves the task open, to be rescheduled. */
+  if(t && d.soStatus==='Completed' && !['Approved'].includes(t.status)){ pobTaskAppend(t, 'Approved', 'Session completed'); t.approvedAt = at; t.approvedBy = currentUser; }
+  if(t && d.soStatus==='Cancelled' && t.status==='In Progress') pobTaskAppend(t, 'Not Started', 'Session cancelled — reschedule it');
+  await save('pjSessions');
+  if(r){ await pobRefreshTasks(r); await save('pjOnboarding'); await logAudit('POB', r.id, 'Session ' + d.soStatus, [{field: 'Role Clarity Session', oldValue:'', newValue: d.soStatus}]); }
+  closeModal(); render();
+}
+function pobSessionsTable(list, withPartner){
+  return profTable('Role Clarity Sessions', (withPartner ? ['Partner'] : []).concat(['Role','Trainer','Scheduled','Status','Notes','Confirmed','']),
+    list.slice().sort((a,b)=>String(b.scheduledAt||'').localeCompare(String(a.scheduledAt||''))).map(s=>{
+      const r = pobRecords().find(x=>x.id===s.pobId);
+      return `<tr>${withPartner ? `<td><a href="javascript:void(0)" onclick="navigate('pob','${esc(s.pobId)}')">${esc(pjName(r))}</a></td>` : ''}
+        <td>${esc(s.role||'')}</td><td>${esc(teamName(s.trainerId))}</td><td>${esc(s.scheduledAt ? fmtDate(s.scheduledAt.slice(0,10)) + ' ' + s.scheduledAt.slice(11,16) : '—')}</td>
+        <td>${statusBadge(s.status)}${s.followUpRequired ? `<div class="small-note" style="margin:0">Follow-up by ${esc(fmtDate(s.followUpDueDate))}</div>` : ''}</td>
+        <td style="white-space:pre-wrap">${esc(s.notes||'')}</td><td>${esc(s.completionConfirmedBy ? teamName(s.completionConfirmedBy) + ' · ' + fmtDate(s.completedAt) : '')}</td>
+        <td>${s.status!=='Completed' && pobMayConfirmSession(s) ? `<button class="btn sm" onclick="pobOpenSessionComplete('${esc(s.id)}')">Outcome</button>` : ''}
+          ${s.status!=='Completed' && can('POB','edit') ? `<button class="btn sm ghost" onclick="pobOpenSessionForm('${esc(s.pobId)}','${esc(s.taskId)}','${esc(s.id)}')">Reschedule</button>` : ''}</td></tr>`;
+    }), 'No sessions yet.');
+}
+
+/* ---------- training ---------- */
+const POB_TRAINING_FIELDS = [
+  {k:'title', l:'Title', t:'text', req:1},
+  {k:'description', l:'Description', t:'textarea'},
+  {k:'objectives', l:'Learning objectives', t:'textarea'},
+  {k:'materials', l:'Material (videos, documents, links)', t:'textarea', h:'One link per line.'},
+  {k:'passScore', l:'Passing score (%)', t:'number', h:'Leave blank for a module with no assessment.'},
+  {k:'maxAttempts', l:'Attempts allowed', t:'number'},
+  {k:'manualApproval', l:'Needs a reviewer’s approval', t:'select', opts:['Yes','No']},
+];
+function pobTrainingGap(t){
+  const m = pobTraining().find(x=>x.id===t.trainingId);
+  const tries = t.attempts || [];
+  if(!tries.length) return 'Record the result of “' + t.title + '” first. Opening a module is not completing it.';
+  const pass = m && m.passScore !== '' && m.passScore !== undefined && m.passScore !== null ? Number(m.passScore) : null;
+  if(pass !== null && !tries.some(a=>Number(a.score) >= pass)) return 'Not passed yet: the passing score is ' + pass + '%, the best so far is ' + Math.max.apply(null, tries.map(a=>Number(a.score)||0)) + '%.';
+  if(pass === null && !tries.some(a=>a.result==='Completed' || a.result==='Pass')) return 'No completed attempt is recorded yet.';
+  return '';
+}
+function pobOpenAttempt(id, taskId){
+  const r = pobRecords().find(x=>x.id===id);
+  const t = r && (r.tasks||[]).find(x=>x.id===taskId);
+  if(!t) return;
+  const m = pobTraining().find(x=>x.id===t.trainingId) || {};
+  const max = Number(m.maxAttempts) || 0;
+  if(max && (t.attempts||[]).length >= max){ alert('All ' + max + ' attempts allowed for this module are used. Raise the limit under POB › Training to allow a retake.'); return; }
+  const scored = m.passScore !== '' && m.passScore !== undefined && m.passScore !== null;
+  const f = [scored ? {k:'atScore', l:'Score (%) — pass at ' + m.passScore, t:'number', req:1} : {k:'atResult', l:'Result', t:'select', opts:['Completed','Not Completed'], req:1},
+    {k:'atDate', l:'Completed On', t:'date', req:1}, {k:'atCert', l:'Certificate / evidence reference', t:'text'}];
+  openModal('Result — ' + t.title, `<p class="small-note" style="margin-top:0">Attempt ${(t.attempts||[]).length + 1}${max ? ' of ' + max : ''}. ${esc(m.title||'')} v${esc(String(m.version||1))}.</p>`
+    + f.map(x=>fieldInput(x, x.k==='atDate' ? pobToday() : '')).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveAttempt('${esc(id)}','${esc(taskId)}')">Save Result</button>`);
+}
+async function pobSaveAttempt(id, taskId){
+  const r = pobRecords().find(x=>x.id===id);
+  const t = r && (r.tasks||[]).find(x=>x.id===taskId);
+  if(!t || !can('POB','edit')) return;
+  const m = pobTraining().find(x=>x.id===t.trainingId) || {};
+  const scored = m.passScore !== '' && m.passScore !== undefined && m.passScore !== null;
+  const f = [scored ? {k:'atScore', l:'Score', req:1} : {k:'atResult', l:'Result', req:1}, {k:'atDate', l:'Completed On', req:1}, {k:'atCert', l:'Certificate'}];
+  const d = readFields(f);
+  if(!validateRequired(f, d)) return;
+  const score = scored ? Number(d.atScore) : null;
+  if(scored && !(score >= 0 && score <= 100)){ alert('The score is a percentage, 0 to 100.'); return; }
+  t.attempts = (t.attempts||[]).concat([{n: (t.attempts||[]).length + 1, at: new Date().toISOString(), by: currentUser, date: d.atDate,
+    score, result: scored ? (score >= Number(m.passScore) ? 'Pass' : 'Fail') : d.atResult, certificate: d.atCert || '', moduleVersion: m.version || 1}]);
+  t.trainingVersion = m.version || 1;
+  const last = t.attempts[t.attempts.length-1];
+  t.history = (t.history||[]).concat([{at: last.at, by: currentUser, status: t.status, note: 'Attempt ' + last.n + ': ' + last.result + (score!==null ? ' (' + score + '%)' : '')}]);
+  /* A module that needs no reviewer is done the moment it is passed. */
+  if(m.manualApproval==='No' && !pobTrainingGap(t)){ pobTaskAppend(t, 'Approved', 'Passed'); t.approvedAt = last.at; t.approvedBy = currentUser; }
+  await pobRefreshTasks(r);
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Training Result', [{field: t.title, oldValue:'', newValue: last.result + (score!==null ? ' ' + score + '%' : '')}]);
+  closeModal(); render();
+}
+function pobTrainingResultsHtml(r){
+  const rows = [];
+  pobLiveTasks(r).filter(t=>t.kind==='training').forEach(t=>{
+    const m = pobTraining().find(x=>x.id===t.trainingId) || {};
+    const best = (t.attempts||[]).slice().sort((a,b)=>(Number(b.score)||0)-(Number(a.score)||0))[0];
+    rows.push(`<tr><td><b>${esc(t.title)}</b><div class="small-note" style="margin:0">${esc(m.id||'')} v${esc(String(t.trainingVersion || m.version || 1))}</div></td>
+      <td>${esc(fmtDate(t.eligibleAt)||'—')}</td><td>${esc(fmtDate(t.startedAt)||'—')}</td><td>${esc(fmtDate(t.approvedAt)||'—')}</td>
+      <td>${(t.attempts||[]).length}</td><td>${best ? esc(best.score!==null && best.score!==undefined ? best.score + '%' : best.result) : '—'}</td>
+      <td>${esc(t.approvedBy ? teamName(t.approvedBy) : '')}</td><td>${esc(best && best.certificate || '')}</td>
+      <td>${t.status==='Approved' ? '<span class="badge ok">Qualified</span>' : statusBadge(t.status)}</td></tr>`);
+  });
+  return profTable('Training & Qualifications', ['Module','Assigned','Started','Completed','Attempts','Best','Reviewer','Certificate','Qualification'], rows, 'No training in this partner’s workflow yet.');
+}
+function pobTrainingCatalogHtml(){
+  const used = id => POB_ROLES.filter(role=>{ const w = pobLatestWorkflow(role); return w && (w.tasks||[]).some(t=>t.trainingId===id); });
+  return `<div class="row" style="justify-content:flex-end;margin-bottom:10px">${pjMaySetUp() ? `<button class="btn sm primary" onclick="pobOpenTrainingForm()">+ New Module</button>` : ''}</div>
+    <div class="table-wrap"><table id="pobTrainTable"><thead><tr><th>Module</th><th>Version</th><th>Pass Score</th><th>Attempts</th><th>Reviewer</th><th>Used By</th><th>In Progress</th><th>Qualified</th></tr></thead>
+    <tbody>${pobTraining().filter(m=>!m.deletedAt).map(m=>{
+      const ts = []; pobLive().forEach(r=>pobLiveTasks(r).filter(t=>t.trainingId===m.id).forEach(t=>ts.push(t)));
+      return `<tr class="row-clickable" onclick="pobOpenTrainingForm('${esc(m.id)}')"><td><b>${esc(m.title)}</b><div class="small-note" style="margin:0">${esc(m.description||'')}</div></td>
+        <td>v${esc(String(m.version||1))}</td><td>${m.passScore!=='' && m.passScore!==undefined && m.passScore!==null ? esc(m.passScore) + '%' : '—'}</td><td>${esc(String(m.maxAttempts||'—'))}</td>
+        <td>${esc(m.manualApproval||'Yes')}</td><td>${esc(used(m.id).join(', ')||'—')}</td>
+        <td>${ts.filter(t=>t.status!=='Approved' && t.status!=='Cancelled' && t.status!=='Not Started').length}</td><td>${ts.filter(t=>t.status==='Approved').length}</td></tr>`;
+    }).join('') || `<tr><td colspan="8" class="empty">No modules yet.</td></tr>`}</tbody></table></div>`;
+}
+function pobOpenTrainingForm(id){
+  const m = id ? pobTraining().find(x=>x.id===id) : {manualApproval:'Yes', maxAttempts: 3};
+  if(!m) return;
+  openModal(id ? 'Training Module — ' + m.title : 'New Training Module', POB_TRAINING_FIELDS.map(f=>fieldInput(f, m[f.k])).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button>${pjMaySetUp() ? `<button class="btn primary" onclick="pobSaveTraining('${esc(id||'')}')">Save</button>` : ''}`);
+}
+async function pobSaveTraining(id){
+  if(!pjMaySetUp()){ alert('You do not have permission.'); return; }
+  const d = readFields(POB_TRAINING_FIELDS);
+  if(!validateRequired(POB_TRAINING_FIELDS, d)) return;
+  if(id){
+    const m = pobTraining().find(x=>x.id===id);
+    const changed = POB_TRAINING_FIELDS.some(f=>String(m[f.k]||'')!==String(d[f.k]||''));
+    Object.assign(m, d, {updatedAt: new Date().toISOString(), updatedBy: currentUser});
+    if(changed) m.version = (m.version||1) + 1;
+  } else pobTraining().push(Object.assign({id: uid('TRN'), version: 1, createdAt: new Date().toISOString(), createdBy: currentUser}, d));
+  await save('pjTraining');
+  closeModal(); render();
+}
+
+/* ---------- workflow administration ----------
+   Saving a change makes a new version. Partners already on the old one
+   stay on it until somebody moves them, so a change never rewrites a
+   partner's history behind them. */
+function pobWorkflowsHtml(){
+  return POB_ROLES.map(role=>{
+    const w = pobLatestWorkflow(role);
+    if(!w) return profCard(role, [['Workflow', 'None yet']]);
+    const on = v => pobLive().filter(r=>r.role===role && r.workflowVersion===v).length;
+    const versions = pobWorkflows().filter(x=>x.role===role).sort((a,b)=>b.version-a.version);
+    return profTable(role + ' — v' + w.version + ' (' + on(w.version) + ' partner(s))', ['#','Task','Type','Phase','Required','Approval','Opens after'],
+      (w.tasks||[]).map((t, i)=>`<tr><td>${i+1}</td><td>${esc(t.title)}</td><td>${esc((POB_TASK_KINDS.find(k=>k[0]===t.kind)||[,t.kind])[1])}</td>
+        <td>${esc(t.phase)}</td><td>${t.required===false ? 'Optional' : 'Yes'}</td><td>${t.approval ? 'Yes' : '—'}</td>
+        <td>${esc([(t.dependsOn||[]).map(k=>((w.tasks||[]).find(x=>x.key===k)||{}).title).filter(Boolean).join(', '),
+          t.metric && t.count ? t.count + ' ' + t.metric : ''].filter(Boolean).join(' · ') || '—')}</td></tr>`), 'No tasks.',
+      `<span class="small-note">${versions.length > 1 ? 'Earlier: ' + versions.slice(1).map(v=>'v' + v.version + ' (' + on(v.version) + ')').join(', ') : ''}</span>
+       ${pjMaySetUp() ? `<button class="btn sm" onclick="pobOpenWorkflowEditor('${esc(role)}')">Edit — makes v${w.version + 1}</button>` : ''}`);
+  }).join('');
+}
+function pobOpenWorkflowEditor(role){
+  const w = pobLatestWorkflow(role);
+  if(!w) return;
+  window._pobWfDraft = {role, tasks: JSON.parse(JSON.stringify(w.tasks||[]))};
+  pobDrawWorkflowEditor();
+}
+function pobDrawWorkflowEditor(){
+  const d = window._pobWfDraft;
+  const opt = (list, v) => list.map(([k, l])=>`<option value="${esc(k)}"${k===v?' selected':''}>${esc(l)}</option>`).join('');
+  const rows = d.tasks.map((t, i)=>`<tr>
+    <td><input type="text" value="${esc(t.title)}" oninput="window._pobWfDraft.tasks[${i}].title=this.value" style="width:100%;min-width:220px"></td>
+    <td><select onchange="window._pobWfDraft.tasks[${i}].kind=this.value">${opt(POB_TASK_KINDS, t.kind)}</select></td>
+    <td><select onchange="window._pobWfDraft.tasks[${i}].phase=this.value">${opt([['onboarding','Onboarding'],['growth','Growth']], t.phase)}</select></td>
+    <td><input type="checkbox"${t.required!==false?' checked':''} onchange="window._pobWfDraft.tasks[${i}].required=this.checked"></td>
+    <td><input type="checkbox"${t.approval?' checked':''} onchange="window._pobWfDraft.tasks[${i}].approval=this.checked"></td>
+    <td><select onchange="window._pobWfDraft.tasks[${i}].metric=this.value">${opt([['','—']].concat(POB_METRICS), t.metric||'')}</select>
+      <input type="number" value="${esc(t.count||'')}" oninput="window._pobWfDraft.tasks[${i}].count=Number(this.value)||0" style="width:64px"></td>
+    <td><select onchange="window._pobWfDraft.tasks[${i}].trainingId=this.value">${opt([['','—']].concat(pobTraining().filter(m=>!m.deletedAt).map(m=>[m.id, m.title])), t.trainingId||'')}</select></td>
+    <td style="white-space:nowrap"><button class="btn sm ghost" onclick="pobWfMove(${i},-1)">↑</button><button class="btn sm ghost" onclick="pobWfMove(${i},1)">↓</button>
+      <button class="btn sm ghost" style="color:var(--danger)" onclick="pobWfMove(${i},0)">✕</button></td></tr>`).join('');
+  openModal('Edit ' + d.role + ' Workflow', `<p class="small-note" style="margin-top:0">Each task opens after the one above it in its phase. Growth tasks open once the partner is active. A count makes it a milestone — it opens when the partner reaches it.</p>
+    <div class="table-wrap"><table><thead><tr><th>Task</th><th>Type</th><th>Phase</th><th>Req.</th><th>Approval</th><th>Opens at</th><th>Training</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    <button class="btn sm" style="margin-top:8px" onclick="pobWfMove(-1,0)">+ Add Task</button>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveWorkflow()">Save as New Version</button>`, {wide: true});
+}
+function pobWfMove(i, dir){
+  const d = window._pobWfDraft;
+  if(i < 0){ d.tasks.push({key: 'k' + Date.now().toString(36), title: 'New task', kind: 'task', phase: 'onboarding', required: true, approval: true, owner: 'RM'}); }
+  else if(dir===0){ d.tasks.splice(i, 1); }
+  else { const j = i + dir; if(j < 0 || j >= d.tasks.length) return; const x = d.tasks[i]; d.tasks[i] = d.tasks[j]; d.tasks[j] = x; }
+  pobDrawWorkflowEditor();
+}
+async function pobSaveWorkflow(){
+  if(!pjMaySetUp()){ alert('You do not have permission.'); return; }
+  const d = window._pobWfDraft;
+  if(!d) return;
+  const tasks = d.tasks.filter(t=>String(t.title||'').trim());
+  if(!tasks.length){ alert('A workflow needs at least one task.'); return; }
+  tasks.forEach(t=>{ t.title = String(t.title).trim(); delete t.dependsOn; if(!t.metric) { delete t.metric; delete t.count; } });
+  const prev = pobLatestWorkflow(d.role);
+  const wf = {id: 'WF-' + d.role.toUpperCase().replace(/\s+/g,'') + '-' + ((prev ? prev.version : 0) + 1), role: d.role, name: d.role + ' onboarding',
+    version: (prev ? prev.version : 0) + 1, tasks: pobDefaultDeps(tasks), createdAt: new Date().toISOString(), createdBy: currentUser};
+  if(prev) prev.supersededAt = wf.createdAt;
+  pobWorkflows().push(wf);
+  await save('pjWorkflows');
+  await logAudit('POB', wf.id, 'Workflow Version', [{field: d.role, oldValue: prev ? 'v' + prev.version : '', newValue: 'v' + wf.version}]);
+  window._pobWfDraft = null;
+  closeModal(); render();
+}
+
+/* ---------- readiness and activation ---------- */
+function pobReadiness(r){
+  const out = [];
+  const owner = teamName(r.assignedTo);
+  const pay = pobPaymentStatus(r);
+  out.push({label: 'Mandatory payment', ok: pay==='Paid', detail: pay==='Paid' ? money(pobPaidTotal(r)) + ' verified' : 'Payment is ' + pay, who: 'Finance (Approve on Partners)'});
+  out.push({label: 'Agreement accepted', ok: !!(r.agreement && r.agreement.acceptedAt), detail: r.agreement ? r.agreement.version : 'Not accepted', who: owner});
+  const dv = pobDocsVerification(r);
+  out.push({label: 'Mandatory documents approved', ok: !dv.pending.length, detail: dv.pending.length ? dv.pending.map(x=>x.type + ' (' + x.status + ')').join(', ') : dv.total + ' approved', who: 'Verification (Approve on Partners)'});
+  out.push({label: 'Evaluation approved', ok: r.applicationStatus==='Approved', detail: r.applicationStatus || '', who: 'Verification (Approve on Partners)'});
+  out.push({label: 'Login access', ok: !!(r.login && r.login.status!=='Suspended'), detail: r.login ? r.login.status : 'Not created', who: owner});
+  out.push({label: 'Role assigned', ok: !!r.role, detail: r.role || 'No role', who: owner});
+  const req = pobRequiredOnboarding(r);
+  const kinds = [['session','Role Clarity Session'], ['training','Training & qualifications'], ['task','Business plan & other deliverables']];
+  kinds.forEach(([k, l])=>{
+    const list = req.filter(t=>t.kind===k);
+    if(!list.length) return;
+    const left = list.filter(t=>t.status!=='Approved');
+    out.push({label: l, ok: !left.length, detail: left.length ? left.map(t=>t.title + ' — ' + pobTaskStatusLabel(r, t)).join('; ') : list.length + ' done',
+      who: left.length ? Array.from(new Set(left.map(t=>pobTaskOwner(r, t)))).join(', ') : ''});
+  });
+  const other = req.filter(t=>!['session','training','task'].includes(t.kind) && t.status!=='Approved');
+  if(other.length) out.push({label: 'Other onboarding tasks', ok: false, detail: other.map(t=>t.title).join('; '), who: owner});
+  const openFollow = pobSessions().filter(s=>s.pobId===r.id && s.followUpRequired && s.status!=='Completed');
+  out.push({label: 'No unresolved follow-ups', ok: !openFollow.length, detail: openFollow.length ? openFollow.length + ' session follow-up(s) open' : 'None', who: owner});
+  return out;
+}
+function pobReadinessHtml(r){
+  const list = pobReadiness(r);
+  return profTable('Business Readiness — ' + list.filter(x=>x.ok).length + ' of ' + list.length, ['Requirement','Met','Detail','Responsible'],
+    list.map(x=>`<tr><td>${esc(x.label)}</td><td>${x.ok ? '<span class="badge ok">Yes</span>' : '<span class="badge danger">No</span>'}</td>
+      <td>${esc(x.detail)}</td><td>${esc(x.ok ? '' : x.who)}</td></tr>`), '')
+    + (r.finalApproval ? profCard('Final Approval', [['Decision', esc(r.finalApproval.decision)], ['By', esc(teamName(r.finalApproval.by))],
+      ['When', esc(fmtDateTime(r.finalApproval.at))], ['Workflow', esc(r.finalApproval.workflow + ' v' + r.finalApproval.version)], ['Comments', esc(r.finalApproval.comments||'')]]) : '');
+}
+function pobOpenAckModal(module, id, tid){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  const paid = (r.payments||[]).filter(p=>p.status==='Paid');
+  openModal('Payment Acknowledgement — ' + pjName(r), `<p class="small-note" style="margin-top:0">Sends the acknowledgement of ${esc(money(pobPaidTotal(r)))} to <b>${esc(r.email||'no address on file')}</b>, with the empanelment steps that come next.</p>`
+    + (paid.length ? profCard('Verified', paid.map(p=>[p.ref, money(p.amount) + ' · ' + fmtDate(p.date)])) : ''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSendAck('${esc(id)}','${esc(tid)}')">Send Acknowledgement</button>`);
+}
+async function pobSendAck(id, tid){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  closeModal();
+  const paid = (r.payments||[]).filter(p=>p.status==='Paid');
+  const res = await pjMail('POB', r, 'pobPaymentAck', {Amount: money(pobPaidTotal(r)), Reference: paid.map(p=>p.ref).join(', ') || '—',
+    PaidOn: paid.length ? fmtDate(paid[paid.length-1].date) : '', PartnerCode: r.partnerCode, ApplicationId: r.applicationId}, 'Payment acknowledgement');
+  r.paymentAckAt = new Date().toISOString(); r.paymentAckStatus = res && res.status;
+  await doTransition('POB', id, tid);
+  pjSaidMail(res, 'The acknowledgement');
+}
+function pobOpenActivateModal(module, id, tid){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  const why = pobGuard(r, {id: 'obActivateT'}, true);
+  if(why){ alert(why); return; }
+  openModal('Approve & Activate — ' + pjName(r), `<p class="small-note" style="margin-top:0">Every requirement is met. Activating makes ${esc(pjName(r))} an Active ${esc(r.role)}, tells them and their manager, opens the growth tasks and schedules the reviews.</p>`
+    + fieldInput({k:'acComments', l:'Comments', t:'textarea'}, ''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveActivate('${esc(id)}','${esc(tid)}')">Approve &amp; Activate</button>`);
+}
+async function pobSaveActivate(id, tid){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return;
+  const d = readFields([{k:'acComments'}]);
+  r._activation = {comments: d.acComments || ''};
+  closeModal();
+  await doTransition('POB', id, tid);
+}
+
+/* ---------- recurring reviews ---------- */
+async function pobScheduleReview(r, kind, due, taskId){
+  const rv = {id: uid('PRV'), pobId: r.id, partnerId: r.partnerId, kind, dueDate: due, assignedTo: r.assignedTo || currentUser, status: 'Scheduled',
+    taskId: taskId || '', followUps: [], createdAt: new Date().toISOString(), createdBy: currentUser};
+  pobReviews().push(rv);
+  await save('pjReviews');
+  return rv;
+}
+async function pobOpenReviewSchedule(id, taskId){
+  const r = pobRecords().find(x=>x.id===id);
+  const t = r && (r.tasks||[]).find(x=>x.id===taskId);
+  if(!t) return;
+  const had = pobReviews().find(x=>!x.deletedAt && x.pobId===id && x.kind===t.reviewKind && x.status!=='Completed');
+  if(had){ t.reviewId = had.id; if(t.status==='Not Started') pobTaskAppend(t, 'In Progress', 'Review scheduled for ' + fmtDate(had.dueDate)); await save('pjOnboarding'); window._pobTabRec = 'reviews'; render(); return; }
+  const f = [{k:'rvDue', l:'Review date', t:'date', req:1}, {k:'rvOwner', l:'Reviewer', t:'team', req:1}];
+  openModal('Schedule ' + (t.reviewKind||'Review') + ' — ' + pjName(r), f.map(x=>fieldInput(x, x.k==='rvOwner' ? r.assignedTo : pobAddMonths(pobToday(), t.reviewKind==='Annual Review' ? 12 : 1))).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveReviewSchedule('${esc(id)}','${esc(taskId)}')">Schedule</button>`);
+}
+async function pobSaveReviewSchedule(id, taskId){
+  const r = pobRecords().find(x=>x.id===id);
+  const t = r && (r.tasks||[]).find(x=>x.id===taskId);
+  if(!t) return;
+  const f = [{k:'rvDue', l:'Review date', req:1}, {k:'rvOwner', l:'Reviewer', req:1}];
+  const d = readFields(f);
+  if(!validateRequired(f, d)) return;
+  const rv = await pobScheduleReview(r, t.reviewKind || 'Review', d.rvDue, taskId);
+  rv.assignedTo = d.rvOwner;
+  await save('pjReviews');
+  t.reviewId = rv.id; pobTaskAppend(t, 'In Progress', 'Review scheduled for ' + fmtDate(d.rvDue));
+  await save('pjOnboarding');
+  closeModal(); render();
+}
+function pobOpenReview(reviewId){
+  const rv = pobReviews().find(x=>x.id===reviewId);
+  if(!rv) return;
+  const r = pobRecords().find(x=>x.id===rv.pobId);
+  const f = [{k:'rvObs', l:'Observations', t:'textarea', req:1}, {k:'rvOutcome', l:'Performance outcome', t:'select', opts:['On Track','Needs Improvement','Exceeds Target','At Risk'], req:1},
+    {k:'rvTargets', l:'Targets for the next period', t:'textarea'},
+    {k:'rvFollow', l:'Follow-up actions', t:'textarea', h:'One per line. Each becomes a follow-up with an owner and a date.'},
+    {k:'rvFollowDue', l:'Follow-ups due', t:'date'}];
+  openModal(rv.kind + ' — ' + pjName(r) + ' · due ' + fmtDate(rv.dueDate), f.map(x=>fieldInput(x, x.k==='rvFollowDue' ? pobAddDays(pobToday(), 14) : rv[x.k.replace('rv','').toLowerCase()] || '')).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveReview('${esc(reviewId)}')">Record Review</button>`);
+}
+async function pobSaveReview(reviewId){
+  const rv = pobReviews().find(x=>x.id===reviewId);
+  if(!rv || !can('POB','edit')) return;
+  const f = [{k:'rvObs', l:'Observations', req:1}, {k:'rvOutcome', l:'Outcome', req:1}, {k:'rvTargets'}, {k:'rvFollow'}, {k:'rvFollowDue', t:'date'}];
+  const d = readFields(f);
+  if(!validateRequired(f, d)) return;
+  const at = new Date().toISOString();
+  Object.assign(rv, {observations: d.rvObs, outcome: d.rvOutcome, targets: d.rvTargets || '', status: 'Completed', completedAt: at, completedBy: currentUser});
+  rv.followUps = (rv.followUps||[]).concat(pobLines(d.rvFollow).map(a=>({id: uid('PFU'), action: a, owner: rv.assignedTo, due: d.rvFollowDue || pobAddDays(pobToday(), 14), status: 'Open'})));
+  const r = pobRecords().find(x=>x.id===rv.pobId);
+  /* The next one is booked as this one closes, so a recurring review
+     cannot quietly stop recurring. */
+  const c = pobConfig();
+  const every = rv.kind==='Annual Review' ? 12 : (Number(c.monthlyEvery) || 1);
+  if(r && stateOf('POB', r)==='active' && (rv.kind!=='Annual Review' || c.annualReview!=='No'))
+    await pobScheduleReview(r, rv.kind, pobAddMonths(rv.dueDate || pobToday(), every), '');
+  const t = r && (r.tasks||[]).find(x=>x.reviewId===rv.id || (x.kind==='review' && x.reviewKind===rv.kind && x.status!=='Approved'));
+  if(t && t.status!=='Approved'){ t.reviewId = rv.id; pobTaskAppend(t, 'Approved', 'Review recorded'); t.approvedAt = at; t.approvedBy = currentUser; }
+  await save('pjReviews');
+  if(r){ await pobRefreshTasks(r); await save('pjOnboarding'); await logAudit('POB', r.id, rv.kind + ' Recorded', [{field:'outcome', oldValue:'', newValue: d.rvOutcome}]); }
+  closeModal(); render();
+}
+async function pobFollowUpDone(reviewId, fuId){
+  const rv = pobReviews().find(x=>x.id===reviewId);
+  const fu = rv && (rv.followUps||[]).find(x=>x.id===fuId);
+  if(!fu || !can('POB','edit')) return;
+  const note = (prompt('What was done about it?') || '').trim();
+  if(!note) return;
+  Object.assign(fu, {status: 'Done', doneAt: new Date().toISOString(), doneBy: currentUser, note});
+  await save('pjReviews');
+  render();
+}
+function pobReviewsTable(list, withPartner){
+  const today = pobToday();
+  const rows = [];
+  list.slice().sort((a,b)=>String(a.dueDate||'').localeCompare(String(b.dueDate||''))).forEach(rv=>{
+    const r = pobRecords().find(x=>x.id===rv.pobId);
+    const late = rv.status!=='Completed' && rv.dueDate && rv.dueDate < today;
+    rows.push(`<tr>${withPartner ? `<td><a href="javascript:void(0)" onclick="navigate('pob','${esc(rv.pobId)}')">${esc(pjName(r))}</a></td>` : ''}
+      <td>${esc(rv.kind)}</td><td>${esc(fmtDate(rv.dueDate))}</td><td>${esc(teamName(rv.assignedTo))}</td>
+      <td>${statusBadge(rv.status)}${late ? ' <span class="badge danger">Overdue</span>' : ''}</td>
+      <td>${esc(rv.outcome||'')}${rv.observations ? `<div class="small-note" style="margin:0;white-space:pre-wrap">${esc(rv.observations)}</div>` : ''}</td>
+      <td>${(rv.followUps||[]).map(fu=>`<div style="font-size:12.5px">${fu.status==='Done' ? '✅' : (fu.due < today ? '⏰' : '⬜')} ${esc(fu.action)}
+          <span class="small-note">${esc(teamName(fu.owner))} · ${esc(fmtDate(fu.due))}</span>
+          ${fu.status!=='Done' && can('POB','edit') ? `<a href="javascript:void(0)" onclick="pobFollowUpDone('${esc(rv.id)}','${esc(fu.id)}')">done</a>` : ''}</div>`).join('') || '—'}</td>
+      <td>${rv.status!=='Completed' && can('POB','edit') ? `<button class="btn sm primary" onclick="pobOpenReview('${esc(rv.id)}')">Record</button>` : ''}</td></tr>`);
+  });
+  return profTable('Reviews & Follow-ups', (withPartner ? ['Partner'] : []).concat(['Review','Due','Reviewer','Status','Outcome','Follow-ups','']), rows, 'No reviews scheduled. They are booked on activation.');
+}
+
+/* ---------- the spine: guards, side effects, what each stage says ---------- */
+function pobGuard(r, t, skipToken){
+  const id = t.id;
+  if(id==='obPaidT'){
+    const s = pobPaymentStatus(r);
+    if(s!=='Paid') return 'The due payment of ' + money(pobDue()) + ' is not verified yet — it is ' + s + '.\n\n'
+      + (s==='Not Started' ? 'Record the payment first, then someone with Approve on Partners verifies it against the bank.' : 'Someone with Approve on Partners has to verify it against the bank.');
+  }
+  if(id==='obAckT' && !r.paymentAckAt) return 'Send the payment acknowledgement from the stage button.';
+  if(id==='obSubmitT'){
+    const left = [];
+    const miss = pobEmpanelmentMissing(r);
+    if(miss.length || !r.empanelmentSavedAt) left.push('Empanelment form — ' + (miss.length ? 'still to fill: ' + miss.join(', ') : 'open it and save it once checked'));
+    if(!(r.agreement && r.agreement.acceptedAt)) left.push('Agreement — acceptance not recorded');
+    pobDocsVerification(r).missing.forEach(x=>left.push(x.type + ' — ' + (x.status==='Rejected' ? 'rejected, resubmit it' : 'not uploaded')));
+    if(left.length) return 'The application cannot go for evaluation yet:\n\n• ' + left.join('\n• ');
+  }
+  if(id==='obApproveT'){
+    if(!pobMayApprove()) return 'Deciding the evaluation needs Approve permission on Partners.';
+    const left = [];
+    pobCriteriaState(r).filter(x=>!x.ok).forEach(x=>left.push('Checklist — ' + x.c));
+    pobDocsVerification(r).pending.forEach(x=>left.push(x.type + ' — ' + x.status));
+    if(left.length) return 'Not every requirement is met, so the partner is not verified yet:\n\n• ' + left.join('\n• ');
+    if(!skipToken && !(r._decision && r._decision.tid===id)) return 'Approve the evaluation from the stage button.';
+  }
+  if(id==='obMoreInfoT' || id==='obRejectT'){
+    if(!pobMayApprove()) return 'Deciding the evaluation needs Approve permission on Partners.';
+    if(!(r._decision && r._decision.tid===id && r._decision.reason)) return 'Give the reason from the stage button.';
+  }
+  if(id==='obLoginT' && !r.login) return 'Record the login access from the stage button.';
+  if(id==='obRoleT'){
+    if(!(r.roleMeeting && r.roleMeeting.date)) return 'Book the one-to-one for role confirmation first.';
+    if(!r.role) return 'Confirm the role from the stage button.';
+  }
+  if(id==='obReadyT'){
+    const left = pobRequiredOnboarding(r).filter(t=>t.status!=='Approved');
+    if(left.length) return 'These onboarding tasks are still open:\n\n• ' + left.map(t=>t.title + ' — ' + pobTaskStatusLabel(r, t) + ' (' + pobTaskOwner(r, t) + ')').join('\n• ');
+  }
+  if(id==='obActivateT'){
+    if(!pobMayApprove()) return 'Activating a partner needs Approve permission on Partners.';
+    const left = pobReadiness(r).filter(x=>!x.ok);
+    if(left.length) return 'The partner cannot be activated yet:\n\n• ' + left.map(x=>x.label + ' — ' + x.detail + (x.who ? ' (' + x.who + ')' : '')).join('\n• ');
+    if(!skipToken && !r._activation) return 'Activate from the stage button.';
+  }
+  return '';
+}
+async function pobSideEffect(r, t){
+  const at = new Date().toISOString();
+  const attempt = () => (r.attempts||[]).slice(-1)[0];
+  if(t.id==='obSubmitT' || t.id==='obResubmitT'){
+    r.applicationStatus = 'Under Review';
+    r.submittedAt = at;
+    r.attempts = (r.attempts||[]).concat([{n: (r.attempts||[]).length + 1, submittedAt: at, submittedBy: currentUser}]);
+    pobDocs().filter(d=>!d.deletedAt && d.pobId===r.id && ['Submitted','Resubmitted'].includes(d.status)).forEach(d=>{
+      d.status = 'Under Review'; d.reviews = (d.reviews||[]).concat([{at, by: currentUser, decision: 'Under Review', reason: 'Application submitted'}]);
+    });
+    await save('pjDocuments');
+    const team = Array.from(new Set([r.assignedTo].concat(DB.team.filter(m=>isMemberActive(m) && isAdmin(m)).map(m=>m.id)))).filter(x=>x && x!==currentUser);
+    await notifyUsers(team, {title: 'Empanelment ' + (t.id==='obResubmitT' ? 'resubmitted' : 'submitted') + ' — ' + pjName(r), body: r.applicationId + ' is waiting for evaluation.', view:'pob', arg:r.id, kind:'pob'});
+  }
+  if(['obApproveT','obMoreInfoT','obRejectT'].includes(t.id)){
+    const d = POB_DECISIONS[t.id];
+    const a = attempt();
+    if(a) Object.assign(a, {decision: d.decision, reason: (r._decision||{}).reason || '', by: currentUser, decidedAt: at});
+    r.applicationStatus = t.id==='obApproveT' ? 'Approved' : t.id==='obRejectT' ? 'Rejected' : 'Draft';
+    if(t.id==='obApproveT') r.verificationCompletedAt = at;
+    delete r._decision;
+  }
+  if(t.id==='obActivateT'){
+    const wf = pobWorkflowOf(r) || {};
+    r.finalApproval = {decision: 'Approved', by: currentUser, at, comments: (r._activation||{}).comments || '', workflow: wf.id || r.workflowId, version: r.workflowVersion};
+    delete r._activation;
+    r.operationalStatus = 'Active';
+    r.activatedAt = at;
+    if(r.login && r.login.status==='Created'){ r.login.status = 'Activated'; r.login.activatedAt = at; r.login.history = (r.login.history||[]).concat([{at, by: currentUser, status:'Activated', note:'With the partner’s activation'}]); }
+    const c = pobConfig();
+    await pobScheduleReview(r, 'Monthly Review', pobAddMonths(pobToday(), Number(c.monthlyEvery) || 1));
+    if(c.annualReview!=='No') await pobScheduleReview(r, 'Annual Review', pobAddMonths(pobToday(), 12));
+    await pobRefreshTasks(r);
+    const p = pjPartners().find(x=>x.id===r.partnerId);
+    if(p){ p.partnerRole = r.role; p.partnerCode = r.partnerCode; p.activatedAt = at; await save('pjPartners'); }
+    await save('pjOnboarding');
+    const res = await pjMail('POB', r, 'pobActivated', {Role: r.role, PartnerCode: r.partnerCode, LoginId: (r.login||{}).userId || ''}, 'Activation');
+    if(r.assignedTo && r.assignedTo!==currentUser) await notifyUser(r.assignedTo, {title: pjName(r) + ' is an Active ' + r.role, body: r.partnerCode + ' · reviews are scheduled.', view:'pob', arg:r.id, kind:'pob'});
+    pjSaidMail(res, 'The activation letter');
+  }
+  await save('pjOnboarding');
+}
+function pobPathFor(r){
+  const base = ['duePayment','paymentAck','empanelment','evaluation'];
+  if(stateOf('POB', r)==='rejected') return base.concat(['rejected']);
+  return base.concat(['loginAccess','roleMeeting','roleWorkflow','readiness','active']);
+}
+function pobStagePanelHtml(r, cur){
+  const note = s => `<div class="small-note" style="margin:8px 0 0">${s}</div>`;
+  const btn = (label, on) => `<button class="btn sm" style="margin:6px 6px 0 0" onclick="${on}">${label}</button>`;
+  const id = esc(r.id);
+  if(cur==='duePayment') return note('Due: <b>' + esc(money(pobDue())) + '</b> · payment ' + esc(pobPaymentStatus(r)) + '. A payment counts once it is verified against the bank.')
+    + (can('POB','edit') ? btn('Record Payment', `pobOpenPaymentForm('${id}')`) : '') + btn('Payments', `window._pobTabRec='payments'; render()`);
+  if(cur==='paymentAck') return note('Verified: ' + esc(money(pobPaidTotal(r))) + '. Acknowledge it to the Freedompreneur.');
+  if(cur==='empanelment'){
+    const dv = pobDocsVerification(r);
+    const last = (r.attempts||[]).slice(-1)[0];
+    return (last && last.decision==='More Information Requested' ? note('<b>More information requested:</b> ' + esc(last.reason)) : '')
+      + note('Form ' + (r.empanelmentSavedAt ? '✅' : '⬜') + ' · Agreement ' + (r.agreement && r.agreement.acceptedAt ? '✅' : '⬜')
+      + ' · Documents ' + (dv.total - dv.missing.length) + ' of ' + dv.total + ' uploaded.')
+      + (can('POB','edit') ? btn('Empanelment Form', `pobOpenEmpanelment('${id}')`) + btn('Agreement', `pobOpenAgreement('${id}')`) : '')
+      + btn('Documents', `window._pobTabRec='documents'; render()`);
+  }
+  if(cur==='evaluation'){
+    const cs = pobCriteriaState(r), dv = pobDocsVerification(r);
+    return note('Attempt ' + ((r.attempts||[]).length) + ' · checklist ' + cs.filter(x=>x.ok).length + ' of ' + cs.length + ' · documents ' + dv.approved + ' of ' + dv.total + ' approved.'
+        + (pobMayApprove() ? '' : ' Deciding it needs Approve permission on Partners.'))
+      + (pobMayApprove() ? btn('Evaluation Checklist', `pobOpenEvaluation('${id}')`) + btn('Review Documents', `window._pobTabRec='documents'; render()`) + btn('Escalate', `pobEscalate('${id}')`) : '');
+  }
+  if(cur==='rejected'){ const a = (r.attempts||[]).slice(-1)[0]; return note('Rejected' + (a && a.reason ? ': ' + esc(a.reason) : '') + '. A resubmission opens a new review; this decision stays on record.'); }
+  if(cur==='loginAccess') return note('Create their Freedom LifeX account and record it here. Operational activation comes later, after the readiness review.');
+  if(cur==='roleMeeting') return note(pjMeetingLine('Role confirmation one-to-one', r.roleMeeting) + ' The role is confirmed in it: Ninja, Super Ninja or Sherpa.')
+    + (can('POB','edit') ? btn(r.roleMeeting ? 'Rebook the One-to-One' : 'Book the One-to-One', `pobOpenRoleMeeting('${id}')`) : '');
+  if(cur==='roleWorkflow'){
+    const req = pobRequiredOnboarding(r), done = req.filter(t=>t.status==='Approved').length;
+    const next = req.find(t=>t.status!=='Approved');
+    return note(esc(r.role||'') + ' · ' + done + ' of ' + req.length + ' onboarding tasks done' + (next ? ' · next: <b>' + esc(next.title) + '</b> (' + esc(pobTaskStatusLabel(r, next)) + ', ' + esc(pobTaskOwner(r, next)) + ')' : '') + '.')
+      + btn('Tasks', `window._pobTabRec='tasks'; render()`);
+  }
+  if(cur==='readiness'){
+    const left = pobReadiness(r).filter(x=>!x.ok);
+    return note(left.length ? 'Not ready: ' + left.map(x=>'<b>' + esc(x.label) + '</b> — ' + esc(x.detail)).join('; ') : 'Every requirement is met.')
+      + btn('Readiness Checklist', `window._pobTabRec='readiness'; render()`);
+  }
+  if(cur==='active') return note('Active ' + esc(r.role||'') + ' since ' + esc(fmtDate(r.activatedAt)) + '. The growth tasks and the reviews carry on from here.')
+    + btn('Growth Tasks', `window._pobTabRec='tasks'; render()`) + btn('Reviews', `window._pobTabRec='reviews'; render()`);
+  return '';
+}
+
+/* ---------- the screens ---------- */
+function pobApprovalQueue(){
+  const out = [];
+  const mine = visibleRecords(pobLive(), r=>r.assignedTo, r=>r.branch);
+  mine.forEach(r=>{
+    (r.payments||[]).filter(p=>p.status==='Under Review').forEach(p=>out.push({r, what:'Payment', detail: money(p.amount) + ' · ' + p.ref, at: p.recordedAt, tab:'payments'}));
+    pobDocs().filter(d=>!d.deletedAt && d.pobId===r.id && ['Submitted','Resubmitted','Under Review'].includes(d.status))
+      .forEach(d=>out.push({r, what:'Document', detail: d.type + ' (' + d.status + ', v' + (d.versions||[]).length + ')', at: d.submittedAt, tab:'documents'}));
+    if(stateOf('POB', r)==='evaluation') out.push({r, what:'Application', detail: r.applicationId + ' · attempt ' + (r.attempts||[]).length, at: r.submittedAt, tab:'evaluation'});
+    pobLiveTasks(r).filter(t=>t.status==='Submitted for Review').forEach(t=>out.push({r, what:'Task', detail: t.title, at: t.submittedAt, tab:'tasks'}));
+    pobSessions().filter(s=>s.pobId===r.id && s.status==='Scheduled' && s.scheduledAt && s.scheduledAt.slice(0,10) <= pobToday())
+      .forEach(s=>out.push({r, what:'Session outcome', detail: 'Role Clarity Session ' + fmtDate(s.scheduledAt.slice(0,10)), at: s.scheduledAt, tab:'sessions'}));
+    if(stateOf('POB', r)==='readiness') out.push({r, what:'Activation', detail: r.role + ' · ' + pobReadiness(r).filter(x=>x.ok).length + ' of ' + pobReadiness(r).length + ' met', at: '', tab:'readiness'});
+  });
+  return out;
+}
+function pobApprovalQueueHtml(){
+  const q = pobApprovalQueue();
+  return `<div class="table-wrap"><table id="pobQueueTable"><thead><tr><th>Partner</th><th>Waiting</th><th>Detail</th><th>Since</th><th>Owner</th></tr></thead>
+    <tbody>${q.sort((a,b)=>String(a.at||'').localeCompare(String(b.at||''))).map(x=>`<tr class="row-clickable" onclick="window._pobTabRec='${x.tab}'; navigate('pob','${esc(x.r.id)}')">
+      <td style="font-weight:700">${esc(pjName(x.r))}</td><td>${esc(x.what)}</td><td>${esc(x.detail)}</td><td>${esc(x.at ? fmtDate(String(x.at).slice(0,10)) : '—')}</td>
+      <td>${esc(teamName(x.r.assignedTo))}</td></tr>`).join('') || `<tr><td colspan="5" class="empty">Nothing is waiting for a decision.</td></tr>`}</tbody></table></div>`;
+}
+function viewPOB(){
+  if(!can('POB','view')) return permissionWall('Partners');
+  window._pobTab = window._pobTab || 'partners';
+  const queue = pobApprovalQueue().length;
+  const tab = (k, l) => `<div class="tab ${window._pobTab===k?'active':''}" onclick="window._pobTab='${k}'; render()">${l}</div>`;
+  const tabs = `<div class="tabs" style="margin-bottom:10px">${tab('partners','Partners')}${tab('queue','Approval Queue' + (queue ? ' (' + queue + ')' : ''))}
+    ${tab('sessions','Role Clarity Sessions')}${tab('reviews','Reviews')}${tab('workflows','Workflows')}${tab('training','Training')}
+    ${pjMaySetUp() ? tab('settings','Settings') : ''}</div>`;
+  const unstarted = pobUnstartedPartners().length;
+  const head = moduleHeader({title:'POB — Partner Onboarding',
+    subtitle: 'After PMS: due payment, empanelment, evaluation, login, role — then the Ninja, Super Ninja or Sherpa road to active.',
+    actions:[can('POB','create') && {label:'Start for an Onboarded Partner', icon:'+', kind:'primary', onclick:'pobOpenStartPicker()', count: unstarted || undefined}]});
+  const all = visibleRecords(pobLive(), r=>r.assignedTo, r=>r.branch);
+  if(window._pobTab==='queue') return head + tabs + pobApprovalQueueHtml();
+  if(window._pobTab==='sessions') return head + tabs + pobSessionsTable(pobSessions().filter(s=>all.some(r=>r.id===s.pobId)), true);
+  if(window._pobTab==='reviews') return head + tabs + pobReviewsTable(pobReviews().filter(x=>!x.deletedAt && all.some(r=>r.id===x.pobId)), true);
+  if(window._pobTab==='workflows') return head + tabs + pobWorkflowsHtml();
+  if(window._pobTab==='training') return head + tabs + pobTrainingCatalogHtml();
+  if(window._pobTab==='settings' && pjMaySetUp()) return head + tabs + pobSettingsHtml();
+  const searchMap = {stage: r=>stateLabel('POB', stateOf('POB', r)), role: r=>r.role, owner: r=>teamName(r.assignedTo), name: r=>pjName(r),
+    code: r=>r.partnerCode, app: r=>r.applicationId, mobile: r=>r.mobile, email: r=>r.email};
+  const inWindow = applyTimeline('POB', all);
+  window._pobRole = window._pobRole || '';
+  let rows = applyStageFilter('POB', inWindow).filter(r=>matchesSearch(window._pobSearch, r, searchMap));
+  if(window._pobRole) rows = rows.filter(r=>(r.role||'—')===window._pobRole);
+  rows = rows.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  const overdueTasks = all.reduce((n, r)=>n + pobLiveTasks(r).filter(t=>pobTaskState(r, t).overdue).length, 0);
+  const overdueReviews = pobReviews().filter(x=>!x.deletedAt && x.status!=='Completed' && x.dueDate && x.dueDate < pobToday() && all.some(r=>r.id===x.pobId)).length;
+  return `${head}${tabs}
+    ${timelineBarHtml('POB')}
+    ${kpiCards(dashboardStageCards('POB', inWindow).concat([
+      {label:'Waiting for Approval', value: queue, tone: queue ? 'warn' : 'ok', onclick:"window._pobTab='queue'; render()"},
+      {label:'Overdue Tasks', value: overdueTasks, tone: overdueTasks ? 'danger' : 'ok'},
+      {label:'Overdue Reviews', value: overdueReviews, tone: overdueReviews ? 'danger' : 'ok', onclick:"window._pobTab='reviews'; render()"}]))}
+    ${stageFilterNote('POB')}
+    <div class="row" style="gap:6px;margin:0 0 8px">${['', 'Ninja', 'Super Ninja', 'Sherpa', '—'].map(x=>`<button class="btn sm ${window._pobRole===x?'primary':''}"
+      onclick="window._pobRole='${x}'; render()">${x==='' ? 'All roles' : x==='—' ? 'No role yet' : x}</button>`).join('')}</div>
+    ${listSearchRow({stateKey:'_pobSearch', live:true})}
+    <div class="table-wrap"><table id="pobTable">
+      <thead><tr><th>Partner</th><th>Partner Code</th><th>Application</th><th>Role</th><th>Payment</th><th>Progress</th><th>Owner</th><th>Stage</th></tr></thead>
+      <tbody>${rows.map(r=>{
+        const meta = stateMeta('POB', stateOf('POB', r));
+        return `<tr class="row-clickable" onclick="navigate('pob','${esc(r.id)}')">
+          <td style="font-weight:700">${esc(pjName(r))}<div class="small-note" style="margin:0">${esc(r.mobile||'')}</div></td>
+          <td>${esc(r.partnerCode||'')}</td><td>${esc(r.applicationId||'')} ${statusBadge(r.applicationStatus)}</td><td>${esc(r.role||'—')}</td>
+          <td>${statusBadge(pobPaymentStatus(r))}</td><td>${pobProgress(r)}%</td>
+          <td style="color:var(--info)">${esc(teamName(r.assignedTo))}</td>
+          <td><span class="badge ${meta.color||'info'}">${esc(meta.label||'')}</span></td></tr>`;
+      }).join('') || `<tr><td colspan="8" class="empty">No onboarding records yet. One starts by itself when PMS marks a partner onboarded${unstarted ? ' — ' + unstarted + ' onboarded partner(s) can be started now' : ''}.</td></tr>`}</tbody>
+    </table></div>`;
+}
+function pobOutstanding(r){
+  const st = stateOf('POB', r);
+  const t = getBlueprint('POB').transitions.filter(x=>x.from===st && x.kind==='forward');
+  const first = t[0];
+  return first ? pobGuard(r, first, true) : '';
+}
+function viewPOBDetail(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r) return `<div class="empty">Onboarding record not found. <button class="btn" onclick="navigate('pob')">Back</button></div>`;
+  if(!recordOpenToMe('POB', r)) return recordDeniedHtml('POB');
+  const st = stateOf('POB', r);
+  const ses = pobSessions().filter(s=>s.pobId===id);
+  const rvs = pobReviews().filter(x=>!x.deletedAt && x.pobId===id);
+  const blocked = pobOutstanding(r);
+  const pendingApprovals = pobApprovalQueue().filter(x=>x.r.id===id);
+  const audit = (DB.auditLog||[]).filter(a=>a.module==='POB' && a.recordId===id).slice().reverse();
+  return profileShell({
+    title: pjName(r), subtitle: r.partnerCode + ' · ' + r.applicationId + (r.role ? ' · ' + r.role : ''),
+    tabKey: '_pobTabRec',
+    actions: [
+      {label:'Back', icon:'←', onclick:"navigate('pob')"},
+      r.partnerId && {label:'PMS Record', icon:'←', onclick:`navigate('pms','${esc(r.partnerId)}')`},
+      pobMayEditApplication(r) && {label:'Edit Application', icon:'✎', onclick:`pobOpenEmpanelment('${esc(id)}')`},
+      can('POB','delete') && {label:'Delete', icon:'🗑', onclick:`softDeleteRecord('POB','${esc(id)}')`},
+    ],
+    progress: {title:'Onboarding Progress — ' + pobProgress(r) + '%', html: stepperHtml('POB', r, pobPathFor(r)) + blueprintWidget('POB', r, {compact:1})},
+    tabs: [['overview','Overview'],['payments','Payments'],['documents','Documents & Agreement'],['evaluation','Evaluation'],
+      ['tasks','Role & Tasks'],['sessions','Sessions (' + ses.length + ')'],['training','Training'],['readiness','Readiness'],
+      ['reviews','Reviews (' + rvs.length + ')'],['mail','Emails (' + pjComms('POB', id).length + ')'],['history','History']],
+    timeline: {module:'POB', recordId:id, history:r.blueprintHistory, stateKey:'_pobTlBack'},
+    body: tab => {
+      if(tab==='payments') return pobPaymentsHtml(r);
+      if(tab==='documents') return pobDocsHtml(r);
+      if(tab==='evaluation') return pobEvaluationHtml(r);
+      if(tab==='tasks') return pobTasksHtml(r);
+      if(tab==='sessions') return pobSessionsTable(ses, false);
+      if(tab==='training') return pobTrainingResultsHtml(r);
+      if(tab==='readiness') return pobReadinessHtml(r);
+      if(tab==='reviews') return pobReviewsTable(rvs, false);
+      if(tab==='mail') return pjCommsTable('POB', id);
+      if(tab==='history') return pjHistoryTable('POB', r) + profTable('Changes', ['When','What','Details','By'], audit.map(a=>`<tr><td>${esc(fmtDateTime(a.at))}</td>
+        <td>${esc(a.action)}</td><td>${esc((a.details||[]).map(x=>x.field + ': ' + (x.oldValue ? x.oldValue + ' → ' : '') + x.newValue).join('; '))}</td><td>${esc(teamName(a.by))}</td></tr>`), 'No changes recorded yet.');
+      const req = pobRequiredOnboarding(r);
+      const dv = pobDocsVerification(r);
+      const rcs = ses.slice().sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+      return (blocked && st!=='active' ? `<div class="card" style="padding:10px 12px;border-left:3px solid var(--warn);margin-bottom:10px;white-space:pre-wrap;font-size:13px"><b>Why it cannot move on yet</b>\n${esc(blocked)}</div>` : '')
+        + profCard('Partner', [
+          ['Name', esc(pjName(r))], ['Partner Code', esc(r.partnerCode)], ['Application ID', esc(r.applicationId)],
+          ['Email', esc(r.email||'')], ['Phone', esc(r.mobile||'')], ['Address', esc(r.address||'')], ['City', esc(r.city||'')], ['PAN', esc(r.pan||'')],
+          ['Proposed Role', esc(r.proposedRole||'')], ['Business Role', esc(r.role||'Not assigned')], ['Registration Date', esc(fmtDate(r.registrationDate)||'')],
+          ['Onboarding Owner', esc(teamName(r.assignedTo))], ['Branch', esc(r.branch||'')], ['Created', esc(fmtDateTime(r.createdAt))], ['Updated', esc(r.updatedAt ? fmtDateTime(r.updatedAt) : '')],
+        ])
+        + profCard('Status', [
+          ['Stage', esc(stateLabel('POB', st))], ['Application', statusBadge(r.applicationStatus)], ['Payment', statusBadge(pobPaymentStatus(r))],
+          ['Verification', r.applicationStatus==='Approved' ? '<span class="badge ok">Completed</span>' : esc(dv.approved + ' of ' + dv.total + ' documents approved')],
+          ['Login Account', r.login ? statusBadge(r.login.status) + ' ' + esc(r.login.userId) : 'Not created'],
+          ['Operational', statusBadge(r.operationalStatus || 'Onboarding')],
+          ['Role Clarity Session', rcs ? statusBadge(rcs.status) : (req.some(t=>t.kind==='session') ? 'Not scheduled' : '—')],
+          ['Onboarding Tasks', esc(req.filter(t=>t.status==='Approved').length + ' of ' + req.length)],
+          ['Outstanding Approvals', pendingApprovals.length ? esc(pendingApprovals.map(x=>x.what + ': ' + x.detail).join('; ')) : 'None'],
+          ['Activated', esc(r.activatedAt ? fmtDate(r.activatedAt) : '')],
+        ], r.login && pobMayApprove() ? `<div class="row" style="gap:6px;margin-top:8px">
+          ${r.login.status!=='Activated' ? `<button class="btn sm" onclick="pobSetLoginStatus('${esc(id)}','Activated')">Activate Account</button>` : ''}
+          ${r.login.status!=='Suspended' ? `<button class="btn sm ghost" onclick="pobSetLoginStatus('${esc(id)}','Suspended')">Suspend Account</button>` : ''}</div>` : '')
+        + profTable('Pending & Due', ['Task','Status','Owner','Due'], pobLiveTasks(r).filter(t=>!['Approved','Cancelled'].includes(t.status) && pobTaskState(r, t).open)
+            .map(t=>`<tr><td>${esc(t.title)}</td><td>${statusBadge(t.status)}${pobTaskState(r, t).overdue ? ' <span class="badge danger">Overdue</span>' : ''}</td>
+              <td>${esc(pobTaskOwner(r, t))}</td><td>${esc(fmtDate(t.dueDate)||'—')}</td></tr>`), r.role ? 'Nothing open right now.' : 'Tasks arrive with the role.');
+    },
+  });
 }
 
 /* =====================================================================
@@ -73138,6 +74957,24 @@ const MAIL_TEMPLATE_DEFS = [
   {group:'Partner Journey', key:'pjOnboardingOneToOne', label:'PMS — onboarding one-to-one',
    when:'Sent when the partner asks for a one-to-one after the onboarding video.',
    vars:['Name','Date','Time','MeetingLink','FirmName']},
+  {group:'Partner Onboarding', key:'pobPaymentAck', label:'POB — payment acknowledgement',
+   when:'Sent from Send Payment Acknowledgement, once the due payment is verified.',
+   vars:['Name','Amount','Reference','PaidOn','PartnerCode','ApplicationId','RMName','FirmName']},
+  {group:'Partner Onboarding', key:'pobLogin', label:'POB — login access',
+   when:'Sent from Login Access Created, with the login ID and the password setup link.',
+   vars:['Name','LoginId','LoginLink','PartnerCode','FirmName']},
+  {group:'Partner Onboarding', key:'pobRoleMeeting', label:'POB — one-to-one for role confirmation',
+   when:'Sent when the internal RM books the role confirmation one-to-one.',
+   vars:['Name','Host','Date','Time','MeetingLink','FirmName']},
+  {group:'Partner Onboarding', key:'pobSession', label:'POB — Role Clarity Session invitation',
+   when:'Sent when a Role Clarity Session is scheduled or rescheduled.',
+   vars:['Name','Role','Trainer','Date','Time','MeetingLink','Preparation','FirmName']},
+  {group:'Partner Onboarding', key:'pobCourseUnlocked', label:'POB — course unlocked at a milestone',
+   when:'Sent when a course unlock task is done — after the conversions or clients the workflow names.',
+   vars:['Name','Course','GurukulLink','FirmName']},
+  {group:'Partner Onboarding', key:'pobActivated', label:'POB — activation',
+   when:'Sent when the readiness review is approved and the partner becomes active.',
+   vars:['Name','Role','PartnerCode','LoginId','FirmName']},
   {group:'Partner Journey', key:'pjArnExpiry', label:'PMS — ARN / EUIN expiry reminder (automatic)',
    when:'Sent by the server once a week from six months before an onboarded partner\u2019s ARN or EUIN runs out (PPS › Settings).',
    vars:['Name','What','Number','ExpiresOn','DaysLeft','FirmName']},

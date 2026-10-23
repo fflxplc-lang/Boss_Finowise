@@ -3127,7 +3127,8 @@ app.use('/api/payout', checkApiKey, (req, res, next) => {
 /* THE PARTNER JOURNEY — the session reminders, the ARN / EUIN expiry
    warnings and the prospect's own form, which all have to work with no
    CRM tab open. See partner-journey.js. */
-require('./partner-journey').install({ app, storeList, storeValue, putList, writeToDisk, sendMail, checkApiKey });
+require('./partner-journey').install({ app, storeList, storeValue, putList, writeToDisk, sendMail, checkApiKey,
+  dataDir: path.dirname(DB_FILE) });
 app.get('/partner-form', (req, res) => {
   res.set('Cache-Control', 'no-store').sendFile(path.join(__dirname, 'public', 'partner-form.html'));
 });
