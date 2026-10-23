@@ -1,6 +1,6 @@
 /* THE PARTNER JOURNEY.
 
-   A section of its own in the rail, with five modules. A prospect is
+   A section of its own in the rail, with six modules. A prospect is
    registered against a webinar in PPS — on a referral code, whose name
    fills itself in — and walks the flowchart's stages until the ₹1,999
    fee is paid with its UTR and somebody verifies it; verifying creates
@@ -19,19 +19,19 @@ suite(async t => {
 
   t.section('the section');
 
-  await t.step('the rail carries Partner Journey with its five modules', async () => {
+  await t.step('the rail carries Partner Journey with its six modules', async () => {
     const r = await t.eval(()=>{
       const g = railNavGroups().find(x=>x.id==='partnerjourney');
       return g ? {label: g.label, items: g.items.map(v=>navFullOf(v))} : null;
     });
     if(!r) throw new Error('no Partner Journey group in the rail');
-    if(r.items.length !== 5) throw new Error('expected five modules, got ' + JSON.stringify(r.items));
+    if(r.items.length !== 6) throw new Error('expected six modules, got ' + JSON.stringify(r.items));
     return r.items.join(' · ');
   });
 
   await t.step('each module draws', async () => {
     const out = [];
-    for(const v of ['pps','pms','pqs','ppo','ppf']){
+    for(const v of ['pps','pms','pob','pqs','ppo','ppf']){
       const h = await t.eval(async v => { navigate(v); await new Promise(r=>setTimeout(r,80));
         return (document.querySelector('.mod-head h2')||{}).textContent || ''; }, v);
       if(!h) throw new Error(v + ' drew no heading');

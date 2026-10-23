@@ -15,9 +15,16 @@
       corrects it, adds to it and sends it back, and it lands on their
       record. It has no account behind it, so it is served on its token.
 
+   4. Partner Onboarding's documents and reviews. A partner's PAN, cheque
+      and signed agreement are kept on the server, outside the public
+      folder, and are served only to a signed-in session. A recurring
+      review that falls overdue is put in its owner's bell once a day.
+
    Everything is read from and written to the same store as the rest of
    the CRM, and every write is published, so an open screen redraws. */
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const IST_OFFSET_MIN = 330;
 const DAY = 86400000;
@@ -131,7 +138,7 @@ function dueSlots(w, s, now) {
 const AWAITING_SESSION = ['registered', 'acknowledged', 'remindersSent', 'sessionDay'];
 
 function install(deps) {
-  const { app, storeList, storeValue, putList, writeToDisk, sendMail, checkApiKey, now: clock } = deps;
+  const { app, storeList, storeValue, putList, writeToDisk, sendMail, checkApiKey, dataDir, now: clock } = deps;
   const nowMs = () => (clock ? clock() : Date.now());
 
   function template(config, key) {
@@ -296,6 +303,40 @@ function install(deps) {
     return { notified: notes.length, letters: comms.length };
   }
 
+  /* ---------- Partner Onboarding: overdue reviews ----------
+     Once a day, the owner of every review past its date hears about it,
+     until it is done. */
+  function runReviews(now) {
+    const today = istYmd(now);
+    const list = storeList('pjReviews');
+    const pob = storeList('pjOnboarding');
+    const notes = [];
+    const marks = [];
+    for (const r of list) {
+      if (!r || r.deletedAt || r.status === 'Completed' || r.status === 'Cancelled') continue;
+      if (!r.dueDate || String(r.dueDate) >= today) continue;
+      if ((r.overdueNotified || {})[today]) continue;
+      const p = pob.find((x) => x && x.id === r.pobId) || {};
+      const who = r.assignedTo || p.assignedTo;
+      marks.push(r.id);
+      if (!who) continue;
+      notes.push({ id: uid('NTF'), at: new Date(now).toISOString(), userId: who,
+        title: (r.kind || 'Review') + ' for ' + (pjName(p) || 'a partner') + ' is overdue',
+        body: 'It was due on ' + fmtDate(r.dueDate) + '. Record it in POB › Reviews.',
+        view: 'pob', arg: p.id || '', kind: 'pobReview', by: 'Automation' });
+    }
+    if (!marks.length) return { overdue: 0 };
+    const fresh = storeList('pjReviews');
+    marks.forEach((id) => {
+      const r = fresh.find((x) => x && x.id === id);
+      if (r) r.overdueNotified = Object.assign({}, r.overdueNotified, { [today]: new Date(now).toISOString() });
+    });
+    putList('pjReviews', fresh);
+    if (notes.length) putList('notifications', storeList('notifications').concat(notes));
+    writeToDisk();
+    return { overdue: notes.length };
+  }
+
   let running = false;
   async function tick(at) {
     if (running) return { busy: true };
@@ -304,7 +345,8 @@ function install(deps) {
       const now = at || nowMs();
       const reminders = await runReminders(now);
       const expiry = await runExpiry(now);
-      return { reminders, expiry, at: new Date(now).toISOString() };
+      const reviews = runReviews(now);
+      return { reminders, expiry, reviews, at: new Date(now).toISOString() };
     } catch (e) {
       console.error('Partner Journey run failed:', e);
       return { error: e.message };
@@ -396,6 +438,50 @@ function install(deps) {
     }
     writeToDisk();
     res.json({ ok: true });
+  });
+
+  /* ---------- Partner Onboarding: the partner's documents ----------
+     Kept beside the data file, never under public/, and handed out only
+     to a request that carries the CRM's key. The file goes in as base64 in
+     a JSON body, which the server already takes up to 25 MB of. */
+  const DOC_DIR = path.join(dataDir || path.join(__dirname, 'data'), 'partner-docs');
+  const DOC_TYPES = { 'application/pdf': '.pdf', 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp',
+    'application/msword': '.doc', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx' };
+  const DOC_MAX = 5 * 1024 * 1024;
+  app.post('/api/partner-docs', checkApiKey, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const b = req.body || {};
+    const mime = String(b.mime || '');
+    if (!DOC_TYPES[mime]) return res.status(400).json({ ok: false, message: 'Only PDF, PNG, JPG, WEBP or Word files can be uploaded.' });
+    const raw = String(b.data || '').replace(/^data:[^,]*,/, '');
+    const buf = Buffer.from(raw, 'base64');
+    if (!buf.length) return res.status(400).json({ ok: false, message: 'The file is empty.' });
+    if (buf.length > DOC_MAX) return res.status(400).json({ ok: false, message: 'The file is larger than 5 MB.' });
+    const id = 'PDF-' + crypto.randomBytes(12).toString('hex');
+    try {
+      fs.mkdirSync(DOC_DIR, { recursive: true });
+      fs.writeFileSync(path.join(DOC_DIR, id + DOC_TYPES[mime]), buf);
+      fs.writeFileSync(path.join(DOC_DIR, id + '.json'), JSON.stringify({ id, mime, name: String(b.name || 'document').slice(0, 200),
+        size: buf.length, at: new Date().toISOString() }));
+    } catch (e) {
+      return res.status(500).json({ ok: false, message: 'The file could not be stored: ' + e.message });
+    }
+    res.json({ ok: true, id, size: buf.length });
+  });
+  app.get('/api/partner-docs/:id', checkApiKey, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const id = String(req.params.id || '');
+    if (!/^PDF-[0-9a-f]{24}$/.test(id)) return res.status(404).json({ ok: false, message: 'No such document.' });
+    let meta;
+    try { meta = JSON.parse(fs.readFileSync(path.join(DOC_DIR, id + '.json'), 'utf8')); } catch (e) {
+      return res.status(404).json({ ok: false, message: 'No such document.' });
+    }
+    const file = path.join(DOC_DIR, id + (DOC_TYPES[meta.mime] || ''));
+    if (!fs.existsSync(file)) return res.status(404).json({ ok: false, message: 'No such document.' });
+    res.set('Content-Type', meta.mime);
+    res.set('Content-Disposition', 'inline; filename="' + String(meta.name).replace(/["\\\r\n]/g, '_') + '"');
+    res.set('X-Content-Type-Options', 'nosniff');
+    fs.createReadStream(file).pipe(res);
   });
 
   return { tick, dueSlots, parseClock, isoWeek, DEFAULT_TEMPLATES, newFormToken: () => crypto.randomBytes(18).toString('base64url') };
