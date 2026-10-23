@@ -37,6 +37,8 @@ const DEFAULT_TEMPLATES = {
     body: 'Dear {Name},\n\nThis is a reminder that you are registered for "{Webinar}".\n\n📅 Date: {Date}\n⏰ Time: {Time}\n\nThe session is {DaysToGo} away. The joining link will reach you 24 hours before it starts.\n\nWe look forward to seeing you there.\n\n{Signature}'},
   pjJoiningLink: {subject: 'Your joining link for {Webinar} — {Date}',
     body: 'Dear {Name},\n\n"{Webinar}" starts in 24 hours.\n\n📅 Date: {Date}\n⏰ Time: {Time}\n🔗 Joining Link: {JoiningLink}\n\nPlease join a few minutes early.\n\n{Signature}'},
+  pjVerifyRequest: {subject: 'To verify: {What} — {Name}',
+    body: 'Dear {VerifierName},\n\n{SubmittedBy} has put in {What} for {Name}, and it is waiting for you:\n\n{Details}\n\nPlease check it and approve it, or send it back with a comment: {Link}\n\nIt does not move to the next step until it is approved.\n\n{Signature}'},
   pjArnExpiry: {subject: 'Your {What} expires on {ExpiresOn}',
     body: 'Dear {Name},\n\nYour {What} ({Number}) is valid until {ExpiresOn} — {DaysLeft} days from today.\n\nPlease start the renewal now so your work as a partner is not interrupted, and send us the renewed details once you have them.\n\n{Signature}'},
 };
@@ -126,8 +128,10 @@ function dueSlots(w, s, now) {
         }
       });
     }
+    /* The joining link is owed until the session starts, not only for
+       six hours: somebody acknowledged late still needs it to get in. */
     const linkAt = start - s.linkHours * 3600000;
-    if (now >= linkAt && now < Math.min(start, linkAt + CATCH_UP_MS)) {
+    if (now >= linkAt && now < start) {
       out.push({ key: 'link:' + w.id, kind: 'link', at: linkAt });
     }
   }
@@ -136,6 +140,30 @@ function dueSlots(w, s, now) {
 
 // Who still has a session to come: registered, and not yet past it.
 const AWAITING_SESSION = ['registered', 'acknowledged', 'remindersSent', 'sessionDay'];
+
+/* The reminder a prospect missed. Somebody acknowledged after the first
+   reminder went out would otherwise wait for the next slot, or never get
+   one; they get one now, once, and their stage moves with it. Nothing is
+   owed before the first slot, or once the joining link is due. */
+function lateReminder(w, s, now, p) {
+  if (!s.autoReminders || p.ppsStage !== 'acknowledged') return null;
+  const clock = parseClock(w.time);
+  const start = istMoment(w.date, clock.h, clock.m);
+  if (!start || now >= start - s.linkHours * 3600000) return null;
+  let missed = 0;
+  for (let k = s.reminderDays; k >= 1; k--) {
+    const day = istYmd(start - k * DAY);
+    s.reminderTimes.forEach((t) => {
+      const at = istMoment(day, t.h, t.m);
+      if (at < start && at <= now) missed = Math.max(missed, k);
+    });
+  }
+  if (!missed) return null;
+  const prefix = 'rem:' + w.id + ':';
+  if (Object.keys(p.pjSent || {}).some((k) => k.indexOf(prefix) === 0)) return null;
+  const daysToGo = Math.max(1, Math.ceil((start - now) / DAY));
+  return { key: prefix + 'late', kind: 'reminder', at: now, daysToGo, start, clock };
+}
 
 function install(deps) {
   const { app, storeList, storeValue, putList, writeToDisk, sendMail, checkApiKey, dataDir, now: clock } = deps;
@@ -197,40 +225,55 @@ function install(deps) {
     let moved = 0;
     for (const w of webinars) {
       const slots = dueSlots(w, s, now);
-      if (!slots.length) continue;
       const regs = prospects.filter((p) => p && !p.deletedAt && p.webinarId === w.id
         && AWAITING_SESSION.includes(p.ppsStage || 'registered'));
-      for (const slot of slots) {
+      /* Once the session has begun, whoever was still waiting for a
+         reminder is at the session too: the RM marks who attended. */
+      const clock = parseClock(w.time);
+      const start = istMoment(w.date, clock.h, clock.m);
+      if (s.autoReminders && start && now >= start) {
         for (const p of regs) {
-          if ((p.pjSent || {})[slot.key]) continue;
-          const vars = { Name: pjName(p), FirstName: p.firstName || '', Webinar: w.title || 'the session',
-            Date: fmtDate(w.date), Time: w.time || fmtClock(slot.clock), FirmName: firmName(config),
-            DaysToGo: slot.daysToGo === 1 ? '1 day' : slot.daysToGo + ' days', JoiningLink: w.joiningLink || '(the link will follow)' };
-          const key = slot.kind === 'link' ? 'pjJoiningLink' : 'pjReminder';
-          const label = slot.kind === 'link' ? 'Joining link (automatic)' : 'Session reminder (automatic)';
-          comms.push(await letter({ config, key, vars, to: p.email, module: 'PPS', recordId: p.id, label, refId: w.id }));
-          /* A WhatsApp registration is written to on WhatsApp as well. No
-             WhatsApp delivery is wired into BOSS yet, so the message is
-             recorded as owed rather than pretended. */
-          if (p.commChannel === 'WhatsApp') {
-            comms.push({ id: uid('COM'), clientId: null, leadId: null, channel: 'WhatsApp', direction: 'Outbound',
-              status: 'Not Sent', statusNote: 'WhatsApp delivery is not connected yet — send this one by hand.',
-              subject: label, body: fill(template(config, key).body, vars).split('{Signature}').join(''),
-              address: p.mobile || '', module: 'PPS', recordId: p.id, label, refId: w.id,
-              at: new Date(now).toISOString(), by: 'Automation' });
-          }
-          /* And the stage follows what has gone out. Somebody still at
-             Registered has not been acknowledged yet, which is a person's
-             step, so they are written to but not moved. */
-          const to = slot.kind === 'link'
-            ? (['acknowledged', 'remindersSent'].includes(p.ppsStage) ? 'sessionDay' : null)
-            : (p.ppsStage === 'acknowledged' ? 'remindersSent' : null);
-          if (to) {
-            p.ppsStage = to;
-            moved++;
-          }
-          patches.push({ id: p.id, key: slot.key, to, label });
+          if (!['acknowledged', 'remindersSent'].includes(p.ppsStage)) continue;
+          p.ppsStage = 'sessionDay';
+          moved++;
+          patches.push({ id: p.id, key: 'held:' + w.id, to: 'sessionDay', label: 'Session started (automatic)' });
         }
+        continue;
+      }
+      const owed = [];
+      slots.forEach((slot) => regs.forEach((p) => owed.push({ slot, p })));
+      if (!slots.some((x) => x.kind === 'reminder')) {
+        regs.forEach((p) => { const late = lateReminder(w, s, now, p); if (late) owed.push({ slot: late, p }); });
+      }
+      for (const { slot, p } of owed) {
+        if ((p.pjSent || {})[slot.key]) continue;
+        const vars = { Name: pjName(p), FirstName: p.firstName || '', Webinar: w.title || 'the session',
+          Date: fmtDate(w.date), Time: w.time || fmtClock(slot.clock), FirmName: firmName(config),
+          DaysToGo: slot.daysToGo === 1 ? '1 day' : slot.daysToGo + ' days', JoiningLink: w.joiningLink || '(the link will follow)' };
+        const key = slot.kind === 'link' ? 'pjJoiningLink' : 'pjReminder';
+        const label = slot.kind === 'link' ? 'Joining link (automatic)' : 'Session reminder (automatic)';
+        comms.push(await letter({ config, key, vars, to: p.email, module: 'PPS', recordId: p.id, label, refId: w.id }));
+        /* A WhatsApp registration is written to on WhatsApp as well. No
+           WhatsApp delivery is wired into BOSS yet, so the message is
+           recorded as owed rather than pretended. */
+        if (p.commChannel === 'WhatsApp') {
+          comms.push({ id: uid('COM'), clientId: null, leadId: null, channel: 'WhatsApp', direction: 'Outbound',
+            status: 'Not Sent', statusNote: 'WhatsApp delivery is not connected yet — send this one by hand.',
+            subject: label, body: fill(template(config, key).body, vars).split('{Signature}').join(''),
+            address: p.mobile || '', module: 'PPS', recordId: p.id, label, refId: w.id,
+            at: new Date(now).toISOString(), by: 'Automation' });
+        }
+        /* And the stage follows what has gone out. Somebody still at
+           Registered has not been acknowledged yet, which is a person's
+           step, so they are written to but not moved. */
+        const to = slot.kind === 'link'
+          ? (['acknowledged', 'remindersSent'].includes(p.ppsStage) ? 'sessionDay' : null)
+          : (p.ppsStage === 'acknowledged' ? 'remindersSent' : null);
+        if (to) {
+          p.ppsStage = to;
+          moved++;
+        }
+        patches.push({ id: p.id, key: slot.key, to, label });
       }
     }
     if (!patches.length) return { sent: 0, letters: 0, moved };
@@ -457,34 +500,43 @@ function install(deps) {
     const buf = Buffer.from(raw, 'base64');
     if (!buf.length) return res.status(400).json({ ok: false, message: 'The file is empty.' });
     if (buf.length > DOC_MAX) return res.status(400).json({ ok: false, message: 'The file is larger than 5 MB.' });
-    const id = 'PDF-' + crypto.randomBytes(12).toString('hex');
-    try {
-      fs.mkdirSync(DOC_DIR, { recursive: true });
-      fs.writeFileSync(path.join(DOC_DIR, id + DOC_TYPES[mime]), buf);
-      fs.writeFileSync(path.join(DOC_DIR, id + '.json'), JSON.stringify({ id, mime, name: String(b.name || 'document').slice(0, 200),
-        size: buf.length, at: new Date().toISOString() }));
-    } catch (e) {
+    let id;
+    try { id = storeDoc(buf, mime, b.name); } catch (e) {
       return res.status(500).json({ ok: false, message: 'The file could not be stored: ' + e.message });
     }
     res.json({ ok: true, id, size: buf.length });
   });
-  app.get('/api/partner-docs/:id', checkApiKey, (req, res) => {
-    res.set('Cache-Control', 'no-store');
-    const id = String(req.params.id || '');
-    if (!/^PDF-[0-9a-f]{24}$/.test(id)) return res.status(404).json({ ok: false, message: 'No such document.' });
-    let meta;
-    try { meta = JSON.parse(fs.readFileSync(path.join(DOC_DIR, id + '.json'), 'utf8')); } catch (e) {
-      return res.status(404).json({ ok: false, message: 'No such document.' });
-    }
-    const file = path.join(DOC_DIR, id + (DOC_TYPES[meta.mime] || ''));
-    if (!fs.existsSync(file)) return res.status(404).json({ ok: false, message: 'No such document.' });
+  /* Shared with the partner's own pages (partner-portal.js), which keep
+     their files in the same place. `extra` is written into the file's
+     note, so a file can say which record it was uploaded for. */
+  function storeDoc(buf, mime, name, extra) {
+    const id = 'PDF-' + crypto.randomBytes(12).toString('hex');
+    fs.mkdirSync(DOC_DIR, { recursive: true });
+    fs.writeFileSync(path.join(DOC_DIR, id + DOC_TYPES[mime]), buf);
+    fs.writeFileSync(path.join(DOC_DIR, id + '.json'), JSON.stringify(Object.assign({ id, mime, name: String(name || 'document').slice(0, 200),
+      size: buf.length, at: new Date().toISOString() }, extra || {})));
+    return id;
+  }
+  function docMeta(id) {
+    if (!/^PDF-[0-9a-f]{24}$/.test(String(id || ''))) return null;
+    try { return JSON.parse(fs.readFileSync(path.join(DOC_DIR, id + '.json'), 'utf8')); } catch (e) { return null; }
+  }
+  function sendDoc(res, id) {
+    const meta = docMeta(id);
+    const file = meta && path.join(DOC_DIR, id + (DOC_TYPES[meta.mime] || ''));
+    if (!file || !fs.existsSync(file)) return res.status(404).json({ ok: false, message: 'No such document.' });
     res.set('Content-Type', meta.mime);
     res.set('Content-Disposition', 'inline; filename="' + String(meta.name).replace(/["\\\r\n]/g, '_') + '"');
     res.set('X-Content-Type-Options', 'nosniff');
     fs.createReadStream(file).pipe(res);
+  }
+  app.get('/api/partner-docs/:id', checkApiKey, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    sendDoc(res, String(req.params.id || ''));
   });
 
-  return { tick, dueSlots, parseClock, isoWeek, DEFAULT_TEMPLATES, newFormToken: () => crypto.randomBytes(18).toString('base64url') };
+  return { tick, dueSlots, parseClock, isoWeek, DEFAULT_TEMPLATES, newFormToken: () => crypto.randomBytes(18).toString('base64url'),
+    docs: { store: storeDoc, meta: docMeta, send: sendDoc, types: DOC_TYPES, max: DOC_MAX }, letter, firmName };
 }
 
 module.exports = { install, DEFAULT_TEMPLATES, parseClock, dueSlots, pjSettings };

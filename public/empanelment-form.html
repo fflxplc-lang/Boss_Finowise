@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Empanelment Form</title>
+<style>
+  /* Laid out the way the firm's Google Form is: a header card, then a
+     card for each section, one question under another. */
+  :root{ --ink:#1d2b36; --muted:#6b7a86; --line:#dfe5ea; --brand:#17485a; --gold:#B9863E; --bg:#eef1f3; --ok:#1f7a4d; --danger:#b42318; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap{ max-width:720px; margin:0 auto; padding:20px 16px 56px; }
+  .card{ background:#fff; border:1px solid var(--line); border-radius:10px; padding:20px 22px; margin-bottom:12px; }
+  .card.head{ border-top:10px solid var(--brand); }
+  .card.err-card{ border-left:4px solid var(--danger); }
+  h1{ font-size:24px; margin:0 0 6px; }
+  h2{ font-size:17px; margin:0 0 4px; }
+  .sub{ color:var(--muted); font-size:14px; margin:0 0 6px; line-height:1.45; }
+  .req-note{ color:var(--danger); font-size:13px; margin-top:10px; }
+  .field{ margin-top:16px; }
+  label.q{ display:block; font-size:14px; font-weight:600; margin-bottom:6px; }
+  .req{ color:var(--danger); }
+  .hint{ color:var(--muted); font-size:12.5px; margin-top:4px; }
+  input[type=text],input[type=email],input[type=tel],input[type=date],select,textarea{ width:100%; font:inherit; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  input:focus,select:focus,textarea:focus{ outline:none; border-color:var(--brand); box-shadow:0 0 0 3px rgba(23,72,90,.12); }
+  textarea{ min-height:80px; resize:vertical; }
+  .bad{ border-color:var(--danger) !important; }
+  .ferr{ color:var(--danger); font-size:12.5px; margin-top:5px; }
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:0 16px; }
+  @media (max-width:560px){ .grid{ grid-template-columns:1fr; } }
+  .doc{ display:flex; gap:12px; align-items:flex-start; justify-content:space-between; padding:12px 0; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .doc:last-child{ border-bottom:0; }
+  .badge{ display:inline-block; font-size:11.5px; font-weight:700; padding:2px 8px; border-radius:999px; background:#eef1f3; color:var(--muted); }
+  .badge.ok{ background:#e7f5ee; color:var(--ok); } .badge.warn{ background:#fff4e5; color:#9a5b00; } .badge.danger{ background:#fdecea; color:var(--danger); }
+  .agreement-text{ white-space:pre-wrap; font-size:13.5px; line-height:1.5; background:#f8fafb; border:1px solid var(--line); border-radius:8px; padding:12px 14px; max-height:260px; overflow:auto; }
+  .opt{ display:flex; gap:10px; align-items:flex-start; font-size:14px; margin:8px 0; cursor:pointer; }
+  .opt input{ margin-top:3px; }
+  button{ font:inherit; font-weight:700; color:#fff; background:var(--brand); border:0; border-radius:8px; padding:12px 26px; cursor:pointer; }
+  button[disabled]{ opacity:.6; cursor:default; }
+  .msg{ padding:12px 14px; border-radius:8px; font-size:14px; margin:10px 0 0; }
+  .msg.ok{ background:#e7f5ee; color:var(--ok); }
+  .msg.err{ background:#fdecea; color:var(--danger); }
+  .msg.info{ background:#eef4f7; color:var(--brand); }
+  .upl{ font-size:12.5px; margin-top:6px; }
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap"><div class="card head"><p class="sub">Loading your form…</p></div></div>
+<script>
+(function(){
+  var token = new URLSearchParams(location.search).get('t') || '';
+  var wrap = document.getElementById('wrap');
+  var D = null, uploads = {}, agreementFile = null;
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function badge(status){
+    var tone = status === 'Approved' ? 'ok' : status === 'Rejected' ? 'danger' : status === 'Not Submitted' ? '' : 'warn';
+    return '<span class="badge ' + tone + '">' + esc(status) + '</span>';
+  }
+  function control(f, v, locked){
+    var id = 'f_' + f.k, dis = locked ? ' disabled' : '';
+    if(f.t === 'textarea') return '<textarea id="' + id + '"' + dis + '>' + esc(v) + '</textarea>';
+    if(f.t === 'select') return '<select id="' + id + '"' + dis + '><option value="">Choose</option>'
+      + f.opts.map(function(o){ return '<option' + (o === v ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select>';
+    var type = f.t === 'date' ? 'date' : f.vk === 'email' ? 'email' : f.vk === 'mobile' ? 'tel' : 'text';
+    var extra = f.vk === 'mobile' ? ' inputmode="numeric" maxlength="10"' : f.vk === 'pincode' ? ' inputmode="numeric" maxlength="6"'
+      : f.vk === 'last4' ? ' inputmode="numeric" maxlength="4"' : f.vk === 'pan' || f.vk === 'ifsc' ? ' style="text-transform:uppercase"' : '';
+    return '<input type="' + type + '" id="' + id + '" value="' + esc(v) + '"' + (f.ph ? ' placeholder="' + esc(f.ph) + '"' : '') + extra + dis + '>';
+  }
+  function head(d){
+    var intro = {
+      'new': 'One form for your empanelment: your details, your documents and the partner agreement. We have filled in what we already have — please check it, correct anything that is wrong, complete the rest and submit.',
+      'resubmit': 'You have sent this form before. You can change anything and submit it again.',
+      'moreInfo': 'Our team has asked for more information. Please make the changes below and submit again.',
+      'underReview': 'Thank you — your application is with our team for evaluation. We will write to you once it is reviewed.',
+      'notYet': 'This form opens once your payment is acknowledged. Your RM will send it to you.',
+      'done': 'Your empanelment is complete. There is nothing more to fill in here.'
+    }[d.state] || '';
+    return '<div class="card head"><h1>Freedom LifeX Empanelment Form</h1>'
+      + '<p class="sub">' + esc(d.firm) + ' · ' + esc(d.name) + (d.partnerCode ? ' · Partner code ' + esc(d.partnerCode) : '') + (d.applicationId ? ' · ' + esc(d.applicationId) : '') + '</p>'
+      + '<p class="sub">' + esc(intro) + '</p>'
+      + (d.moreInfo ? '<div class="msg info"><b>What our team asked for:</b> ' + esc(d.moreInfo) + '</div>' : '')
+      + (d.open ? '<div class="req-note">* Required</div>' : '') + '</div>';
+  }
+  function draw(d){
+    D = d;
+    var locked = !d.open;
+    var html = head(d);
+    if(!d.open){ wrap.innerHTML = html; return; }
+    d.sections.forEach(function(s){
+      html += '<div class="card"><h2>' + esc(s.title) + '</h2>' + (s.note ? '<p class="sub">' + esc(s.note) + '</p>' : '') + '<div class="grid">'
+        + s.fields.map(function(f){
+            var wide = f.t === 'textarea';
+            return '<div class="field"' + (wide ? ' style="grid-column:1/-1"' : '') + '><label class="q" for="f_' + f.k + '">' + esc(f.l) + (f.req ? ' <span class="req">*</span>' : '') + '</label>'
+              + control(f, d.values[f.k] || '', locked) + (f.h ? '<div class="hint">' + esc(f.h) + '</div>' : '') + '<div class="ferr" id="e_' + f.k + '"></div></div>';
+          }).join('') + '</div></div>';
+    });
+    html += '<div class="card"><h2>Documents</h2><p class="sub">PDF, PNG, JPG, WEBP or Word, up to 5 MB each. A document already with us does not need to be uploaded again, unless it was not accepted.</p>'
+      + d.docs.map(function(x, i){
+          return '<div class="doc"><div><b>' + esc(x.type) + '</b>' + (x.mandatory ? ' <span class="req">*</span>' : '') + ' ' + badge(x.status)
+            + (x.file ? '<div class="hint">On file: ' + esc(x.file) + '</div>' : '')
+            + (x.reason ? '<div class="ferr">Not accepted: ' + esc(x.reason) + '</div>' : '')
+            + '<div class="ferr" id="de_' + i + '"></div></div>'
+            + '<div><input type="file" data-doc="' + i + '" accept="application/pdf,image/png,image/jpeg,image/webp,.doc,.docx"><div class="upl" id="du_' + i + '"></div></div></div>';
+        }).join('') + '</div>';
+    var ag = d.agreement, acc = ag.accepted || {};
+    html += '<div class="card" id="agCard"><h2>Partner Agreement</h2><p class="sub">Version ' + esc(ag.version) + '. Please read it before you accept.</p>'
+      + '<div class="agreement-text">' + esc(ag.text) + '</div>'
+      + '<div class="field"><label class="q">Agreements you are signing <span class="req">*</span></label>'
+      + ag.types.map(function(t){ var on = !acc.types || acc.types.indexOf(t) >= 0;
+          return '<label class="opt"><input type="checkbox" class="agType" value="' + esc(t) + '"' + (on ? ' checked' : '') + '> ' + esc(t) + '</label>'; }).join('')
+      + '</div>'
+      + '<div class="field"><label class="q">How do you accept it? <span class="req">*</span></label>'
+      + '<label class="opt"><input type="radio" name="agMethod" value="online"' + (acc.method === 'online' ? ' checked' : '') + '> I accept the agreement online</label>'
+      + '<label class="opt"><input type="radio" name="agMethod" value="upload"' + (acc.method === 'upload' ? ' checked' : '') + '> I will upload my signed agreement</label></div>'
+      + '<div class="field" id="agOnline" style="display:none"><label class="opt"><input type="checkbox" id="agConsent"> I have read and accept the agreement</label></div>'
+      + '<div class="field" id="agUpload" style="display:none"><label class="q">Signed agreement <span class="req">*</span></label>'
+      + '<input type="file" id="agFile" accept="application/pdf,image/png,image/jpeg,image/webp"><div class="upl" id="agUpl"></div>'
+      + '<div class="hint">Print the agreement, sign every page and upload the scan or a clear photo.</div></div>'
+      + '<div class="field"><label class="q" for="agName">Your full name, as your signature <span class="req">*</span></label><input type="text" id="agName" value="' + esc(acc.signedName || d.name) + '"></div>'
+      + '<div class="ferr" id="agErr"></div></div>';
+    html += '<div class="card"><label class="opt"><input type="checkbox" id="declaration"> I declare that the information and documents I have given are true and complete, and I will tell Freedom LifeX if any of it changes. <span class="req">*</span></label>'
+      + '<div id="err"></div><div style="margin-top:14px"><button id="send">' + (d.state === 'new' ? 'Submit' : 'Submit again') + '</button></div></div>';
+    wrap.innerHTML = html;
+    Array.prototype.forEach.call(document.querySelectorAll('input[data-doc]'), function(el){
+      el.onchange = function(){ var i = Number(el.getAttribute('data-doc')); upload(el, 'du_' + i, function(f){ uploads[d.docs[i].type] = f.id; }); };
+    });
+    document.getElementById('agFile').onchange = function(){ upload(this, 'agUpl', function(f){ agreementFile = f.id; document.getElementById('agErr').textContent = ''; }); };
+    Array.prototype.forEach.call(document.querySelectorAll('input[name=agMethod]'), function(el){ el.onchange = syncMethod; });
+    syncMethod();
+    document.getElementById('send').onclick = submit;
+  }
+  function method(){ var m = document.querySelector('input[name=agMethod]:checked'); return m ? m.value : ''; }
+  function syncMethod(){
+    document.getElementById('agOnline').style.display = method() === 'online' ? '' : 'none';
+    document.getElementById('agUpload').style.display = method() === 'upload' ? '' : 'none';
+  }
+  function upload(input, noteId, done){
+    var file = input.files && input.files[0], note = document.getElementById(noteId);
+    if(!file) return;
+    if(file.size > 5 * 1024 * 1024){ note.innerHTML = '<span class="ferr">That file is over 5 MB. Choose a smaller one.</span>'; input.value = ''; return; }
+    note.textContent = 'Uploading…';
+    var fr = new FileReader();
+    fr.onload = function(){
+      fetch('/api/public/pob-form/upload?token=' + encodeURIComponent(token), {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({name: file.name, mime: file.type, data: String(fr.result || '')})})
+        .then(function(r){ return r.json(); })
+        .then(function(r){
+          if(!r.ok){ note.innerHTML = '<span class="ferr">' + esc(r.message || 'The upload failed.') + '</span>'; input.value = ''; return; }
+          note.innerHTML = '<span class="badge ok">Uploaded</span> ' + esc(file.name);
+          done(r);
+        })
+        .catch(function(){ note.innerHTML = '<span class="ferr">Could not reach us. Try again.</span>'; });
+    };
+    fr.readAsDataURL(file);
+  }
+  function fail(message, o){
+    o = o || {};
+    Array.prototype.forEach.call(document.querySelectorAll('.bad'), function(el){ el.classList.remove('bad'); });
+    Array.prototype.forEach.call(document.querySelectorAll('.ferr[id^="e_"]'), function(el){ el.textContent = ''; });
+    var target = null;
+    if(o.field){ var el = document.getElementById('f_' + o.field), fe = document.getElementById('e_' + o.field);
+      if(el){ el.classList.add('bad'); target = el; } if(fe) fe.textContent = message; }
+    if(o.section === 'agreement'){ document.getElementById('agErr').textContent = message; target = document.getElementById('agCard'); }
+    if(o.doc){ var i = D.docs.findIndex(function(x){ return x.type === o.doc; }); var de = document.getElementById('de_' + i); if(de){ de.textContent = message; target = de; } }
+    document.getElementById('err').innerHTML = '<div class="msg err">' + esc(message) + '</div>';
+    if(target && target.scrollIntoView) target.scrollIntoView({behavior:'smooth', block:'center'});
+  }
+  function submit(){
+    var values = {};
+    D.sections.forEach(function(s){ s.fields.forEach(function(f){ var el = document.getElementById('f_' + f.k); values[f.k] = el ? el.value : ''; }); });
+    var m = method();
+    // The page says it first; the server says it again and is the one that counts.
+    for(var si = 0; si < D.sections.length; si++) for(var fi = 0; fi < D.sections[si].fields.length; fi++){
+      var f = D.sections[si].fields[fi];
+      if(f.req && !String(values[f.k] || '').trim()) return fail(f.l + ' is needed.', {field: f.k});
+    }
+    for(var di = 0; di < D.docs.length; di++){
+      var x = D.docs[di];
+      if(x.mandatory && !uploads[x.type] && (x.status === 'Not Submitted' || x.status === 'Rejected')) return fail('Upload your ' + x.type + '.', {doc: x.type});
+    }
+    var types = Array.prototype.filter.call(document.querySelectorAll('.agType'), function(el){ return el.checked; }).map(function(el){ return el.value; });
+    if(!types.length) return fail('Tick the agreements you are signing — at least one.', {section:'agreement'});
+    if(!m) return fail('Choose how you accept the agreement.', {section:'agreement'});
+    if(m === 'upload' && !agreementFile) return fail('Upload your signed agreement — you chose to upload it, so the signed copy is required.', {section:'agreement'});
+    if(m === 'online' && !document.getElementById('agConsent').checked) return fail('Tick “I have read and accept the agreement” to accept it online.', {section:'agreement'});
+    if(!document.getElementById('agName').value.trim()) return fail('Type your full name as your signature.', {section:'agreement'});
+    if(!document.getElementById('declaration').checked) return fail('Tick the declaration to submit.');
+    var btn = document.getElementById('send'); btn.disabled = true; btn.textContent = 'Submitting…';
+    fetch('/api/public/pob-form?token=' + encodeURIComponent(token), {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({values: values, docs: uploads, declaration: true,
+        agreement: {types: types, method: m, consent: m === 'online' && document.getElementById('agConsent').checked, fileId: agreementFile,
+          signedName: document.getElementById('agName').value}})})
+      .then(function(r){ return r.json(); })
+      .then(function(r){
+        if(!r.ok){ btn.disabled = false; btn.textContent = 'Submit'; return fail(r.message || 'That did not go through.', r); }
+        wrap.innerHTML = '<div class="card head"><h1>Thank you</h1><div class="msg ok">Your empanelment form, documents and agreement have reached us. Our team will evaluate your application and write to you.</div></div>';
+        window.scrollTo(0, 0);
+      })
+      .catch(function(){ btn.disabled = false; btn.textContent = 'Submit'; fail('Could not reach us. Please try again.'); });
+  }
+  fetch('/api/public/pob-form?token=' + encodeURIComponent(token))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d.ok){ wrap.innerHTML = '<div class="card head"><h1>Empanelment Form</h1><div class="msg err">' + esc(d.message || 'This link is not valid any more.') + '</div></div>'; return; }
+      draw(d);
+    })
+    .catch(function(){ wrap.innerHTML = '<div class="card head"><div class="msg err">Could not load the form. Please try again.</div></div>'; });
+})();
+</script>
+</body>
+</html>
