@@ -395,8 +395,19 @@ function install(deps) {
       return { error: e.message };
     } finally { running = false; }
   }
+  /* A change that may make a letter due now (a prospect acknowledged or
+     put on a webinar, a webinar moved) runs the clock at once, so the
+     stage moves while the RM is still looking at it, not up to five
+     minutes later. Off when the clock is (the tests name each moment). */
+  const autorun = process.env.CRM_PJ_AUTORUN !== 'off';
+  let nudged = null;
+  function nudge() {
+    if (!autorun || nudged) return;
+    nudged = setTimeout(() => { nudged = null; tick(); }, 1500);
+    nudged.unref && nudged.unref();
+  }
   // The test runner turns the clock off and names each moment itself.
-  if (process.env.CRM_PJ_AUTORUN !== 'off') {
+  if (autorun) {
     const every = Number(process.env.CRM_PJ_TICK_MS) || 5 * 60000;
     setTimeout(() => tick(), 20000).unref();
     setInterval(() => tick(), every).unref();
@@ -405,6 +416,7 @@ function install(deps) {
   /* Run it now — from Setup, and from the tests, which name the moment
      rather than wait two days for it. */
   app.post('/api/partner-journey/run', checkApiKey, async (req, res) => {
+    if (req.body && req.body.nudge) { nudge(); return res.set('Cache-Control', 'no-store').json({ ok: true }); }
     const at = req.body && req.body.at ? Date.parse(req.body.at) : null;
     res.set('Cache-Control', 'no-store').json(await tick(Number.isFinite(at) ? at : null));
   });
@@ -480,6 +492,7 @@ function install(deps) {
         body: 'It is on the prospect now.', view: 'pps', arg: p.id, kind: 'submission', by: 'Prospect' }]));
     }
     writeToDisk();
+    nudge();
     res.json({ ok: true });
   });
 
