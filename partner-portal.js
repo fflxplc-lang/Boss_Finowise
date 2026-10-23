@@ -231,6 +231,7 @@ function install(deps) {
   const liveTasks = (r) => (r.tasks || []).filter((t) => !t.retired);
   function requiredOnboarding(r) { return liveTasks(r).filter((t) => t.phase === 'onboarding' && t.required !== false); }
   function clientJourneyOpen(r) {
+    if (r.pobStage === 'active') return true;
     const req = requiredOnboarding(r);
     return !!r.role && req.length > 0 && req.every((t) => t.status === 'Approved');
   }

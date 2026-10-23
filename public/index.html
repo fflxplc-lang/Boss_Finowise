@@ -51625,6 +51625,7 @@ function pobMetrics(r){
 /* The Client Journey opens to the partner once every required onboarding
    task of their role is approved. */
 function pobClientJourneyOpen(r){
+  if(stateOf('POB', r)==='active') return true;   // past onboarding, or active before BOSS
   const req = pobRequiredOnboarding(r);
   return !!r.role && req.length > 0 && req.every(t=>t.status==='Approved');
 }
@@ -51742,6 +51743,167 @@ function pobOpenStartPicker(){
         <span><b>${esc(pjName(p))}</b> <span class="small-note">${esc(p.id)} · ${esc(p.mobile||'')}</span></span>
         <button class="btn sm primary" onclick="closeModal(); pobStartFromPms('${esc(p.id)}')">Start</button></div>`).join(''),
     `<button class="btn" onclick="closeModal()">Close</button>`);
+}
+
+/* ---------- partners who were active before BOSS ----------
+   The firm's FBMs and FBPs finished onboarding in the old system, so they
+   come in as they are: a PMS record at Onboarded and an onboarding record
+   at Active Partner, with no letters, no payment due and no tasks. The
+   two sheets are the old system's own exports. An FBP names its FBM by
+   that system's Record Id, so the FBM sheet goes in first (or in the
+   same go), and a sheet imported twice updates rather than doubles:
+   a row is matched on its Record Id, then on the mobile number. */
+const POB_IMPORT_COLS = {
+  recordId: ['record id'], fbmName: ['fbm name'], fbpName: ['fbp name'], mobile: ['mobile no', 'mobile', 'mobile number'],
+  email: ['email', 'email id'], arn: ['arn no', 'arn'], euin: ['euin no', 'euin'], pan: ['pan card no', 'pan', 'pan no'],
+  ownerId: ['fbm owner.id', 'fbm owner id', 'owner.id'], owner: ['fbm owner', 'owner', 'rm'],
+  fbmId: ['fbm.id', 'fbm id'], fbm: ['fbm'], renewalDate: ['renewal date'], modified: ['modified time'],
+};
+function pobImportKey(h){ return String(h||'').trim().toLowerCase().replace(/\s+/g, ' '); }
+function pobImportTable(t){
+  const at = {};
+  t.headers.forEach((h, i)=>{ const k = pobImportKey(h);
+    Object.entries(POB_IMPORT_COLS).forEach(([f, names])=>{ if(at[f]===undefined && names.includes(k)) at[f] = i; }); });
+  const type = at.fbmName!==undefined ? 'FBM' : at.fbpName!==undefined ? 'FBP' : '';
+  if(!type) return null;
+  const cell = (row, f) => at[f]===undefined ? '' : String(row[at[f]]==null ? '' : row[at[f]]).trim();
+  return t.rows.map(row=>{
+    const o = {type}; Object.keys(POB_IMPORT_COLS).forEach(f=>{ o[f] = cell(row, f); });
+    o.name = type==='FBM' ? o.fbmName : o.fbpName;
+    return o;
+  }).filter(o=>o.name || o.mobile || o.recordId);
+}
+function pobImportTeamId(name){
+  const n = pobImportKey(name);
+  if(!n) return '';
+  const t = DB.team.find(x=>pobImportKey(x.name)===n) || DB.team.find(x=>pobImportKey(x.email)===n);
+  return t ? t.id : '';
+}
+function pobImportPlan(rows){
+  const recs = pobRecords(), parts = pjPartners();
+  const fbmOwner = {};
+  rows.filter(x=>x.type==='FBM').forEach(x=>{ fbmOwner[x.recordId] = pobImportTeamId(x.owner); });
+  // The FBMs first, so an FBP in the same go can find its FBM.
+  return rows.slice().sort((a,b)=>(a.type==='FBM'?0:1)-(b.type==='FBM'?0:1)).map(x=>{
+    const mobile = String(x.mobile||'').replace(/\D/g, '').slice(-10);
+    const problems = [];
+    if(!x.name) problems.push('no name');
+    if(mobile && !/^[6-9]\d{9}$/.test(mobile)) problems.push('mobile "' + x.mobile + '" is not 10 digits');
+    if(!mobile) problems.push('no mobile');
+    if(x.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x.email)) problems.push('email "' + x.email + '" does not look right');
+    const pob = (x.recordId && recs.find(r=>!r.deletedAt && r.legacyId===x.recordId))
+      || (mobile && recs.find(r=>!r.deletedAt && r.mobile===mobile));
+    let rm = '';
+    if(x.type==='FBM') rm = pobImportTeamId(x.owner);
+    else {
+      const parent = recs.find(r=>!r.deletedAt && r.legacyId && r.legacyId===x.fbmId);
+      rm = fbmOwner[x.fbmId] || (parent && parent.assignedTo) || '';
+    }
+    const warn = [];
+    if(x.type==='FBM' && x.owner && !rm) warn.push('no team member called "' + x.owner + '" — you will own it');
+    if(x.type==='FBP' && x.fbmId && !rows.some(y=>y.type==='FBM' && y.recordId===x.fbmId) && !recs.some(r=>r.legacyId===x.fbmId))
+      warn.push('its FBM (' + (x.fbm || x.fbmId) + ') is not in BOSS yet — import the FBM sheet too');
+    const renewal = x.renewalDate ? impDate(x.renewalDate) : '';
+    if(renewal===null) warn.push('renewal date "' + x.renewalDate + '" not understood');
+    return {x, mobile, pob, partner: pob ? parts.find(p=>p.id===pob.partnerId) : (mobile && parts.find(p=>!p.deletedAt && p.mobile===mobile)),
+      rm, renewal: renewal || '', problems, warn, skip: problems.some(p=>p==='no name')};
+  });
+}
+function pobOpenImportActive(){
+  if(!can('POB','create')){ alert('You do not have permission.'); return; }
+  window._pobImport = null;
+  openModal('Import Active Partners (FBM / FBP)', `<p class="small-note" style="margin-top:0">For partners who finished onboarding before BOSS.
+    They come in as <b>Active Partners</b>: no letters, no payment due, no onboarding tasks. Use the two exports as they are —
+    the FBM sheet (<i>Record Id, FBM Name, Mobile No, Email, ARN No, EUIN No, FBM Owner.id, FBM Owner, Modified Time</i>) and the FBP sheet
+    (<i>Record Id, FBP Name, Renewal Date, FBM.id, FBM, Mobile No, Email, ARN No, EUIN No, Pan Card No, Modified Time</i>). Choose both together, or the FBM sheet first.
+    The FBM Owner is matched to a team member by name and becomes the RM; an FBP gets its FBM’s RM. Importing a sheet again updates the same partners.</p>
+    <input type="file" id="pobImpFile" multiple accept=".csv,.xls,.xlsx,.txt,.tsv" onchange="pobImportRead(this)">
+    <div id="pobImpPreview" style="margin-top:12px"></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" id="pobImpGo" disabled onclick="pobImportApply()">Import</button>`);
+}
+async function pobImportRead(input){
+  const box = document.getElementById('pobImpPreview');
+  const rows = [], notes = [];
+  for(const file of Array.from(input.files||[])){
+    try{
+      const read = await impReadAllSheets(file);
+      let got = 0;
+      read.tables.forEach(t=>{ const r = pobImportTable(t); if(r){ rows.push(...r); got += r.length; } });
+      notes.push(file.name + ': ' + (got ? got + ' row(s)' : 'no FBM Name or FBP Name column found'));
+    }catch(e){ notes.push(file.name + ': ' + e.message); }
+  }
+  const plan = pobImportPlan(rows);
+  window._pobImport = plan;
+  const go = plan.filter(p=>!p.skip);
+  const n = (type, isNew) => go.filter(p=>p.x.type===type && !p.pob===isNew).length;
+  box.innerHTML = `<div class="small-note">${notes.map(esc).join('<br>')}</div>
+    <p style="margin:8px 0"><b>${go.length}</b> to import — FBM ${n('FBM', true)} new, ${n('FBM', false)} updated · FBP ${n('FBP', true)} new, ${n('FBP', false)} updated${plan.length - go.length ? ' · <b>' + (plan.length - go.length) + '</b> skipped (no name)' : ''}.</p>
+    <div class="table-wrap" style="max-height:320px;overflow:auto"><table id="pobImpTable"><thead><tr><th>Type</th><th>Name</th><th>Mobile</th><th>ARN / EUIN</th><th>RM</th><th></th><th>Check</th></tr></thead><tbody>
+    ${plan.map(p=>`<tr><td>${esc(p.x.type)}</td><td>${esc(p.x.name||'—')}${p.x.type==='FBP' && p.x.fbm ? '<div class="small-note" style="margin:0">FBM: ' + esc(p.x.fbm) + '</div>' : ''}</td>
+      <td>${esc(p.mobile||'—')}</td><td>${esc([p.x.arn, p.x.euin].filter(Boolean).join(' / ')||'—')}</td><td>${esc(p.rm ? teamName(p.rm) : 'You')}</td>
+      <td>${p.skip ? '<span class="badge danger">Skipped</span>' : p.pob ? '<span class="badge info">Update</span>' : '<span class="badge ok">New</span>'}</td>
+      <td class="small-note">${esc(p.problems.concat(p.warn).join('; '))}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">Nothing to import.</td></tr>'}
+    </tbody></table></div>`;
+  const btn = document.getElementById('pobImpGo');
+  if(btn){ btn.disabled = !go.length; btn.textContent = 'Import ' + go.length + ' Partner' + (go.length===1?'':'s'); }
+}
+async function pobImportApply(){
+  const plan = (window._pobImport || []).filter(p=>!p.skip);
+  if(!plan.length) return;
+  const now = new Date().toISOString(), today = pobToday();
+  const byLegacy = {};
+  let added = 0, updated = 0;
+  for(const p of plan){
+    const x = p.x;
+    const parts = String(x.name).trim().split(/\s+/);
+    const first = parts.shift() || '', last = parts.join(' ');
+    const rm = p.rm || (p.pob && p.pob.assignedTo) || currentUser;
+    const common = {firstName: first, lastName: last, email: x.email || '', partnerType: x.type, legacyId: x.recordId || ''};
+    if(p.mobile) common.mobile = p.mobile;
+    // The partner in PMS, at the end of its road.
+    let partner = p.partner;
+    if(!partner){
+      partner = {id: uid('PMS'), createdAt: now, createdBy: currentUser, leadOwner: 'Freedom LifeX', source: 'Import', importedAt: now};
+      initState('PMS', partner);
+      partner.pmsStage = 'onboarded';
+      partner.blueprintHistory = [{state: 'onboarded', at: now, by: currentUser, via: 'Imported — onboarded before BOSS'}];
+      pjPartners().push(partner);
+    }
+    Object.assign(partner, common, {assignedTo: rm, arn: x.arn || partner.arn || '', euin: x.euin || partner.euin || ''});
+    partner.arnHolder = partner.arn ? 'Yes' : (partner.arnHolder || 'No');
+    // And its onboarding record, already active.
+    let r = p.pob || pobFor(partner.id);
+    if(!r){
+      r = {id: uid('POB'), partnerId: partner.id, createdAt: now, createdBy: currentUser,
+        partnerCode: pobNextSeq('FLX-P-', 'partnerCode'), applicationId: pobNextSeq('APP-' + new Date().getFullYear() + '-', 'applicationId'),
+        registrationDate: today, applicationStatus: 'Approved', payments: [], attempts: [], tasks: [], roleHistory: [],
+        metrics: {leads:0, conversions:0, clients:0}, operationalStatus: 'Active', imported: true, importedAt: now, activatedAt: now};
+      initState('POB', r);
+      r.pobStage = 'active';
+      r.blueprintHistory = [{state: 'active', at: now, by: currentUser, via: 'Imported — active before BOSS'}];
+      pobRecords().push(r);
+      partner.onboardingId = r.id;
+      added++;
+    } else updated++;
+    Object.assign(r, common, {assignedTo: rm, arn: partner.arn, euin: partner.euin, updatedAt: now});
+    if(x.pan) r.pan = String(x.pan).toUpperCase();
+    if(p.renewal) r.renewalDate = p.renewal;
+    if(x.modified) r.legacyModified = x.modified;
+    if(x.type==='FBP'){ r.fbmLegacyId = x.fbmId || ''; r.fbmName = x.fbm || ''; }
+    if(x.recordId) byLegacy[x.recordId] = r;
+  }
+  // An FBP points at its FBM's record, wherever that FBM came from.
+  pobRecords().forEach(r=>{
+    if(r.partnerType!=='FBP' || !r.fbmLegacyId) return;
+    const fbm = byLegacy[r.fbmLegacyId] || pobRecords().find(y=>!y.deletedAt && y.legacyId===r.fbmLegacyId && y.partnerType==='FBM');
+    if(fbm){ r.fbmPobId = fbm.id; r.fbmName = pjName(fbm); }
+  });
+  await save('pjPartners');
+  await save('pjOnboarding');
+  await logAudit('POB', 'import', 'Import', [{field: 'active partners', oldValue: '', newValue: added + ' added, ' + updated + ' updated'}]);
+  closeModal();
+  alert('Imported: ' + added + ' new active partner(s), ' + updated + ' updated.');
+  window._pobTab = 'partners'; navigate('pob');
 }
 
 /* ---------- payments ----------
@@ -53208,7 +53370,8 @@ function viewPOB(){
   const unstarted = pobUnstartedPartners().length;
   const head = moduleHeader({title:'POB — Partner Onboarding',
     subtitle: 'After PMS: due payment, empanelment, evaluation, login, role — then the Ninja, Super Ninja or Sherpa road to active.',
-    actions:[can('POB','create') && {label:'Start for an Onboarded Partner', icon:'+', kind:'primary', onclick:'pobOpenStartPicker()', count: unstarted || undefined}]});
+    actions:[can('POB','create') && {label:'Import Active Partners', icon:'\u2191', onclick:'pobOpenImportActive()'},
+      can('POB','create') && {label:'Start for an Onboarded Partner', icon:'+', kind:'primary', onclick:'pobOpenStartPicker()', count: unstarted || undefined}]});
   const all = visibleRecords(pobLive(), r=>r.assignedTo, r=>r.branch);
   if(window._pobTab==='queue') return head + tabs + pobApprovalQueueHtml();
   if(window._pobTab==='sessions') return head + tabs + pobSessionsTable(pobSessions().filter(s=>all.some(r=>r.id===s.pobId)), true);
@@ -53217,11 +53380,11 @@ function viewPOB(){
   if(window._pobTab==='training') return head + tabs + pobTrainingCatalogHtml();
   if(window._pobTab==='settings' && pjMaySetUp()) return head + tabs + pobSettingsHtml();
   const searchMap = {stage: r=>stateLabel('POB', stateOf('POB', r)), role: r=>r.role, owner: r=>teamName(r.assignedTo), name: r=>pjName(r),
-    code: r=>r.partnerCode, app: r=>r.applicationId, mobile: r=>r.mobile, email: r=>r.email};
+    code: r=>r.partnerCode, app: r=>r.applicationId, mobile: r=>r.mobile, email: r=>r.email, type: r=>r.partnerType, fbm: r=>r.fbmName};
   const inWindow = applyTimeline('POB', all);
   window._pobRole = window._pobRole || '';
   let rows = applyStageFilter('POB', inWindow).filter(r=>matchesSearch(window._pobSearch, r, searchMap));
-  if(window._pobRole) rows = rows.filter(r=>(r.role||'—')===window._pobRole);
+  if(window._pobRole) rows = rows.filter(r=>['FBM','FBP'].includes(window._pobRole) ? r.partnerType===window._pobRole : (r.role||'—')===window._pobRole);
   rows = rows.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
   const overdueTasks = all.reduce((n, r)=>n + pobLiveTasks(r).filter(t=>pobTaskState(r, t).overdue).length, 0);
   const overdueReviews = pobReviews().filter(x=>!x.deletedAt && x.status!=='Completed' && x.dueDate && x.dueDate < pobToday() && all.some(r=>r.id===x.pobId)).length;
@@ -53232,7 +53395,7 @@ function viewPOB(){
       {label:'Overdue Tasks', value: overdueTasks, tone: overdueTasks ? 'danger' : 'ok'},
       {label:'Overdue Reviews', value: overdueReviews, tone: overdueReviews ? 'danger' : 'ok', onclick:"window._pobTab='reviews'; render()"}]))}
     ${stageFilterNote('POB')}
-    <div class="row" style="gap:6px;margin:0 0 8px">${['', 'Ninja', 'Super Ninja', 'Sherpa', '—'].map(x=>`<button class="btn sm ${window._pobRole===x?'primary':''}"
+    <div class="row" style="gap:6px;margin:0 0 8px">${['', 'Ninja', 'Super Ninja', 'Sherpa', 'FBM', 'FBP', '—'].map(x=>`<button class="btn sm ${window._pobRole===x?'primary':''}"
       onclick="window._pobRole='${x}'; render()">${x==='' ? 'All roles' : x==='—' ? 'No role yet' : x}</button>`).join('')}</div>
     ${listSearchRow({stateKey:'_pobSearch', live:true})}
     <div class="table-wrap"><table id="pobTable">
@@ -53241,7 +53404,7 @@ function viewPOB(){
         const meta = stateMeta('POB', stateOf('POB', r));
         return `<tr class="row-clickable" onclick="navigate('pob','${esc(r.id)}')">
           <td style="font-weight:700">${esc(pjName(r))}<div class="small-note" style="margin:0">${esc(r.mobile||'')}</div></td>
-          <td>${esc(r.partnerCode||'')}</td><td>${esc(r.applicationId||'')} ${statusBadge(r.applicationStatus)}</td><td>${esc(r.role||'—')}</td>
+          <td>${esc(r.partnerCode||'')}</td><td>${esc(r.applicationId||'')} ${statusBadge(r.applicationStatus)}</td><td>${esc(r.role||r.partnerType||'—')}${r.role && r.partnerType ? ' · ' + esc(r.partnerType) : ''}</td>
           <td>${statusBadge(pobPaymentStatus(r))}</td><td>${pobProgress(r)}%</td>
           <td style="color:var(--info)">${esc(teamName(r.assignedTo))}</td>
           <td><span class="badge ${meta.color||'info'}">${esc(meta.label||'')}</span></td></tr>`;
@@ -53298,6 +53461,11 @@ function viewPOBDetail(id){
           ['Name', esc(pjName(r))], ['Partner Code', esc(r.partnerCode)], ['Application ID', esc(r.applicationId)],
           ['Email', esc(r.email||'')], ['Phone', esc(r.mobile||'')], ['Address', esc(r.address||'')], ['City', esc(r.city||'')], ['PAN', esc(r.pan||'')],
           ['Proposed Role', esc(r.proposedRole||'')], ['Business Role', esc(r.role||'Not assigned')], ['Registration Date', esc(fmtDate(r.registrationDate)||'')],
+          ...(r.partnerType ? [['Partner Type', esc(r.partnerType)]] : []),
+          ...(r.partnerType==='FBP' ? [['FBM', r.fbmPobId ? `<a href="javascript:void(0)" onclick="navigate('pob','${esc(r.fbmPobId)}')">${esc(r.fbmName||'')}</a>` : esc(r.fbmName||'')]] : []),
+          ...(r.partnerType==='FBM' ? [['FBPs under them', esc(String(pobLive().filter(y=>y.fbmPobId===r.id).length))]] : []),
+          ...(r.renewalDate ? [['Renewal Date', esc(fmtDate(r.renewalDate))]] : []),
+          ...(r.imported ? [['Imported', esc(fmtDateTime(r.importedAt)) + (r.legacyId ? ' · old Record Id ' + esc(r.legacyId) : '')]] : []),
           ['Onboarding Owner', esc(teamName(r.assignedTo))], ['Mentor', esc(teamName(pobMentor(r)))], ['Branch', esc(r.branch||'')], ['Created', esc(fmtDateTime(r.createdAt))], ['Updated', esc(r.updatedAt ? fmtDateTime(r.updatedAt) : '')],
         ])
         + profCard('Status', [
