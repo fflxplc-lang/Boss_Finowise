@@ -64,6 +64,20 @@ suite(async t => {
     return rows + ' rows in Hierarchy';
   });
 
+  await t.step('the payout team exports to Excel, all of it', async () => {
+    const r = await t.eval(async () => {
+      let got = null;
+      const was = window.downloadXlsx;
+      window.downloadXlsx = (sheets, name) => { got = {name, rows: sheets[0].rows}; };
+      PY.s.userQ = 'zzz-nobody';
+      await pyUserExport();
+      window.downloadXlsx = was; PY.s.userQ = '';
+      return got && {name: got.name, n: got.rows.length - 1, head: got.rows[0].slice(0, 8).join('|'), button: !!Array.from(document.querySelectorAll('#content button')).find(b=>/Export/.test(b.textContent))};
+    });
+    if(!r || !/^Payout_Team_.*\.xlsx$/.test(r.name) || r.n < 9 || !/Name\|Email \(BOSS login\)\|Employee \/ ARN Code\|Role\|Primary Level/.test(r.head) || !r.button) throw new Error(JSON.stringify(r));
+    return r.n + ' people in ' + r.name + ', whatever the search box held';
+  });
+
   await t.step('the nine registrar files go in through Data Import', async () => {
     const seen = [];
     for(const [file, kind, source, month, rows] of IMPORTS){

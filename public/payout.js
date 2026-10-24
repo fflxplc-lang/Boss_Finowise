@@ -791,7 +791,26 @@ function pyHierarchy(){
         <td><button class="btn sm" onclick="pyCopyAccess(${i})">Copy access</button></td>
         <td class="py-r py-nowrap"><button class="btn sm ghost" title="Edit" onclick="pyUserModal(${i})">✎</button>
           <button class="btn sm ghost" title="Delete" onclick="pyUserDelete(${i})">🗑</button></td></tr>`), 'Nobody on the payout team yet.')),
-    `${pySearch('pyUserQ', 'userQ', 'Search name or email…', 220)}<button class="btn primary" onclick="pyUserModal(-1)">+ New person</button>`);
+    `${pySearch('pyUserQ', 'userQ', 'Search name or email…', 220)}<button class="btn" onclick="pyUserExport()">⬇ Export</button><button class="btn primary" onclick="pyUserModal(-1)">+ New person</button>`);
+}
+/* The whole team, whatever the search box holds: every RM, mentor,
+   partner and admin with their level, who they report to, their sharing,
+   bank and address — one row each, for Excel. */
+async function pyUserExport(){
+  let all;
+  try { all = await pyGet('/users'); } catch(e){ pyToast(e.message, 'err'); return; }
+  const roleName = {ops: 'Ops / RM', partner: 'Partner', mentor: 'Mentor', admin: 'Admin'};
+  const rows = (all || []).map(u=>{
+    const b = u.bank || {}, a = u.address || {};
+    return {'Name': u.name || '', 'Email (BOSS login)': u.email || '', 'Employee / ARN Code': u.code || '',
+      'Role': roleName[u.role] || u.role || '', 'Primary Level': 'L' + u.level, 'Level Name': u.level_name || PY_LEVELS[u.level] || '',
+      'Additional Levels': (u.extra_levels || []).map(l=>'L' + l).join(', '), 'Reports To': u.parent_name || '',
+      'Sharing %': u.sharing_pct === null || u.sharing_pct === undefined ? '' : u.sharing_pct, 'Direct Clients': u.clients || 0,
+      'Status': u.active === 0 ? 'Disabled' : 'Active', 'GST': u.gst || '',
+      'Bank Account Holder': b.holder || '', 'Bank Name': b.bankName || '', 'Account Number': b.account || '', 'IFSC': b.ifsc || '', 'Bank Branch': b.branch || '',
+      'Street': a.street || '', 'City': a.city || '', 'State': a.state || '', 'Pincode': a.pincode || '', 'Country': a.country || ''};
+  });
+  pyExport(rows, 'Payout_Team_' + new Date().toISOString().slice(0, 10) + '.xlsx');
 }
 function pyCopyAccess(i){
   const u = PY.rows.users[i]; if(!u) return;
