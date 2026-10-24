@@ -23,9 +23,12 @@ export function normSharing(s) {
 
 const sortedLevels = (obj) => Object.keys(obj || {}).map(Number).sort((a, b) => a - b);
 
+// Admins run the payout team; they are never paid from it. An admin is left
+// out of every split, so a level they sit at counts as empty: its share passes
+// up the way any empty top level's does, and at L7 it is the company's.
 export function loadContext() {
   const users = new Map();
-  for (const u of db.prepare('SELECT id, name, level, sharing_pct, custom_split, active FROM users').all()) {
+  for (const u of db.prepare("SELECT id, name, level, sharing_pct, custom_split, active FROM users WHERE role IS NOT 'admin'").all()) {
     users.set(u.id, { ...u, custom_split: parseJSON(u.custom_split, null) });
   }
   const clients = new Map();
@@ -148,11 +151,12 @@ export function recalculate({ batchId = null, clientIds = null, resplit = false 
 export function chainFor(userId) {
   const h = {};
   const seen = new Set();
-  let u = db.prepare('SELECT id, level, parent_id FROM users WHERE id = ?').get(userId);
+  let u = db.prepare('SELECT id, level, parent_id, role FROM users WHERE id = ?').get(userId);
   while (u && !seen.has(u.id)) {
     seen.add(u.id);
-    if (!h[u.level]) h[u.level] = u.id;
-    u = u.parent_id ? db.prepare('SELECT id, level, parent_id FROM users WHERE id = ?').get(u.parent_id) : null;
+    // An admin is passed over (they earn nothing), and the chain carries on above them.
+    if (!h[u.level] && u.role !== 'admin') h[u.level] = u.id;
+    u = u.parent_id ? db.prepare('SELECT id, level, parent_id, role FROM users WHERE id = ?').get(u.parent_id) : null;
   }
   return h;
 }
