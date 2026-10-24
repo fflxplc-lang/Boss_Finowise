@@ -2688,30 +2688,21 @@ html,body{overflow-x:hidden;max-width:100%}
 @media print{
   .ai-panel,.ai-scrim,.ai-open-btn,.ai-selbtn{display:none!important}
 }
-/* Partner Journey › Performance › Business. Chart colours are the dataviz
-   reference palette, checked against this card's light and dark surfaces. */
-:root{--pf-1:#2a78d6;--pf-2:#eb6834;--pf-3:#1baf7a;--pf-4:#eda100;--pf-5:#e87ba4;--pf-grid:#e1e0d9;--pf-axis:#898781;
-  --pf-r5:#104281;--pf-r4:#1c5cab;--pf-r3:#3987e5;--pf-r2:#6da7ec;--pf-r1:#9ec5f4;--pf-r0:#c3c2b7}
-html.dark{--pf-1:#3987e5;--pf-2:#d95926;--pf-3:#199e70;--pf-4:#c98500;--pf-5:#d55181;--pf-grid:#16323f;--pf-axis:#94A1B0;
-  --pf-r5:#cde2fb;--pf-r4:#9ec5f4;--pf-r3:#5598e7;--pf-r2:#256abf;--pf-r1:#184f95;--pf-r0:#383835}
-.pf-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin:4px 0 14px}
-.pf-invested{font-size:13px;color:var(--muted)} .pf-invested b{color:var(--text);font-size:16px}
-.pf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:14px;margin-top:14px}
-.pf-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
-.pf-card h3{margin:0 0 10px;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px}
-.pf-card h3 small{font-weight:500;color:var(--muted);font-size:12px}
-.pf-card svg{width:100%;height:auto;display:block;overflow:visible}
-.pf-card svg text{fill:var(--pf-axis);font-size:10px}
-.pf-card svg .pf-lbl{fill:var(--text);font-size:11px}
-.pf-card table{width:100%;border-collapse:collapse;font-size:12.5px}
-.pf-card th{text-align:left;color:var(--muted);font-weight:600;padding:6px 6px;border-bottom:1px solid var(--line)}
-.pf-card td{padding:6px 6px;border-bottom:1px solid var(--line)} .pf-card .num{text-align:right;font-variant-numeric:tabular-nums}
-.pf-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--text);margin-top:8px}
-.pf-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
-.pf-note{font-size:12px;color:var(--muted);margin-top:8px}
-.pf-hit{fill:transparent;cursor:default} .pf-hit:hover + .pf-mark,.pf-mark:hover{opacity:.8}
-#pfTip{position:fixed;z-index:9999;pointer-events:none;background:var(--card);color:var(--text);border:1px solid var(--line);
-  border-radius:8px;padding:6px 9px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.12);display:none;max-width:260px;white-space:pre-line}
+/* Partner Journey › Performance: target against achievement. */
+.pt-filters{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 14px}
+.pt-filters select{padding:7px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);font-size:13px}
+.pt-card{margin-top:14px} .pt-card h3{margin:0 0 10px;font-size:14px}
+.pt-card .num{text-align:right;font-variant-numeric:tabular-nums}
+.pt-bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;min-width:90px}
+.pt-bar i{display:block;height:100%;border-radius:4px}
+.pt-bar i.ok,.pt-fill-ok{background:var(--ok);fill:var(--ok)} .pt-bar i.info,.pt-fill-info{background:var(--info);fill:var(--info)}
+.pt-bar i.warn,.pt-fill-warn{background:var(--warn);fill:var(--warn)} .pt-bar i.danger,.pt-fill-danger{background:var(--danger);fill:var(--danger)}
+.pt-up{color:var(--ok);font-weight:600} .pt-down{color:var(--danger);font-weight:600} .pt-flat{color:var(--muted)}
+.pt-grid td,.pt-grid th{white-space:nowrap} .pt-future{opacity:.55}
+.pt-c-ok{background:rgba(4,120,87,.14)} .pt-c-info{background:rgba(30,107,133,.13)} .pt-c-warn{background:rgba(180,83,9,.14)} .pt-c-danger{background:rgba(185,28,28,.13)}
+.pt-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;margin-top:8px;align-items:center}
+.pt-legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-2px;border:1px solid var(--line)}
+.pt-svg{width:100%;height:auto;display:block} .pt-svg text{fill:var(--muted);font-size:10px} .pt-svg .pt-val{fill:var(--text);font-size:10px;font-weight:600}
 </style>
 </head>
 <body>
@@ -5411,8 +5402,6 @@ const SCHEME_FIELDS = [
   {k:'schemeCode',l:'Scheme Code',t:'text'},
   {k:'riskLevel',l:'Risk Level (Riskometer)',t:'select',optsKey:'alloc.riskLevels'},
   {k:'fundManager',l:'Fund Manager',t:'text'},
-  {k:'starRating',l:'Star Rating',t:'select',opts:['5','4','3','2','1'],
-   alias:['Rating','Star Rating','Stars','Value Research Rating','Morningstar Rating']},
   {k:'aboutFundManager',l:'About the Fund Manager',t:'textarea'},
   {k:'fundObjective',l:'Fund Objective',t:'textarea'},
 ];
@@ -51333,334 +51322,448 @@ async function pjSavePayout(id){
   closeModal(); render();
 }
 
-/* ---------- PPF — Partner Performance System ----------
-   Nothing is typed in here. The funnel is read from PPS, the partners'
-   progress from PMS, their questions from PQS and their money from the
-   payouts, inside whatever the Timeline is set to. */
 /* =====================================================================
-   PPF › BUSINESS PERFORMANCE (B2B performance doc)
+   PPF — PARTNER PERFORMANCE: TARGET AGAINST ACHIEVEMENT
 
-   The back-office view of the business a partner looks after: AUM, its
-   growth month by month, who and what it is made of, and the SIP book.
-   Two scopes on one toggle. Self is the clients the signed-in person is
-   mapped on in Payouts. Team adds everyone who reports to them, however
-   deep; for an admin that is the whole company.
+   The Partner Onboarding flowchart gives each role its road — Ninja
+   finds and qualifies prospects and books the Client RM's meeting, Super
+   Ninja takes a client through risk profiling, allocation, onboarding and
+   the first transactions, Sherpa does all of it and then reviews the
+   clients — and each road ends in "Target Setting, Monthly Review and
+   Follow Up". This is that target, and what was achieved against it.
 
-   The figures come from the payout engine (/api/payout/reports/
-   performance), which holds the registrar files. BOSS adds what only it
-   knows: which investors make one family (Family Head on the client),
-   each investor's XIRR from the platform AUM imports, and the star rating
-   an admin keeps on the scheme master.
+   Nothing is typed in to count. Every measure is read off the records the
+   workflow already leaves: the partner's own leads (partnerPobId) and the
+   stages they passed, the clients they became, their transactions and
+   reviews, and the partner's own monthly reviews. Each stage carries the
+   date it was reached, which is what puts an achievement in a month.
+
+   The targets are monthly. Setup › Partner Targets holds each role's
+   default; a partner's own target for a year, set at their Target
+   Setting, wins over it. A year's target is its twelve months added up.
+   Work done outside BOSS is added by hand per month, and shows as such.
    ===================================================================== */
-const PF = {scope:'team', months:12, all:{}, cache:{}, loading:{}, err:{}};
-function pfData(scope){
-  if(PF.cache[scope]) return PF.cache[scope];
-  if(PF.err[scope] || PF.loading[scope]) return undefined;
-  PF.loading[scope] = true;
-  pyGet('/reports/performance?scope=' + scope).then(d=>{ PF.cache[scope] = d; },
-    e=>{ PF.err[scope] = {message: e.message, code: e.code}; })
-    .finally(()=>{ delete PF.loading[scope]; if(currentView === 'ppf') render(); });
-  return undefined;
+const PT_METRICS = [
+  {k:'prospects',   l:'Prospects collected',              step:'Collection of 100 prospects and data feed in CRM'},
+  {k:'qualified',   l:'Leads qualified',                  step:'MANIA sheet updation for lead qualification'},
+  {k:'meetings',    l:'Meetings with Client RM',          step:'Schedule a meeting of the lead with the Client RM'},
+  {k:'riskProfiles',l:'Risk profiling / data gathering',  step:'Get the RR sheet · complete the risk profiling'},
+  {k:'allocations', l:'Allocation presented',             step:'Send the investment allocation sheet to the client'},
+  {k:'conversions', l:'Leads converted to clients',       step:'Is the lead converted to a client?'},
+  {k:'onboarded',   l:'Clients onboarded',                step:'Complete the onboarding of the client'},
+  {k:'transactions',l:'Financial transactions',           step:'Complete the financial transactions'},
+  {k:'business',    l:'Business amount',                  step:'Value of those transactions', money:true},
+  {k:'reviews',     l:'Client reviews conducted',         step:'Conduct client reviews as per frequency'},
+  {k:'monthly',     l:'Monthly reviews held',             step:'Target setting, monthly review and follow up'},
+];
+/* What the flowchart asks of each role, per month, until Setup says otherwise. */
+const PT_DEFAULTS = {
+  'Ninja':       {prospects:25, qualified:10, meetings:5, conversions:1, monthly:1},
+  'Super Ninja': {meetings:4, riskProfiles:3, allocations:3, conversions:2, onboarded:2, transactions:4, business:500000, monthly:1},
+  'Sherpa':      {prospects:20, qualified:8, meetings:4, conversions:2, onboarded:2, transactions:4, business:300000, reviews:4, monthly:1},
+};
+/* A partner whose role was never confirmed in BOSS — an FBM or FBP brought
+   over from the old system — is measured too, on targets of their own. */
+const PT_NO_ROLE = 'No role yet';
+// A function: POB_ROLES is declared further down the page.
+const ptRoleKeys = () => POB_ROLES.concat([PT_NO_ROLE]);
+const ptRoleOf = r => r.role || PT_NO_ROLE;
+const ptRoleLabel = r => r.role || (r.partnerType ? r.partnerType + ' · no role yet' : PT_NO_ROLE);
+const PT_STATUS = [[100,'Exceeds Target','ok'], [75,'On Track','info'], [50,'Needs Improvement','warn'], [-Infinity,'At Risk','danger']];
+const PT_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+let ptCfgMemo = null, ptCfgSrc;
+function ptConfig(){
+  const saved = (DB.config && DB.config.partnerTargets) || {};
+  if(ptCfgMemo && ptCfgSrc === (DB.config && DB.config.partnerTargets)) return ptCfgMemo;
+  const roles = {};
+  ptRoleKeys().forEach(role=>{ roles[role] = Object.assign({}, PT_DEFAULTS[role] || {}, (saved.roles||{})[role] || {}); });
+  ptCfgSrc = DB.config && DB.config.partnerTargets;
+  return (ptCfgMemo = {roles});
 }
-function pfRefresh(){ PF.cache = {}; PF.err = {}; render(); }
-const pfLakh = n => (Number(n)||0) / 1e5;
-const pfL = n => pfLakh(n).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
-const pfPct = (n, d=2) => (Number(n)||0).toFixed(d) + '%';
-function pfShort(n){
-  n = Number(n)||0; const a = Math.abs(n);
-  if(a >= 1e7) return (n/1e7).toFixed(a >= 1e9 ? 0 : 1).replace(/\.0$/,'') + ' Cr';
-  if(a >= 1e5) return (n/1e5).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/,'') + ' L';
-  if(a >= 1e3) return (n/1e3).toFixed(0) + 'K';
-  return String(Math.round(n));
+function ptMonthKey(d){ return String(d||'').slice(0,7); }
+function ptToday(){ return new Date().toISOString().slice(0,10); }
+function ptShiftMonth(m, k){ let y = +m.slice(0,4), n = +m.slice(5,7) + k; while(n < 1){ n += 12; y--; } while(n > 12){ n -= 12; y++; } return y + '-' + String(n).padStart(2,'0'); }
+const ptMonLabel = m => PT_MON[+m.slice(5,7) - 1] + ' ' + m.slice(0,4);
+function ptNum(v){ const n = Number(String(v===undefined||v===null?'':v).replace(/[^0-9.\-]/g,'')); return isFinite(n) ? n : 0; }
+function ptFmt(metric, v){ return metric.money ? money(v) : Math.round(v).toLocaleString(numberLocale()); }
+
+/* The partners on the page: every onboarding record with a role, as far as
+   this person may see — their own, their branch or team, or the partners
+   they mentor. */
+function ptPartners(){
+  const measured = r => r.role || stateOf('POB', r)==='active';
+  const seen = visibleRecords(pobLive().filter(measured), r=>r.assignedTo, r=>r.branch);
+  const ids = new Set(seen.map(r=>r.id));
+  pobLive().forEach(r=>{ if(measured(r) && r.mentorId===currentUser && !ids.has(r.id)) seen.push(r); });
+  return seen.sort((a,b)=>pjName(a).localeCompare(pjName(b)));
 }
-const pfNorm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
-/* The ticks for a value axis from zero: about four, on a round step. */
-function pfTicks(max){
-  if(!(max > 0)) return [0, 1];
-  const raw = max / 4, mag = Math.pow(10, Math.floor(Math.log10(raw)));
-  const step = [1, 2, 2.5, 5, 10].map(m=>m*mag).find(s=>s >= raw);
-  const out = []; for(let v = 0; v <= max + step*0.001; v += step) out.push(v);
-  if(out[out.length-1] < max) out.push(out[out.length-1] + step);
+
+/* Every dated achievement of one partner: [{k, at, v}]. Built once per
+   draw for each partner and then summed for whatever period is asked. */
+function ptEventsOf(r){
+  const out = [];
+  const add = (k, at, v) => { if(at) out.push({k, at: String(at), v: v===undefined ? 1 : v}); };
+  const firstAt = (hist, ids) => { const h = (hist||[]).find(x=>x && ids.includes(x.state)); return h && h.at; };
+  const leads = pobPartnerLeads(r), clients = pobPartnerClients(r);
+  const LMS = {qualified:['qualified'], meetings:['firstMeetingScheduled'], riskProfiles:['planInputSubmitted','dataGatheringSent'],
+    allocations:['thirdMeetingDone','blueprintSentToLead']};
+  leads.forEach(l=>{
+    add('prospects', l.createdAt);
+    Object.keys(LMS).forEach(k=>add(k, firstAt(l.blueprintHistory, LMS[k])));
+  });
+  const cms = getBlueprint('CMS').states.map(s=>s.id);
+  const onbFrom = cms.indexOf(POB_CLIENT_ONBOARDED_FROM);
+  const clientIds = new Set();
+  clients.forEach(c=>{
+    clientIds.add(c.id);
+    add('prospects', c.lmsCreatedAt || c.createdAt);
+    Object.keys(LMS).forEach(k=>add(k, firstAt(c.lmsHistory, LMS[k])));
+    add('conversions', c.createdAt);
+    const onb = (c.blueprintHistory||[]).find(h=>h && onbFrom >= 0 && cms.indexOf(h.state) >= onbFrom);
+    add('onboarded', onb && onb.at);
+  });
+  (DB.transactions||[]).forEach(t=>{
+    if(!t || t.deletedAt || !clientIds.has(t.clientId) || /reject|cancel|fail/i.test(t.status||'')) return;
+    const at = t.initiatedDate || t.createdAt;
+    add('transactions', at);
+    add('business', at, ptNum(t.amount));
+  });
+  (DB.reviews||[]).forEach(rv=>{
+    if(!rv || rv.deletedAt || !clientIds.has(rv.clientId) || stateOf('RMS', rv)!=='closed') return;
+    const h = (rv.blueprintHistory||[]).slice().reverse().find(x=>x && x.state==='closed');
+    add('reviews', (h && h.at) || rv.updatedAt || rv.meetingDate);
+  });
+  pobReviews().forEach(rv=>{ if(!rv.deletedAt && rv.pobId===r.id && rv.kind!=='Annual Review' && rv.status==='Completed') add('monthly', rv.completedAt); });
+  // Achievements outside BOSS, entered by hand per month.
+  Object.entries(r.ptManual||{}).forEach(([m, row])=>Object.entries(row||{}).forEach(([k, v])=>{ if(ptNum(v)) add(k, m + '-15', ptNum(v)); }));
   return out;
 }
-/* One tooltip for every chart on the page, fed by data-tip on the mark. */
-function pfTipInit(){
-  if(window._pfTip) return; window._pfTip = true;
-  document.addEventListener('mousemove', e=>{
-    let tip = document.getElementById('pfTip');
-    const el = e.target.closest && e.target.closest('[data-tip]');
-    if(!el){ if(tip) tip.style.display = 'none'; return; }
-    if(!tip){ tip = document.createElement('div'); tip.id = 'pfTip'; document.body.appendChild(tip); }
-    tip.textContent = el.getAttribute('data-tip');
-    tip.style.display = 'block';
-    const w = tip.offsetWidth, h = tip.offsetHeight;
-    tip.style.left = Math.min(window.innerWidth - w - 8, e.clientX + 14) + 'px';
-    tip.style.top = Math.max(8, e.clientY - h - 10) + 'px';
-  });
+/* Achieved in the months from..to (YYYY-MM, inclusive), per measure. */
+function ptSum(events, from, to){
+  const out = {}; PT_METRICS.forEach(m=>{ out[m.k] = 0; });
+  events.forEach(e=>{ const m = ptMonthKey(e.at); if(m >= from && m <= to && out[e.k] !== undefined) out[e.k] += e.v; });
+  return out;
 }
-/* A bar with a rounded data end and a square foot on the baseline. */
-function pfBarPath(x, y, w, h, horiz){
-  const r = Math.min(4, w/2, h);
-  if(h <= 0) return '';
-  if(horiz) return `M${x} ${y} h${h - r} q${r} 0 ${r} ${r} v${w - 2*r} q0 ${r} ${-r} ${r} h${-(h - r)} Z`;
-  return `M${x} ${y + h} v${-(h - r)} q0 ${-r} ${r} ${-r} h${w - 2*r} q${r} 0 ${r} ${r} v${h - r} Z`;
+/* Targets start in the month the partner's road started: the role
+   confirmed, else activation, else the record itself. Before that there
+   was nothing to hit, so nothing is counted as missed. */
+function ptStartMonth(r){
+  const h = (r.blueprintHistory||[]).find(x=>x && (x.state==='roleWorkflow' || x.state==='active'));
+  return ptMonthKey((h && h.at) || r.activatedAt || r.createdAt) || '0000-00';
 }
-const PF_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const pfMonLabel = p => PF_MON[Number(p.slice(5,7)) - 1] + ' ' + p.slice(2,4);
-
-/* Last four calendar years, month by month: one bar per year in each month. */
-function pfYearBars(monthly, latest){
-  const y1 = Number(latest.slice(0,4)), years = [y1-3, y1-2, y1-1, y1];
-  const at = new Map(monthly.map(m=>[m.period, m.aum]));
-  const used = years.filter(y=>PF_MON.some((_, i)=>at.get(`${y}-${String(i+1).padStart(2,'0')}`) > 0));
-  const W = 460, H = 220, L = 40, B = 20, T = 8, slot = (W - L) / 12;
-  const max = Math.max(0, ...monthly.map(m=>m.aum)), ticks = pfTicks(max), top = ticks[ticks.length-1];
-  const y = v => T + (H - T - B) * (1 - v/top);
-  const bw = Math.max(3, Math.min(10, (slot - 8) / Math.max(1, used.length) - 2));
-  const color = y => 'var(--pf-' + (years.indexOf(y) + 1) + ')';
-  let marks = '';
-  PF_MON.forEach((mon, i)=>{
-    const x0 = L + i*slot + (slot - used.length*(bw+2) + 2)/2;
-    used.forEach((yr, j)=>{
-      const v = at.get(`${yr}-${String(i+1).padStart(2,'0')}`) || 0;
-      if(!v) return;
-      const x = x0 + j*(bw+2), h = y(0) - y(v);
-      marks += `<path class="pf-mark" d="${pfBarPath(x, y(v), bw, h)}" fill="${color(yr)}" data-tip="${esc(mon + ' ' + yr + '\nAUM ₹' + pfL(v) + ' lakhs')}"/>`;
-    });
-  });
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Monthly AUM, last four years">
-    ${ticks.map(v=>`<line x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="var(--pf-grid)" stroke-width="1"/>
-      <text x="${L-6}" y="${y(v)+3}" text-anchor="end">${pfShort(v)}</text>`).join('')}
-    ${marks}
-    ${PF_MON.map((m, i)=>`<text x="${L + i*slot + slot/2}" y="${H-6}" text-anchor="middle">${m}</text>`).join('')}
-  </svg>
-  <div class="pf-legend">${used.map(y=>`<span><i style="background:${color(y)}"></i>${y}</span>`).join('')}</div>`;
+/* A partner's monthly target for a measure in a given month. */
+function ptTargetFor(r, k, month){
+  if(month < ptStartMonth(r)) return 0;
+  const own = ((r.ptTargets||{})[month.slice(0,4)]||{})[k];
+  if(own !== undefined && own !== '') return ptNum(own);
+  const role = ptConfig().roles[ptRoleOf(r)];
+  return ptNum(role && role[k]);
+}
+function ptTargets(r, from, to){
+  const out = {}; PT_METRICS.forEach(m=>{ out[m.k] = 0; });
+  for(let m = from; m <= to; m = ptShiftMonth(m, 1)) PT_METRICS.forEach(x=>{ out[x.k] += ptTargetFor(r, x.k, m); });
+  return out;
+}
+/* Overall achievement: the average of each targeted measure's %, each
+   capped at 150% so one runaway figure cannot hide the rest. */
+function ptOverall(ach, tgt){
+  const ks = PT_METRICS.filter(m=>tgt[m.k] > 0);
+  if(!ks.length) return null;
+  return ks.reduce((s, m)=>s + Math.min(150, ach[m.k] * 100 / tgt[m.k]), 0) / ks.length;
+}
+function ptStatus(pct){ return pct == null ? null : PT_STATUS.find(([min])=>pct >= min); }
+function ptBadge(pct){ const s = ptStatus(pct); return s ? `<span class="badge ${s[2]}">${s[1]}</span>` : '<span class="badge muted">No target</span>'; }
+function ptGrowth(cur, prev){
+  if(!prev) return cur ? `<span class="pt-up">New</span>` : '<span class="pt-flat">—</span>';
+  const g = (cur - prev) * 100 / prev;
+  const cls = g > 0 ? 'pt-up' : g < 0 ? 'pt-down' : 'pt-flat';
+  return `<span class="${cls}">${g > 0 ? '▲' : g < 0 ? '▼' : ''} ${Math.abs(g).toFixed(1)}%</span>`;
+}
+function ptBar(pct){
+  if(pct == null) return '';
+  const w = Math.max(0, Math.min(100, pct)), s = ptStatus(pct);
+  return `<div class="pt-bar" title="${pct.toFixed(1)}% of target"><i class="${s[2]}" style="width:${w}%"></i></div>`;
 }
 
-/* AUM over the last N months: a line with a light area under it. */
-function pfTrend(monthly, latest, n){
-  const at = new Map(monthly.map(m=>[m.period, m.aum]));
-  const pts = []; for(let i = n-1; i >= 0; i--){ const p = pfShift(latest, -i); pts.push({p, v: at.get(p) || 0}); }
-  const W = 460, H = 200, L = 40, B = 20, T = 10, R = 10;
-  const ticks = pfTicks(Math.max(0, ...pts.map(p=>p.v))), top = ticks[ticks.length-1];
-  const x = i => L + (pts.length < 2 ? 0 : i * (W - L - R) / (pts.length - 1));
-  const y = v => T + (H - T - B) * (1 - v/top);
-  const d = pts.map((p, i)=>(i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.v).toFixed(1)).join(' ');
-  const every = Math.ceil(pts.length / 6), half = (W - L - R) / Math.max(1, pts.length - 1) / 2;
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="AUM, last ${n} months">
-    ${ticks.map(v=>`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--pf-grid)" stroke-width="1"/>
-      <text x="${L-6}" y="${y(v)+3}" text-anchor="end">${pfShort(v)}</text>`).join('')}
-    <path d="${d} L${x(pts.length-1)} ${y(0)} L${x(0)} ${y(0)} Z" fill="var(--pf-1)" opacity=".12"/>
-    <path d="${d}" fill="none" stroke="var(--pf-1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-    ${pts.map((p, i)=>`<g><rect class="pf-hit" x="${x(i)-half}" y="${T}" width="${half*2}" height="${H-T-B}" data-tip="${esc(pfMonLabel(p.p) + '\nAUM ₹' + pfL(p.v) + ' lakhs')}"/>
-      ${i === pts.length-1 ? `<circle cx="${x(i)}" cy="${y(p.v)}" r="4" fill="var(--pf-1)" stroke="var(--card)" stroke-width="2"/>` : ''}</g>`).join('')}
-    ${pts.map((p, i)=>i % every && i !== pts.length-1 ? '' : `<text x="${x(i)}" y="${H-6}" text-anchor="middle">${pfMonLabel(p.p)}</text>`).join('')}
-  </svg>`;
-}
-function pfShift(p, k){ let y = Number(p.slice(0,4)), m = Number(p.slice(5,7)) + k; while(m < 1){ m += 12; y--; } while(m > 12){ m -= 12; y++; } return y + '-' + String(m).padStart(2,'0'); }
-
-/* The broad category split: a donut, the legend carrying % and amount. */
-const PF_BROAD = ['Equity','Hybrid','Debt','Solution Oriented','Other'];
-function pfDonut(broad){
-  const total = broad.reduce((s, b)=>s + b.value, 0) || 1;
-  const items = PF_BROAD.map((name, i)=>({name, color:`var(--pf-${i+1})`, value:(broad.find(b=>b.name === name) || {}).value || 0})).filter(b=>b.value > 0);
-  const R = 56, C = 2*Math.PI*R; let at = 0;
-  const segs = items.map(b=>{
-    const len = b.value/total*C, gap = items.length > 1 ? Math.min(2, len/2) : 0;
-    const s = `<circle cx="80" cy="80" r="${R}" fill="none" stroke="${b.color}" stroke-width="22" stroke-dasharray="${Math.max(0, len-gap)} ${C}" stroke-dashoffset="${-at}"
-      data-tip="${esc(b.name + '\n' + pfPct(b.value*100/total) + ' · ₹' + pfL(b.value) + ' lakhs')}"/>`;
-    at += len; return s;
-  }).join('');
-  return `<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
-    <svg viewBox="0 0 160 160" style="width:170px;flex:none" role="img" aria-label="AUM by broad category"><g transform="rotate(-90 80 80)">${segs}</g>
-      <text x="80" y="76" text-anchor="middle" class="pf-lbl" style="font-size:10px;fill:var(--muted)">AUM</text>
-      <text x="80" y="92" text-anchor="middle" class="pf-lbl" style="font-weight:700;font-size:13px">₹${pfShort(total)}</text></svg>
-    <table style="flex:1;min-width:200px"><tbody>${items.map(b=>`<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${b.color};margin-right:7px"></i>${esc(b.name)}</td>
-      <td class="num">${pfPct(b.value*100/total)}</td><td class="num">₹${pfL(b.value)} L</td></tr>`).join('')}</tbody></table></div>`;
-}
-
-/* Ranked horizontal bars in one colour: name on the left, share on the right. */
-function pfHBars(rows, total, tip){
-  if(!rows.length) return `<div class="pf-note">Nothing to show yet.</div>`;
-  const W = 460, row = 24, L = 150, R = 52, H = rows.length*row;
-  const max = Math.max(...rows.map(r=>r.value)) || 1;
-  return `<svg viewBox="0 0 ${W} ${H}" role="img">${rows.map((r, i)=>{
-    const w = Math.max(1, (W - L - R) * r.value / max), y = i*row + 5, pct = r.value*100/(total || 1);
-    const name = r.name.length > 26 ? r.name.slice(0, 25) + '…' : r.name;
-    return `<g data-tip="${esc(r.name + '\n' + pfPct(pct) + ' · ₹' + pfL(r.value) + ' lakhs' + (tip ? '\n' + tip : ''))}">
-      <rect class="pf-hit" x="0" y="${i*row}" width="${W}" height="${row}"/>
-      <text x="${L-8}" y="${y+10}" text-anchor="end" class="pf-lbl">${esc(name)}</text>
-      <path class="pf-mark" d="${pfBarPath(L, y, 14, w, true)}" fill="var(--pf-1)"/>
-      <text x="${L + w + 6}" y="${y+10}" class="pf-lbl">${pfPct(pct)}</text></g>`;
-  }).join('')}</svg>`;
-}
-
-/* Star ratings as one 100% bar, darker for more stars. */
-function pfRatings(rated, total){
-  const order = ['5','4','3','2','1','unrated'];
-  const label = k => k === 'unrated' ? 'Not rated' : k + ' Star';
-  const items = order.map(k=>({k, value: rated[k] || 0})).filter(x=>x.value > 0);
-  const W = 460, H = 28; let at = 0;
-  const segs = items.map(x=>{
-    const w = W * x.value/(total || 1), s = `<rect x="${at}" y="0" width="${Math.max(1, w - 2)}" height="${H}" rx="4" fill="var(--pf-r${x.k === 'unrated' ? 0 : x.k})"
-      data-tip="${esc(label(x.k) + '\n' + pfPct(x.value*100/(total||1)) + ' of AUM · ₹' + pfL(x.value) + ' lakhs')}"/>`;
-    at += w; return s;
-  }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="AUM by scheme star rating">${segs}</svg>
-    <div class="pf-legend">${items.map(x=>`<span><i style="background:var(--pf-r${x.k === 'unrated' ? 0 : x.k})"></i>${label(x.k)} · ${pfPct(x.value*100/(total||1))}</span>`).join('')}</div>`;
-}
-
-const PF_SIZE = [['Upto 2 Lakhs',0,2e5],['2-5 Lakhs',2e5,5e5],['5-10 Lakhs',5e5,1e6],['10-25 Lakhs',1e6,25e5],['25-50 Lakhs',25e5,5e6],
-  ['50-75 Lakhs',5e6,75e5],['75 Lakhs-1 Crore',75e5,1e7],['1-2 Crores',1e7,2e7],['2-5 Crores',2e7,5e7],['Above 5 Crores',5e7,Infinity]];
-const PF_RET = [['Negative',-Infinity,0],['0-5%',0,5],['5-10%',5,10],['10-12%',10,12],['12-15%',12,15],['15-20%',15,20],['Above 20%',20,Infinity]];
-
-/* BOSS's half: families, XIRR and star ratings, matched by PAN and scheme name. */
-function pfEnrich(d){
-  const byPan = new Map();
-  (DB.clients||[]).forEach(c=>{ if(!c.deletedAt && c.pan) byPan.set(String(c.pan).toUpperCase().trim(), c); });
-  const xirr = new Map();
-  (DB.platformHoldings||[]).forEach(h=>{
-    if(h.deletedAt || !h.clientId || h.xirr === '' || h.xirr == null || isNaN(Number(h.xirr))) return;
-    const a = xirr.get(h.clientId) || {w:0, s:0}, w = Number(h.current) || 1;
-    a.w += w; a.s += w*Number(h.xirr); xirr.set(h.clientId, a);
-  });
-  const families = new Map();
-  const investors = d.investors.map(inv=>{
-    const c = inv.pan ? byPan.get(inv.pan) : null;
-    let ret = null, basis = '';
-    if(c && xirr.has(c.id)){ const a = xirr.get(c.id); ret = a.s/a.w; basis = 'xirr'; }
-    else if(inv.invested > 0){ ret = (inv.aum - inv.invested)*100/inv.invested; basis = 'abs'; }
-    const head = c && (c.familyHeadLookup || (c.familyHead ? 'name:' + pfNorm(c.familyHead) : c.id));
-    const fk = head ? 'f:' + head : 'i:' + inv.key;
-    const f = families.get(fk) || {name: c ? (c.familyHeadLookup ? clientName(c.familyHeadLookup) : (c.familyHead || c.cmsName || inv.name)) : inv.name, members:0, aum:0};
-    f.members++; f.aum += inv.aum; families.set(fk, f);
-    return {...inv, ret, basis};
-  });
-  const stars = new Map();
-  (DB.schemes||[]).forEach(s=>{ if(!s.deletedAt && s.starRating) stars.set(pfNorm(s.schemeName), String(s.starRating).replace(/\D/g,'').slice(0,1)); });
-  const rated = {};
-  d.schemes.forEach(s=>{ const k = stars.get(pfNorm(s.scheme)) || 'unrated'; rated[k] = (rated[k]||0) + s.aum; });
-  return {investors, families: [...families.values()].sort((a, b)=>b.aum - a.aum), rated, anyRated: stars.size > 0};
-}
-
-function pfTable(id, head, rows, limit){
-  const all = PF.all[id], shown = all ? rows : rows.slice(0, limit);
-  return `<table><thead><tr>${head.map(h=>`<th class="${h[1]||''}">${esc(h[0])}</th>`).join('')}</tr></thead>
-    <tbody>${shown.join('') || `<tr><td colspan="${head.length}" class="empty">Nothing yet.</td></tr>`}</tbody></table>
-    ${rows.length > limit ? `<div style="margin-top:8px"><button class="btn sm ghost" onclick="PF.all['${id}']=${all ? 'false' : 'true'}; render()">${all ? 'Show top ' + limit : 'View all ' + rows.length}</button></div>` : ''}`;
-}
-
-function pfBusinessHtml(){
-  pfTipInit();
-  const scope = PF.scope, d = pfData(scope), err = PF.err[scope];
-  const toggle = `<div class="pf-bar"><div class="pill-tabs" role="tablist" aria-label="Whose performance">
-      ${[['team','Team'],['self','Self']].map(([k,l])=>`<button class="${scope === k ? 'active' : ''}" onclick="PF.scope='${k}'; render()">${l}</button>`).join('')}
-    </div>${d ? `<div class="pf-invested">Invested Amount: <b>₹${pfL(d.kpis.invested)}</b> (in lakhs)</div>` : ''}</div>`;
-  if(err){
-    const msg = err.code === 'NOT_IN_TEAM'
-      ? 'Your sign-in is not on the payout team yet, so there is no business to show. An admin adds you under Payouts › Clients & Map › Hierarchy, and maps your clients to you.'
-      : err.message;
-    return toggle + `<div class="pf-card"><div class="pf-note">${esc(msg)}</div><button class="btn sm ghost" style="margin-top:8px" onclick="pfRefresh()">Try again</button></div>`;
+/* The periods a view compares: the chosen one and the two before it. In the
+   year view the current year is only part-way through, so all three years
+   are cut to the same months (January to now) and compared like for like. */
+function ptPeriods(){
+  const mode = PT.mode, now = ptToday().slice(0,7);
+  if(mode === 'month'){
+    const m = PT.month || now;
+    return {label: ptMonLabel(m), list: [0,-1,-2].map(k=>{ const x = ptShiftMonth(m, k); return {from: x, to: x, label: ptMonLabel(x)}; })};
   }
-  if(!d) return toggle + `<div class="pf-card"><div class="pf-note">Loading the ${scope === 'team' ? 'team' : 'your'} figures…</div></div>`;
-  const who = scope === 'self' ? 'the clients you are mapped on' : d.people == null ? 'the whole company' : `you and the ${d.people - 1} ${d.people - 1 === 1 ? 'person' : 'people'} under you`;
-  if(!d.hasData) return toggle + `<div class="pf-card"><div class="pf-note">No AUM on file for ${esc(who)} yet. It fills in once the registrar brokerage files are imported under Payouts › Data Import and the clients are mapped.</div></div>`;
-  const k = d.kpis, e = pfEnrich(d), total = k.aum;
-  const up = k.change >= 0;
-  const tile = (label, html) => ({label, html});
-  const sizes = PF_SIZE.map(([l, lo, hi])=>({l, n: e.investors.filter(i=>i.aum >= lo && i.aum < hi).length,
-    v: e.investors.filter(i=>i.aum >= lo && i.aum < hi).reduce((s, i)=>s + i.aum, 0)}));
-  const withRet = e.investors.filter(i=>i.ret != null);
-  const rets = PF_RET.map(([l, lo, hi])=>({l, list: withRet.filter(i=>i.ret >= lo && i.ret < hi)}));
-  const xirrN = withRet.filter(i=>i.basis === 'xirr').length;
-  const sipTotal = d.sipByAmc.reduce((s, x)=>s + x.value, 0);
-  return toggle + `
-    <div class="pf-note" style="margin:-6px 0 10px">Showing ${esc(who)} · AUM as of ${esc(pfMonLabel(d.latest))}</div>
-    ${kpiCards([
-      tile('Total AUM (in lakhs)', `₹${pfL(total)}<div style="font-size:12px;font-weight:500;margin-top:4px;color:${up ? 'var(--ok)' : 'var(--danger)'}">${up ? '▲' : '▼'} ₹${Math.abs(Math.round(k.change)).toLocaleString('en-IN')} · ${pfPct(Math.abs(k.changePct))} vs last month</div>`),
-      tile('No of Investors', k.investors.toLocaleString('en-IN')),
-      tile('No of Families', e.families.length.toLocaleString('en-IN')),
-      tile('No of ELSS Investors', k.elssInvestors.toLocaleString('en-IN')),
-      tile('No of SIP Count', k.sipCount.toLocaleString('en-IN')),
-      tile('SIP Amount', '₹' + Math.round(k.sipAmount).toLocaleString('en-IN')),
-      tile('Average SIP Amount', '₹' + Math.round(k.sipAverage).toLocaleString('en-IN')),
-    ])}
-    <div class="pf-grid">
-      <div class="pf-card"><h3>Last 4 years Monthly AUM</h3>${pfYearBars(d.monthly, d.latest)}</div>
-      <div class="pf-card"><h3>Top Investors <small>Amount in lakhs</small></h3>
-        ${pfTable('inv', [['Name'],['PAN'],['Amount','num']], e.investors.map(i=>`<tr><td>${esc(i.name)}</td><td>${esc(i.pan || '—')}</td><td class="num">${pfL(i.aum)}</td></tr>`), 10)}</div>
-      <div class="pf-card"><h3>AUM <span class="pill-tabs">${[12,24,36].map(n=>`<button class="${PF.months === n ? 'active' : ''}" onclick="PF.months=${n}; render()">Last ${n} Months</button>`).join('')}</span></h3>
-        ${pfTrend(d.monthly, d.latest, PF.months)}</div>
-      <div class="pf-card"><h3>Top Families <small>Amount in lakhs</small></h3>
-        ${pfTable('fam', [['Family Head'],['Members','num'],['Amount','num']], e.families.map(f=>`<tr><td>${esc(f.name)}</td><td class="num">${f.members}</td><td class="num">${pfL(f.aum)}</td></tr>`), 10)}
-        <div class="pf-note">Investors are grouped by the Family Head on their BOSS client record, matched by PAN. One with no family set counts as a family of one.</div></div>
-      <div class="pf-card"><h3>AUM Break-up Broad Category</h3>${pfDonut(d.broad)}</div>
-      <div class="pf-card"><h3>AUM Break-up Category (Top-10)</h3>${pfHBars(d.categories.slice(0, 10), total)}</div>
-      <div class="pf-card"><h3>Top Schemes <small>Amount in lakhs</small></h3>
-        ${pfTable('sch', [['Scheme'],['Amount','num']], d.schemes.map(s=>`<tr><td>${esc(s.scheme)}</td><td class="num">${pfL(s.aum)}</td></tr>`), 10)}</div>
-      <div class="pf-card"><h3>Scheme Ratings <small>share of AUM</small></h3>${pfRatings(e.rated, total)}
-        ${e.anyRated ? '' : `<div class="pf-note">No star ratings on file yet. Add them under Products › Schemes (Star Rating) and this bar fills in.</div>`}</div>
-      <div class="pf-card"><h3>Investor Classification <small>by AUM</small></h3>
-        <table><thead><tr><th>Investment</th><th class="num">Count</th><th class="num">AUM (lakhs)</th></tr></thead>
-        <tbody>${sizes.map(s=>`<tr><td>${s.l}</td><td class="num">${s.n}</td><td class="num">${pfL(s.v)}</td></tr>`).join('')}</tbody></table></div>
-      <div class="pf-card"><h3>Investors Returns Classification</h3>
-        <table><thead><tr><th>Returns</th><th class="num">Count</th><th class="num">Percentage</th><th class="num">Total (lakhs)</th></tr></thead>
-        <tbody>${rets.map(r=>`<tr><td>${r.l}</td><td class="num">${r.list.length}</td><td class="num">${withRet.length ? pfPct(r.list.length*100/withRet.length) : '—'}</td>
-          <td class="num">${pfL(r.list.reduce((s, i)=>s + i.aum, 0))}</td></tr>`).join('')}</tbody></table>
-        <div class="pf-note">${withRet.length} of ${e.investors.length} investors have a return. ${xirrN} use the XIRR from BOSS's platform AUM import; the rest use (current value − net invested) ÷ net invested from the registrar transactions.</div></div>
-      <div class="pf-card"><h3>SIP Info <small>share of SIP amount by AMC</small></h3>
-        ${pfHBars(d.sipByAmc.slice(0, 10), sipTotal)}
-        <div class="pf-note">${k.sipTo ? `SIP instalments from ${esc(fmtDate(k.sipSince))} to ${esc(fmtDate(k.sipTo))}, the last month of transaction files.` : 'No SIP transactions on file yet.'}</div></div>
-    </div>`;
+  const y = +(PT.year || now.slice(0,4));
+  const lastM = String(y) === now.slice(0,4) ? now.slice(5,7) : '12';
+  const cut = lastM !== '12';
+  return {label: String(y), cut: cut ? PT_MON[+lastM - 1] : '', list: [0,-1,-2].map(k=>({from: (y+k) + '-01', to: (y+k) + '-' + lastM,
+    label: (cut ? 'Jan–' + PT_MON[+lastM - 1] + ' ' : '') + (y+k)}))};
+}
+const PT = {mode:'month', month:'', year:'', partner:'', role:''};
+
+function ptMetricRows(events, r, per, tgtFn){
+  const [cur, p1, p2] = per.list.map(p=>ptSum(events, p.from, p.to));
+  const tgt = tgtFn();
+  return PT_METRICS.filter(m=>tgt[m.k] > 0 || cur[m.k] || p1[m.k] || p2[m.k]).map(m=>{
+    const pct = tgt[m.k] > 0 ? cur[m.k] * 100 / tgt[m.k] : null;
+    return `<tr><td><b>${esc(m.l)}</b><div class="small-note" style="margin:2px 0 0">${esc(m.step)}</div></td>
+      <td class="num">${tgt[m.k] > 0 ? ptFmt(m, tgt[m.k]) : '—'}</td><td class="num"><b>${ptFmt(m, cur[m.k])}</b></td>
+      <td style="min-width:130px">${pct == null ? '<span class="small-note">Not targeted</span>' : `${ptBar(pct)}<div class="small-note" style="margin:3px 0 0">${pct.toFixed(1)}% · ${ptStatus(pct)[1]}</div>`}</td>
+      <td class="num">${ptFmt(m, p1[m.k])}</td><td class="num">${ptGrowth(cur[m.k], p1[m.k])}</td>
+      <td class="num">${ptFmt(m, p2[m.k])}</td><td class="num">${ptGrowth(cur[m.k], p2[m.k])}</td></tr>`;
+  }).join('') || `<tr><td colspan="8" class="empty">No targets for this role yet. Set them under Setup › Modules &amp; Workflows › Partner Targets.</td></tr>`;
+}
+
+/* Month by month through the chosen year: what was achieved, coloured by
+   how it stood against that month's target. */
+function ptMonthGrid(events, tgtMonth, year){
+  const months = PT_MON.map((_, i)=>year + '-' + String(i+1).padStart(2,'0'));
+  const now = ptToday().slice(0,7);
+  const sums = months.map(m=>ptSum(events, m, m));
+  const rows = PT_METRICS.filter(x=>months.some(m=>tgtMonth(x.k, m) > 0) || sums.some(s=>s[x.k])).map(x=>{
+    let yT = 0, yA = 0;
+    const cells = months.map((m, i)=>{
+      const t = tgtMonth(x.k, m), a = sums[i][x.k];
+      if(m > now) return `<td class="num pt-future">${t ? '<span class="small-note">' + ptFmt(x, t) + '</span>' : ''}</td>`;
+      yT += t; yA += a;
+      const s = t > 0 ? ptStatus(a * 100 / t) : null;
+      return `<td class="num ${s ? 'pt-c-' + s[2] : ''}" title="${esc(ptMonLabel(m) + ' — achieved ' + ptFmt(x, a) + (t ? ' of ' + ptFmt(x, t) + ' (' + (a*100/t).toFixed(0) + '%)' : ''))}">${ptFmt(x, a)}</td>`;
+    }).join('');
+    return `<tr><td><b>${esc(x.l)}</b></td>${cells}<td class="num"><b>${ptFmt(x, yA)}</b>${yT ? `<div class="small-note" style="margin:0">of ${ptFmt(x, yT)}</div>` : ''}</td></tr>`;
+  }).join('');
+  return `<div class="table-wrap"><table class="pt-grid"><thead><tr><th>Measure</th>${PT_MON.map(m=>`<th class="num">${m}</th>`).join('')}<th class="num">Year to date</th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="14" class="empty">Nothing targeted or achieved in ${year}.</td></tr>`}</tbody></table></div>
+    <div class="pt-legend"><span><i class="pt-c-ok"></i>Exceeds (100%+)</span><span><i class="pt-c-info"></i>On track (75%+)</span><span><i class="pt-c-warn"></i>Needs improvement (50%+)</span><span><i class="pt-c-danger"></i>At risk (under 50%)</span><span class="small-note">Hover a month for its target.</span></div>`;
+}
+
+/* Year against year: the last three, each the whole year's target and achievement. */
+function ptYearGrid(events, tgtMonth, year){
+  const years = [year - 2, year - 1, year];
+  const now = ptToday().slice(0,7);
+  const rows = PT_METRICS.map(x=>{
+    const vals = years.map(y=>{
+      const to = String(y) === now.slice(0,4) ? now : y + '-12';
+      let t = 0; for(let m = y + '-01'; m <= y + '-12'; m = ptShiftMonth(m, 1)) t += tgtMonth(x.k, m);
+      return {a: ptSum(events, y + '-01', to)[x.k], t};
+    });
+    if(!vals.some(v=>v.a || v.t)) return '';
+    return `<tr><td><b>${esc(x.l)}</b></td>${vals.map(v=>`<td class="num">${ptFmt(x, v.a)}${v.t ? `<div class="small-note" style="margin:0">of ${ptFmt(x, v.t)} · ${(v.a*100/v.t).toFixed(0)}%</div>` : ''}</td>`).join('')}
+      <td class="num">${ptGrowth(vals[2].a, vals[1].a)}</td><td class="num">${ptGrowth(vals[2].a, vals[0].a)}</td></tr>`;
+  }).join('');
+  return `<div class="table-wrap"><table class="pt-grid"><thead><tr><th>Measure</th>${years.map(y=>`<th class="num">${y}${String(y) === now.slice(0,4) ? ' (to date)' : ''}</th>`).join('')}
+    <th class="num">${year} vs ${year-1}</th><th class="num">${year} vs ${year-2}</th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="empty">Nothing yet.</td></tr>`}</tbody></table></div>`;
+}
+
+/* Overall achievement % month by month through the year, with the 100% line. */
+function ptTrendSvg(series){
+  const W = 640, H = 170, L = 34, B = 20, T = 10, slot = (W - L) / 12;
+  const top = Math.max(150, ...series.map(s=>s.pct || 0));
+  const y = v => T + (H - T - B) * (1 - v / top);
+  const bw = Math.min(26, slot - 10);
+  return `<svg viewBox="0 0 ${W} ${H}" class="pt-svg" role="img" aria-label="Overall achievement by month">
+    ${[0, 50, 100, 150].filter(v=>v <= top).map(v=>`<line x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="${v===100 ? 'var(--muted)' : 'var(--line)'}" ${v===100 ? 'stroke-dasharray="4 3"' : ''}/>
+      <text x="${L-5}" y="${y(v)+3}" text-anchor="end">${v}%</text>`).join('')}
+    ${series.map((s, i)=>{
+      const x = L + i*slot + (slot - bw)/2;
+      if(s.pct == null) return `<text x="${x + bw/2}" y="${H-6}" text-anchor="middle">${PT_MON[i]}</text>`;
+      const h = Math.max(1, y(0) - y(s.pct)), st = ptStatus(s.pct), r = Math.min(4, bw/2, h);
+      return `<g><title>${esc(ptMonLabel(s.m) + ': ' + s.pct.toFixed(1) + '% of target — ' + st[1])}</title>
+        <path d="M${x} ${y(0)} v${-(h - r)} q0 ${-r} ${r} ${-r} h${bw - 2*r} q${r} 0 ${r} ${r} v${h - r} Z" class="pt-fill-${st[2]}"/>
+        <text x="${x + bw/2}" y="${y(s.pct) - 4}" text-anchor="middle" class="pt-val">${Math.round(s.pct)}%</text></g>
+        <text x="${x + bw/2}" y="${H-6}" text-anchor="middle">${PT_MON[i]}</text>`;
+    }).join('')}
+  </svg>`;
 }
 
 function viewPPF(){
   if(!can('PPF','view')) return permissionWall('Partners');
-  const tab = window._ppfTab || 'business';
-  const tabs = `<div class="pill-tabs" style="margin:0 0 14px">${[['business','Business Performance'],['funnel','Partner Funnel']].map(([k,l])=>
-    `<button class="${tab === k ? 'active' : ''}" onclick="window._ppfTab='${k}'; render()">${l}</button>`).join('')}</div>`;
-  if(tab === 'business') return `${moduleHeader({title:'Partner Performance System', subtitle:'The business under you: AUM, investors, schemes and SIPs',
-    actions:[{label:'Refresh', onclick:'pfRefresh()'}]})}${tabs}${pfBusinessHtml()}`;
-  return viewPPFFunnel(tabs);
+  const all = ptPartners();
+  const roleList = PT.role ? all.filter(r=>ptRoleOf(r)===PT.role) : all;
+  if(PT.partner && !all.some(r=>r.id===PT.partner)) PT.partner = '';
+  const one = PT.partner ? all.find(r=>r.id===PT.partner) : null;
+  const scope = one ? [one] : roleList;
+  const per = ptPeriods(), cur = per.list[0];
+  const year = PT.mode === 'month' ? +(PT.month || ptToday()).slice(0,4) : +(PT.year || ptToday().slice(0,4));
+  const now = ptToday().slice(0,7);
+  const evOf = new Map(scope.map(r=>[r.id, ptEventsOf(r)]));
+  const events = [].concat(...scope.map(r=>evOf.get(r.id)));
+  const tgtMonth = (k, m) => scope.reduce((s, r)=>s + ptTargetFor(r, k, m), 0);
+  const tgtRange = (from, to) => { const o = {}; PT_METRICS.forEach(x=>{ o[x.k] = 0; for(let m = from; m <= to; m = ptShiftMonth(m, 1)) o[x.k] += tgtMonth(x.k, m); }); return o; };
+  // The year view's target is the whole year's; its achievement is to date.
+  const curTgt = PT.mode === 'month' ? tgtRange(cur.from, cur.to) : tgtRange(year + '-01', year + '-12');
+  const curAch = ptSum(events, cur.from, cur.to);
+  const prevAch = ptSum(events, per.list[1].from, per.list[1].to);
+  const overall = ptOverall(curAch, PT.mode === 'month' ? curTgt : tgtRange(cur.from, cur.to));
+  const overallPrev = ptOverall(prevAch, tgtRange(per.list[1].from, per.list[1].to));
+  const hit = PT_METRICS.filter(m=>curTgt[m.k] > 0 && curAch[m.k] >= curTgt[m.k]).length, aimed = PT_METRICS.filter(m=>curTgt[m.k] > 0).length;
+  const months = PT_MON.map((_, i)=>year + '-' + String(i+1).padStart(2,'0'));
+  const trend = months.map(m=>({m, pct: m > now ? null : ptOverall(ptSum(events, m, m), tgtRange(m, m))}));
+
+  const monthOpts = []; for(let i = 0; i < 36; i++) monthOpts.push(ptShiftMonth(now, -i));
+  const yearOpts = [0,1,2,3,4].map(k=>String(+now.slice(0,4) - k));
+  const filters = `<div class="pt-filters">
+    <div class="pill-tabs">${[['month','Month-wise'],['year','Year-wise']].map(([k,l])=>`<button class="${PT.mode===k?'active':''}" onclick="PT.mode='${k}'; render()">${l}</button>`).join('')}</div>
+    ${PT.mode === 'month'
+      ? `<select onchange="PT.month=this.value; render()">${monthOpts.map(m=>`<option value="${m}" ${m===(PT.month||now)?'selected':''}>${ptMonLabel(m)}</option>`).join('')}</select>`
+      : `<select onchange="PT.year=this.value; render()">${yearOpts.map(y=>`<option ${y===String(year)?'selected':''}>${y}</option>`).join('')}</select>`}
+    <select onchange="PT.role=this.value; PT.partner=''; render()"><option value="">All roles</option>${ptRoleKeys().map(x=>`<option ${PT.role===x?'selected':''}>${x}</option>`).join('')}</select>
+    <select onchange="PT.partner=this.value; render()" style="min-width:200px"><option value="">All partners (${roleList.length})</option>
+      ${roleList.map(r=>`<option value="${esc(r.id)}" ${PT.partner===r.id?'selected':''}>${esc(pjName(r))} · ${esc(ptRoleLabel(r))}</option>`).join('')}</select>
+  </div>`;
+  const mayEdit = can('POB','edit');
+  const head = moduleHeader({title:'Partner Performance', subtitle:'Each partner’s target against what they achieved, read from the onboarding workflow',
+    actions:[one && mayEdit ? {label:'Set Targets', onclick:`ptOpenTargets('${esc(one.id)}', ${year})`} : null,
+      one && mayEdit ? {label:'Add Outside Achievement', onclick:`ptOpenManual('${esc(one.id)}')`} : null,
+      pjMaySetUp() ? {label:'Role Targets', onclick:`openSetupScreen('partnertargets')`} : null]});
+  if(!all.length) return head + `<div class="card"><div class="empty">No partner to measure yet. A partner appears here once their role (Ninja, Super Ninja or Sherpa) is confirmed in Partner Onboarding, or once they are an Active Partner.</div></div>`;
+
+  const tiles = kpiCards([
+    {label:'Overall achievement · ' + per.label, html: overall == null ? '—' : `${overall.toFixed(1)}% ${ptBadge(overall)}`},
+    {label:'Measures on target', value: aimed ? hit + ' of ' + aimed : '—'},
+    {label:'Change vs ' + per.list[1].label, html: overall == null || overallPrev == null ? '—' : ptGrowth(overall, overallPrev)},
+    one ? {label:'Role · RM', value: ptRoleLabel(one) + ' · ' + (one.assignedTo ? teamName(one.assignedTo) : '—')}
+        : {label:'Partners at risk', value: scope.filter(r=>{ const p = ptOverall(ptSum(evOf.get(r.id), cur.from, cur.to), ptTargets(r, cur.from, cur.to)); return p != null && p < 50; }).length + ' of ' + scope.length},
+  ]);
+
+  const compareHead = `<th class="num">${esc(per.list[1].label)}</th><th class="num">Growth</th><th class="num">${esc(per.list[2].label)}</th><th class="num">Growth</th>`;
+  const scorecard = `<div class="card pt-card"><h3>Target vs Achievement — ${esc(per.label)}${per.cut ? ` <span class="small-note">(achievement and growth Jan–${per.cut}, like for like)</span>` : ''}</h3>
+    <div class="table-wrap"><table><thead><tr><th>Measure (flowchart step)</th><th class="num">Target${PT.mode==='year' ? ' (year)' : ''}</th><th class="num">Achieved</th><th>Achievement</th>${compareHead}</tr></thead>
+    <tbody>${ptMetricRows(events, one, per, ()=>curTgt)}</tbody></table></div></div>`;
+
+  const board = one ? '' : `<div class="card pt-card"><h3>Partners — ${esc(per.label)}</h3><div class="table-wrap"><table id="ptBoard">
+    <thead><tr><th>Partner</th><th>Role</th><th>RM</th><th>Achievement</th><th class="num">${esc(per.list[1].label)}</th><th class="num">Growth</th>
+      ${PT_METRICS.filter(m=>curTgt[m.k] > 0).slice(0, 5).map(m=>`<th class="num">${esc(m.l)}</th>`).join('')}</tr></thead>
+    <tbody>${scope.map(r=>{
+      const e = evOf.get(r.id), a = ptSum(e, cur.from, cur.to), t = ptTargets(r, cur.from, cur.to);
+      const p = ptOverall(a, t), pp = ptOverall(ptSum(e, per.list[1].from, per.list[1].to), ptTargets(r, per.list[1].from, per.list[1].to));
+      return {r, a, t, p, pp};
+    }).sort((x, y)=>(y.p == null ? -1 : y.p) - (x.p == null ? -1 : x.p)).map(({r, a, t, p, pp})=>`<tr class="row-clickable" onclick="PT.partner='${esc(r.id)}'; render()">
+      <td style="font-weight:700">${esc(pjName(r))}</td><td>${esc(ptRoleLabel(r))}</td><td>${esc(r.assignedTo ? teamName(r.assignedTo) : '—')}</td>
+      <td style="min-width:150px">${p == null ? ptBadge(null) : `${ptBar(p)}<div class="small-note" style="margin:3px 0 0">${p.toFixed(1)}% · ${ptStatus(p)[1]}</div>`}</td>
+      <td class="num">${pp == null ? '—' : pp.toFixed(1) + '%'}</td><td class="num">${p == null || pp == null ? '—' : ptGrowth(p, pp)}</td>
+      ${PT_METRICS.filter(m=>curTgt[m.k] > 0).slice(0, 5).map(m=>`<td class="num">${ptFmt(m, a[m.k])}<span class="small-note"> / ${t[m.k] ? ptFmt(m, t[m.k]) : '—'}</span></td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div><p class="small-note">Click a partner to open their own scorecard.</p></div>`;
+
+  const growth = one ? ptGrowthPanel(one) : '';
+  return `${head}${filters}${tiles}${scorecard}
+    <div class="card pt-card"><h3>Overall achievement by month — ${year}</h3>${ptTrendSvg(trend)}</div>
+    <div class="card pt-card"><h3>Month-wise — ${year}</h3>${ptMonthGrid(events, tgtMonth, year)}</div>
+    <div class="card pt-card"><h3>Year-wise — ${year - 2} to ${year}</h3>${ptYearGrid(events, tgtMonth, year)}</div>
+    ${board}${growth}`;
 }
-function viewPPFFunnel(tabs){
-  const prospects = applyTimeline('PPS', visibleRecords(pjProspects(), r=>r.assignedTo, r=>r.branch));
-  const partners = visibleRecords(pjPartners(), r=>r.assignedTo, r=>r.branch);
-  const payouts = applyTimeline('PPF', pjPayouts().filter(p=>!p.deletedAt && (p.status==='Paid' || p.status==='Approved' || p.status==='Calculated')));
-  const reached = (p, ids) => ids.includes(stateOf('PPS', p)) || (p.blueprintHistory||[]).some(h=>ids.includes(h.state));
-  const reg = prospects.length;
-  const attended = prospects.filter(p=>reached(p, ['paymentLinkSent','rmFollowUp','converted'])).length;
-  const paid = prospects.filter(p=>stateOf('PPS', p)==='converted').length;
-  const community = prospects.filter(p=>stateOf('PPS', p)==='community').length;
-  const onboarded = partners.filter(p=>stateOf('PMS', p)==='onboarded').length;
-  const pct = (a, b) => b ? Math.round(a*100/b) + '%' : '—';
-  const per = partners.map(p=>{
-    const mine = payouts.filter(x=>x.partnerId===p.id);
-    return {p, business: mine.reduce((s,x)=>s+(Number(x.businessAmount)||0),0),
-      paidOut: mine.filter(x=>x.status==='Paid').reduce((s,x)=>s+pjPayoutNet(x),0),
-      openQ: pjQueries().filter(q=>!q.deletedAt && q.partnerId===p.id && (q.status==='Open' || q.status==='In Progress')).length,
-      attempts: (p.examAttempts||[]).length};
-  }).sort((a,b)=>b.business-a.business);
-  return `${moduleHeader({title:'Partner Performance System', subtitle:'The prospect funnel, and how each partner is doing', actions:[]})}
-    ${tabs}${timelineBarHtml('PPS')}
-    ${kpiCards([
-      {label:'Registrations', value: reg, tone:'info'},
-      {label:'Attended', value: attended + ' · ' + pct(attended, reg), tone:'info'},
-      {label:'Fee Paid', value: paid + ' · ' + pct(paid, attended), tone:'ok'},
-      {label:'In Community', value: community, tone:'warn'},
-      {label:'Partners Onboarded', value: onboarded + ' of ' + partners.length, tone:'ok'},
-    ])}
-    <div class="table-wrap"><table id="ppfTable">
-      <thead><tr><th>Partner</th><th>Stage</th><th>Lead Owner</th><th>Exam Attempts</th><th>Business</th><th>Paid Out (net)</th><th>Open Queries</th></tr></thead>
-      <tbody>${per.map(({p, business, paidOut, openQ, attempts})=>{
-        const meta = stateMeta('PMS', stateOf('PMS', p));
-        return `<tr class="row-clickable" onclick="navigate('pms','${esc(p.id)}')">
-          <td style="font-weight:700">${esc(pjName(p))}</td><td><span class="badge ${meta.color||'info'}">${esc(meta.label||'')}</span></td>
-          <td>${esc(p.leadOwner||'—')}</td><td>${attempts}${p.examResult? ' · '+esc(p.examResult):''}</td>
-          <td>${money(business)}</td><td>${money(paidOut)}</td>
-          <td>${openQ ? `<span class="badge warn">${openQ}</span>` : '0'}</td></tr>`;
-      }).join('') || `<tr><td colspan="7" class="empty">No partners yet.</td></tr>`}</tbody>
-    </table></div>`;
+
+/* One partner: the flowchart's course unlocks against their counts, and
+   where their reviews stand. */
+function ptGrowthPanel(r){
+  const fig = pobMetrics(r);
+  const ms = pobLiveTasks(r).filter(t=>t.kind==='milestone');
+  const what = {leads:'leads', conversions:'conversions', clients:'clients onboarded'};
+  const reviews = pobReviews().filter(x=>!x.deletedAt && x.pobId===r.id).sort((a,b)=>String(b.completedAt||b.dueDate||'').localeCompare(String(a.completedAt||a.dueDate||'')));
+  const last = reviews.find(x=>x.status==='Completed'), next = reviews.slice().reverse().find(x=>x.status!=='Completed');
+  return `<div class="card pt-card"><h3>Growth path — ${esc(pjName(r))} (${esc(ptRoleLabel(r))})</h3>
+    <div class="table-wrap"><table><thead><tr><th>Course unlock</th><th>Needs</th><th>Progress</th><th>Status</th></tr></thead><tbody>
+    ${ms.map(t=>{
+      const have = t.metric ? (Number(fig[t.metric]) || 0) : null, need = Number(t.count) || 0;
+      const pct = need ? Math.min(100, (have||0) * 100 / need) : null;
+      return `<tr><td>${esc(t.course || t.title)}</td><td>${need ? need + ' ' + (what[t.metric] || t.metric) : 'At the reviewer’s call'}</td>
+        <td style="min-width:140px">${pct == null ? '—' : `${ptBar(pct)}<div class="small-note" style="margin:3px 0 0">${have} of ${need}</div>`}</td>
+        <td>${t.status==='Approved' ? '<span class="badge ok">Unlocked</span>' : pct === 100 ? '<span class="badge info">Ready to unlock</span>' : '<span class="badge muted">Locked</span>'}</td></tr>`;
+    }).join('') || `<tr><td colspan="4" class="empty">This role's workflow has no course unlocks.</td></tr>`}</tbody></table></div>
+    <p class="small-note">Last review: ${last ? esc(last.kind + ' on ' + fmtDate(last.completedAt) + ' — ' + (last.outcome||'')) : 'none yet'}.
+      Next: ${next ? esc(next.kind + ' due ' + fmtDate(next.dueDate)) : 'not scheduled'}. Reviews are held in Partner Onboarding › the partner › Reviews.</p></div>`;
+}
+
+/* ---------- Target Setting for one partner, for one year ---------- */
+function ptOpenTargets(id, year){
+  const r = pobLive().find(x=>x.id===id);
+  if(!r || !can('POB','edit')) return;
+  const own = (r.ptTargets||{})[year] || {}, role = ptConfig().roles[ptRoleOf(r)] || {}, rl = ptRoleOf(r);
+  openModal(`Targets — ${pjName(r)} · ${year}`, `<p class="small-note" style="margin-top:0">Monthly targets for ${year}. Leave a box empty to use the ${esc(rl)} default from Setup (shown faded). A year's target is twelve months of these.</p>
+    <div class="table-wrap"><table><thead><tr><th>Measure</th><th class="num">${esc(rl)} default</th><th class="num">${esc(pjName(r))}'s monthly target</th></tr></thead><tbody>
+    ${PT_METRICS.map(m=>`<tr><td>${esc(m.l)}</td><td class="num small-note">${role[m.k] ? ptFmt(m, role[m.k]) : '—'}</td>
+      <td class="num"><input id="ptT_${m.k}" type="number" min="0" style="width:120px;text-align:right" value="${own[m.k]===undefined ? '' : esc(String(own[m.k]))}" placeholder="${role[m.k] || ''}"></td></tr>`).join('')}
+    </tbody></table></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="ptSaveTargets('${esc(id)}', ${year})">Save Targets</button>`);
+}
+async function ptSaveTargets(id, year){
+  const r = pobLive().find(x=>x.id===id);
+  if(!r || !can('POB','edit')) return;
+  const was = Object.assign({}, (r.ptTargets||{})[year] || {}), row = {};
+  PT_METRICS.forEach(m=>{ const v = (document.getElementById('ptT_' + m.k)||{}).value; if(v !== undefined && String(v).trim() !== '') row[m.k] = Math.max(0, ptNum(v)); });
+  r.ptTargets = Object.assign({}, r.ptTargets || {}, {[year]: row});
+  await save('pjOnboarding');
+  await logAudit('POB', r.id, 'Targets Set for ' + year, PT_METRICS.filter(m=>String(was[m.k]===undefined ? '' : was[m.k]) !== String(row[m.k]===undefined ? '' : row[m.k]))
+    .map(m=>({field: m.l, oldValue: was[m.k]===undefined ? 'role default' : String(was[m.k]), newValue: row[m.k]===undefined ? 'role default' : String(row[m.k])})));
+  closeModal(); render();
+}
+/* ---------- what was done outside BOSS, added to a month ---------- */
+function ptOpenManual(id, month){
+  const r = pobLive().find(x=>x.id===id);
+  if(!r || !can('POB','edit')) return;
+  const m = month || PT.month || ptToday().slice(0,7);
+  const row = (r.ptManual||{})[m] || {};
+  const opts = []; for(let i = 0; i < 24; i++) opts.push(ptShiftMonth(ptToday().slice(0,7), -i));
+  openModal(`Outside achievement — ${pjName(r)}`, `<p class="small-note" style="margin-top:0">For work done outside BOSS, such as a client onboarded on another platform. It is added to what BOSS counts for that month and is kept in the partner's audit trail.</p>
+    <label class="small-note">Month</label> <select id="ptM_month" onchange="ptOpenManual('${esc(id)}', this.value)">${opts.map(x=>`<option value="${x}" ${x===m?'selected':''}>${ptMonLabel(x)}</option>`).join('')}</select>
+    <div class="table-wrap" style="margin-top:8px"><table><tbody>${PT_METRICS.filter(x=>x.k!=='monthly').map(x=>`<tr><td>${esc(x.l)}</td>
+      <td class="num"><input id="ptM_${x.k}" type="number" min="0" style="width:120px;text-align:right" value="${row[x.k] ? esc(String(row[x.k])) : ''}"></td></tr>`).join('')}</tbody></table></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="ptSaveManual('${esc(id)}')">Save</button>`);
+}
+async function ptSaveManual(id){
+  const r = pobLive().find(x=>x.id===id);
+  if(!r || !can('POB','edit')) return;
+  const m = document.getElementById('ptM_month').value, was = Object.assign({}, (r.ptManual||{})[m] || {}), row = {};
+  PT_METRICS.forEach(x=>{ const el = document.getElementById('ptM_' + x.k); if(el && ptNum(el.value) > 0) row[x.k] = ptNum(el.value); });
+  r.ptManual = Object.assign({}, r.ptManual || {}, {[m]: row});
+  await save('pjOnboarding');
+  await logAudit('POB', r.id, 'Outside Achievement · ' + ptMonLabel(m), PT_METRICS.filter(x=>(was[x.k]||0) !== (row[x.k]||0))
+    .map(x=>({field: x.l, oldValue: String(was[x.k]||0), newValue: String(row[x.k]||0)})));
+  closeModal(); render();
+}
+
+/* ---------- Setup › Partner Targets: each role's monthly target ---------- */
+function renderSettingsPartnerTargets(){
+  const c = ptConfig();
+  return `<div class="card" style="padding:16px">
+    <p class="small-note" style="margin-top:0">What each role is expected to achieve <b>every month</b>, measured from the Partner Onboarding workflow.
+      Leave a box empty, or 0, and that measure is not targeted for the role. A partner's own targets, set in Partner Journey › Performance › Set Targets
+      at their Target Setting, win over these. A year's target is twelve months. "No role yet" covers active partners whose role was never confirmed in BOSS, such as the imported FBMs and FBPs.</p>
+    <div class="table-wrap"><table><thead><tr><th>Measure</th><th>Counted when</th>${ptRoleKeys().map(x=>`<th class="num">${esc(x)}</th>`).join('')}</tr></thead><tbody>
+    ${PT_METRICS.map(m=>`<tr><td><b>${esc(m.l)}</b>${m.money ? ' <span class="small-note">(₹)</span>' : ''}</td><td class="small-note">${esc(PT_COUNTED[m.k])}</td>
+      ${ptRoleKeys().map(role=>`<td class="num"><input id="ptS_${role.replace(/\W+/g,'')}_${m.k}" type="number" min="0" style="width:${m.money ? 120 : 80}px;text-align:right" value="${c.roles[role][m.k] ? esc(String(c.roles[role][m.k])) : ''}"></td>`).join('')}</tr>`).join('')}
+    </tbody></table></div>
+    <div class="row" style="gap:8px;margin-top:10px"><button class="btn primary" onclick="ptSaveSettings()">Save Targets</button>
+      <button class="btn" onclick="ptResetSettings()">Back to the flowchart defaults</button></div>
+    <p class="small-note">Status bands: 100% and over is Exceeds Target, 75% On Track, 50% Needs Improvement, under 50% At Risk — the same outcomes a monthly review records.</p>
+  </div>`;
+}
+const PT_COUNTED = {
+  prospects: 'A lead the partner brought is created (Client Journey, or LMS with the partner on it)',
+  qualified: 'Their lead reaches Lead Qualified',
+  meetings: 'Their lead’s Intro Meeting with the RM is scheduled',
+  riskProfiles: 'The data gathering form and ISEQ go out or come back',
+  allocations: 'The Blueprint Presentation is held or the blueprint is sent',
+  conversions: 'Their lead is converted to a client',
+  onboarded: 'Their client reaches Mandate Registration (account active)',
+  transactions: 'A transaction is raised for their client (rejected or cancelled ones are not counted)',
+  business: 'The amount of those transactions',
+  reviews: 'A review (RMS) of their client is closed',
+  monthly: 'A monthly review of the partner is recorded',
+};
+async function ptSaveSettings(){
+  if(!pjMaySetUp()){ alert('You do not have permission to change these settings.'); return; }
+  const roles = {};
+  ptRoleKeys().forEach(role=>{ roles[role] = {}; PT_METRICS.forEach(m=>{ const el = document.getElementById('ptS_' + role.replace(/\W+/g,'') + '_' + m.k); roles[role][m.k] = el ? Math.max(0, ptNum(el.value)) : 0; }); });
+  DB.config.partnerTargets = {roles, updatedAt: new Date().toISOString(), updatedBy: currentUser};
+  await save('config');
+  alert('Saved.'); render();
+}
+async function ptResetSettings(){
+  if(!pjMaySetUp() || !confirm('Put every role back to the default targets?')) return;
+  delete DB.config.partnerTargets;
+  await save('config'); render();
 }
 
 /* =====================================================================
@@ -74667,6 +74770,7 @@ const SETTINGS_CATEGORIES = [
     ['cfg_business','Business & Transactions','manageWorkflows','tab','Products, transaction types and the daily business tracker.'],
     ['cfg_alloc','Asset Allocation','manageWorkflows','tab','How an allocation is prepared, consented to and completed.'],
     ['cfg_projects','Projects Tracker','manageWorkflows','tab','Project types, statuses and their checklists.'],
+    ['partnertargets','Partner Targets','manageWorkflows','tab','What a Ninja, Super Ninja and Sherpa is expected to achieve each month, measured from the partner onboarding workflow.'],
     ['cfg_campaign','Marketing','manageWorkflows','tab','Campaign types, audiences, opt-out and the sending rules.'],
   ]},
   {id:'automation', label:'Automation', icon:'\ud83e\udd16', tabs:[
@@ -74760,6 +74864,7 @@ const SETTINGS_CATEGORIES = [
 /* A settings tab is rendered by whatever this map names. Views that used to
    be their own route are the same function, called from here. */
 const SETTINGS_TAB_VIEWS = {
+  partnertargets: ()=>renderSettingsPartnerTargets(),
   hrsettings: ()=>renderSettingsHr(),
   hrsources: ()=>renderSettingsHrSources(),
   incentivegrid: ()=>renderSettingsIncentiveGrid(),

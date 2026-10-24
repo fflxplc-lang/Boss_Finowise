@@ -350,16 +350,13 @@ suite(async t => {
     return 'gross ' + r.gross + ', net ' + r.net;
   });
 
-  await t.step('the performance board reads the funnel and the partner', async () => {
+  await t.step('the performance page draws the target board', async () => {
     const r = await t.eval(async ()=>{
-      window._ppfTab = 'funnel'; navigate('ppf'); await new Promise(r=>setTimeout(r,80));
-      const row = Array.from(document.querySelectorAll('#ppfTable tbody tr')).find(tr=>tr.textContent.includes('Asha Rao'));
-      return {row: row ? row.textContent.replace(/\s+/g,' ').trim() : '',
-        tiles: Array.from(document.querySelectorAll('.mkpi')).map(k=>k.textContent.replace(/\s+/g,' ').trim())};
+      navigate('ppf'); await new Promise(r=>setTimeout(r,80));
+      return {head: (document.querySelector('#content .mod-head h2')||{}).textContent || '', text: document.getElementById('content').innerText.slice(0, 300)};
     });
-    if(!r.row || !/1,00,000|100,000/.test(r.row)) throw new Error(JSON.stringify(r));
-    if(!r.tiles.some(x=>/Fee Paid 1/.test(x))) throw new Error('tiles: ' + r.tiles.join(' | '));
-    return r.tiles.slice(0,3).join(' | ');
+    if(r.head !== 'Partner Performance') throw new Error(JSON.stringify(r));
+    return r.head;
   });
 
   await t.step('the new stages are offered in stage permissions like LMS and CMS', async () => {
