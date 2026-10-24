@@ -791,7 +791,7 @@ function pyHierarchy(){
         <td><button class="btn sm" onclick="pyCopyAccess(${i})">Copy access</button></td>
         <td class="py-r py-nowrap"><button class="btn sm ghost" title="Edit" onclick="pyUserModal(${i})">✎</button>
           <button class="btn sm ghost" title="Delete" onclick="pyUserDelete(${i})">🗑</button></td></tr>`), 'Nobody on the payout team yet.')),
-    `${pySearch('pyUserQ', 'userQ', 'Search name or email…', 220)}<button class="btn" onclick="pyUserExport()">⬇ Export</button><button class="btn primary" onclick="pyUserModal(-1)">+ New person</button>`);
+    `${pySearch('pyUserQ', 'userQ', 'Search name or email…', 220)}<button class="btn" onclick="pyUserExport()">⬇ Export</button>${pyFileButton('⬆ Import', 'pyTeamImport', '.xlsx,.xls,.csv')}<button class="btn ghost" onclick="pyTeamTemplate()">Template</button><button class="btn primary" onclick="pyUserModal(-1)">+ New person</button>`);
 }
 /* The whole team, whatever the search box holds: every RM, mentor,
    partner and admin with their level, who they report to, their sharing,
@@ -811,6 +811,166 @@ async function pyUserExport(){
       'Street': a.street || '', 'City': a.city || '', 'State': a.state || '', 'Pincode': a.pincode || '', 'Country': a.country || ''};
   });
   pyExport(rows, 'Payout_Team_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+}
+/* ---- Import the team from a sheet ----
+   The same columns Export writes, so a firm can export, fill in and bring
+   it back. Each row is a person on the payout team AND a BOSS team member
+   with a sign-in account: a new one is emailed their password, the same
+   way Team Members does it. A row is matched on its email, so a sheet
+   imported twice updates the same people. "Reports To" names someone by
+   email or by name, on this sheet or already on the team. */
+const PY_TEAM_COLS = {
+  name: ['name', 'full name'], email: ['email (boss login)', 'email', 'email id', 'login email'], mobile: ['mobile', 'mobile no', 'phone'],
+  code: ['employee / arn code', 'arn code', 'employee code', 'code', 'arn'], role: ['role', 'payout role'], level: ['primary level', 'level'],
+  extra: ['additional levels', 'extra levels'], parent: ['reports to', 'manager', 'reporting manager'], sharing: ['sharing %', 'sharing', 'sharing pct'],
+  gst: ['gst', 'gst number'], pan: ['pan', 'pan no'], bossRole: ['boss role', 'crm role', 'designation role'],
+  holder: ['bank account holder', 'account holder'], bankName: ['bank name', 'bank'], account: ['account number', 'account no'],
+  ifsc: ['ifsc', 'ifsc code'], branch: ['bank branch'], street: ['street', 'address'], city: ['city'], state: ['state'], pincode: ['pincode', 'pin code'], country: ['country'],
+};
+const PY_TEAM_ROLES = {'ops / rm': 'ops', 'ops': 'ops', 'rm': 'ops', 'relationship manager': 'ops', 'mentor': 'mentor', 'partner': 'partner', 'admin': 'admin'};
+function pyTeamTemplate(){
+  pyExport([
+    {'Name': 'Anmol Kumar Jha', 'Email (BOSS login)': 'anmol@example.com', 'Mobile': '9876500001', 'Employee / ARN Code': 'ARN-270604', 'Role': 'Mentor',
+      'Primary Level': 'L4', 'Additional Levels': 'L3', 'Reports To': '', 'Sharing %': 40, 'BOSS Role': 'Manager', 'GST': '', 'PAN': '',
+      'Bank Account Holder': 'Anmol Kumar Jha', 'Bank Name': 'HDFC Bank', 'Account Number': '50100012345678', 'IFSC': 'HDFC0001234', 'Bank Branch': 'Andheri',
+      'Street': '', 'City': 'Mumbai', 'State': 'Maharashtra', 'Pincode': '400001', 'Country': 'India'},
+    {'Name': 'Riya Sharma', 'Email (BOSS login)': 'riya@example.com', 'Mobile': '9876500002', 'Employee / ARN Code': 'EMP-014', 'Role': 'Ops / RM',
+      'Primary Level': 'L2', 'Additional Levels': '', 'Reports To': 'anmol@example.com', 'Sharing %': 30, 'BOSS Role': 'Executive', 'GST': '', 'PAN': '',
+      'Bank Account Holder': '', 'Bank Name': '', 'Account Number': '', 'IFSC': '', 'Bank Branch': '', 'Street': '', 'City': 'Pune', 'State': 'Maharashtra', 'Pincode': '', 'Country': 'India'},
+  ], 'Payout_Team_Import_Template.xlsx');
+}
+function pyTeamRows(table){
+  const at = {};
+  table.headers.forEach((h, i)=>{ const k = String(h || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    Object.entries(PY_TEAM_COLS).forEach(([f, names])=>{ if(at[f] === undefined && names.includes(k)) at[f] = i; }); });
+  if(at.name === undefined || at.email === undefined) return null;
+  return table.rows.map(row=>{
+    const o = {};
+    Object.keys(PY_TEAM_COLS).forEach(f=>{ o[f] = at[f] === undefined ? '' : String(row[at[f]] == null ? '' : row[at[f]]).trim(); });
+    o.email = o.email.toLowerCase();
+    return o;
+  }).filter(o=>o.name || o.email);
+}
+const pyLevelNum = v => { const n = Number(String(v || '').replace(/[^\d]/g, '')); return n >= 1 && n <= 7 ? n : 0; };
+async function pyTeamImport(file){
+  let tables, existing;
+  try { tables = (await impReadAllSheets(file)).tables; existing = await pyGet('/users'); }
+  catch(e){ pyToast(e.message, 'err'); return; }
+  const rows = tables.map(pyTeamRows).filter(Boolean)[0];
+  if(!rows) { pyToast('No sheet in that file has both a Name and an Email column. Start from the template.', 'err'); return; }
+  const byEmail = {}; existing.forEach(u=>{ byEmail[String(u.email || '').toLowerCase()] = u; });
+  const inFile = {};
+  rows.forEach(r=>{ if(r.email) inFile[r.email] = r; });
+  const findParent = p => { const k = String(p || '').trim().toLowerCase(); if(!k) return null;
+    return inFile[k] || byEmail[k] || rows.find(r=>r.name.toLowerCase() === k) || existing.find(u=>String(u.name || '').toLowerCase() === k) || false; };
+  const seen = {};
+  const plan = rows.map(r=>{
+    const problems = [], warn = [];
+    if(!r.name) problems.push('no name');
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email)) problems.push('email "' + r.email + '" is not usable');
+    if(seen[r.email]) problems.push('this email is on the sheet twice'); seen[r.email] = 1;
+    const role = PY_TEAM_ROLES[String(r.role || '').toLowerCase()] || (r.role ? null : 'ops');
+    if(!role) problems.push('role "' + r.role + '" is not Ops / RM, Mentor, Partner or Admin');
+    const level = r.level ? pyLevelNum(r.level) : 1;
+    if(!level) problems.push('level "' + r.level + '" is not 1–7');
+    const parent = findParent(r.parent);
+    if(parent === false) warn.push('reports to "' + r.parent + '" — nobody by that name or email; left as it is');
+    if(parent && String(parent.email || '').toLowerCase() === r.email) problems.push('reports to themselves');
+    const member = DB.team.find(t=>!t.deletedAt && String(t.email || '').toLowerCase() === r.email);
+    const bossRole = r.bossRole ? roleList().find(x=>roleNorm(x) === roleNorm(r.bossRole)) : '';
+    if(r.bossRole && !bossRole) warn.push('BOSS role "' + r.bossRole + '" is not set up — they get ' + defaultRole());
+    if(bossRole === ADMIN_ROLE && !isAdmin()) problems.push('only an admin can import a BOSS Admin');
+    return {r, role, level, parent: parent || null, parentMissing: parent === false, payout: byEmail[r.email] || null, member, bossRole: bossRole || '', problems, warn, skip: problems.length > 0};
+  });
+  PY.s._teamPlan = plan;
+  const go = plan.filter(p=>!p.skip);
+  const newAcc = go.filter(p=>!p.member).length;
+  openModal('Import the payout team', `<div class="small-note" style="margin-top:0">${esc(file.name)} — <b>${go.length}</b> to import
+      (${go.filter(p=>!p.payout).length} new to the payout team, ${go.filter(p=>p.payout).length} updated)${plan.length - go.length ? ', <b>' + (plan.length - go.length) + '</b> skipped' : ''}.
+      <b>${newAcc}</b> new BOSS sign-in account${newAcc === 1 ? '' : 's'} will be created, and each person emailed their password.</div>
+    <div class="table-wrap" style="max-height:360px;overflow:auto"><table id="pyTeamPlan"><thead><tr><th>Person</th><th>Role & level</th><th>Reports to</th><th>Payout</th><th>BOSS account</th><th>Check</th></tr></thead><tbody>
+    ${plan.map(p=>`<tr><td><b>${esc(p.r.name || '—')}</b><div class="small-note" style="margin:0">${esc(p.r.email)}</div></td>
+      <td>${esc(p.role || p.r.role)} · L${p.level || '?'}</td><td>${esc(p.parent ? p.parent.name : '—')}</td>
+      <td>${p.skip ? pyBadge('skipped', 'danger') : p.payout ? pyBadge('update', 'info') : pyBadge('new', 'ok')}</td>
+      <td>${p.skip ? '' : p.member ? pyBadge('has one', 'muted') : pyBadge('create + email', 'ok')}</td>
+      <td class="small-note">${esc(p.problems.concat(p.warn).join('; '))}</td></tr>`).join('')}</tbody></table></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" id="pyTeamGo" ${go.length ? '' : 'disabled'} onclick="pyTeamImportApply()">Import ${go.length} ${go.length === 1 ? 'person' : 'people'}</button>`);
+}
+async function pyTeamImportApply(){
+  const plan = (PY.s._teamPlan || []).filter(p=>!p.skip);
+  if(!plan.length) return;
+  const btn = document.getElementById('pyTeamGo'); if(btn){ btn.disabled = true; btn.textContent = 'Importing…'; }
+  const failed = [];
+  const body = p => {
+    const r = p.r, cur = p.payout || {};
+    const bank = Object.assign({}, cur.bank || {}), address = Object.assign({country: 'India'}, cur.address || {});
+    [['holder', 'holder'], ['bankName', 'bankName'], ['account', 'account'], ['ifsc', 'ifsc'], ['branch', 'branch']].forEach(([k, f])=>{ if(r[k]) bank[f] = k === 'ifsc' ? r[k].toUpperCase() : r[k]; });
+    ['street', 'city', 'state', 'pincode', 'country'].forEach(k=>{ if(r[k]) address[k] = r[k]; });
+    const extra = String(r.extra || '').split(/[,;/ ]+/).map(pyLevelNum).filter(l=>l && l !== p.level);
+    return Object.assign({}, cur, {name: r.name, email: r.email, code: r.code || cur.code || '', gst: r.gst || cur.gst || '', pan: r.pan || cur.pan || '',
+      role: p.role, level: p.level, extra_levels: r.extra ? extra : (cur.extra_levels || []).filter(l=>l !== p.level),
+      sharing_pct: r.sharing !== '' ? Number(String(r.sharing).replace('%', '')) || 0 : (cur.sharing_pct || 0), bank, address});
+  };
+  // 1. Everyone onto the payout team, then who reports to whom, once all of them exist.
+  const ids = {};
+  for(const p of plan){
+    try {
+      const b = body(p);
+      b.parent_id = p.parentMissing ? ((p.payout || {}).parent_id || null)
+        : !p.parent ? null
+        : (p.parent.id && !inPlan(p.parent.email)) ? p.parent.id
+        : ((p.payout || {}).parent_id || null);   // someone on this sheet: set below, once they exist
+      const u = p.payout ? await pyPut('/users/' + p.payout.id, b) : await pyPost('/users', b);
+      ids[p.r.email] = u.id;
+    } catch(e){ failed.push(p.r.name + ': ' + e.message); }
+  }
+  function inPlan(email){ return plan.some(q=>q.r.email === String(email || '').toLowerCase()); }
+  for(const p of plan){
+    if(!p.parent || !ids[p.r.email] || !inPlan(p.parent.email)) continue;
+    const pid = ids[String(p.parent.email).toLowerCase()];
+    if(pid) try { await pyPut('/users/' + ids[p.r.email], {parent_id: pid}); } catch(e){ failed.push(p.r.name + ' (reports to): ' + e.message); }
+  }
+  // 2. A BOSS team member and a sign-in account for each.
+  const made = [];
+  for(const p of plan){
+    if(!ids[p.r.email]) continue;
+    let m = p.member;
+    if(!m){
+      const role = p.bossRole || defaultRole();
+      const access = roleTemplateAccess(role);
+      m = {id: uid('USR'), name: p.r.name, email: p.r.email, mobile: String(p.r.mobile || '').replace(/\D/g, '').slice(-10), role, status: 'Active',
+        scope: (access && access.scope) || 'own', branch: (DB.config.branches || [])[0] || '', departments: [], managerIds: [],
+        perms: access ? access.perms : fullPerms(false, {view: 1}), adminFlags: access ? access.adminFlags : fullAdminFlags(false),
+        employeeId: nextEmployeeId(), designation: p.role === 'mentor' ? 'Mentor' : p.role === 'ops' ? 'Relationship Manager' : '',
+        joinedAt: new Date().toISOString(), createdAt: new Date().toISOString(), createdBy: currentUser, documents: [], notes: [], parentUserId: currentUser};
+      if(access && access.pagePerms) m.pagePerms = access.pagePerms;
+      if(access && access.stagePerms) m.stagePerms = access.stagePerms;
+      DB.team.push(m);
+      made.push(m);
+      await logAudit('Team', m.id, 'Profile Created', [{field: 'Name', oldValue: '', newValue: m.name}, {field: 'From', oldValue: '', newValue: 'Payout team import'}]);
+    } else if(p.bossRole && m.role !== p.bossRole){ m.role = p.bossRole; }
+    p._member = m;
+  }
+  // Their reporting line in BOSS follows the sheet too, where that manager is in BOSS.
+  plan.forEach(p=>{
+    if(!p._member || !p.parent) return;
+    const boss = DB.team.find(t=>!t.deletedAt && String(t.email || '').toLowerCase() === String(p.parent.email || '').toLowerCase());
+    if(boss && boss.id !== p._member.id){ setUserManagers(p._member, [boss.id]); p._member.parentUserId = boss.id; }
+  });
+  await save('team');
+  let mailed = 0, notMailed = 0, accounts = 0;
+  for(const p of plan){
+    if(!p._member) continue;
+    const a = await provisionMemberAccount(p._member);
+    if(a && a.created){ accounts++; if(a.mail && a.mail.sent) mailed++; else notMailed++; }
+    else if(a && a.ok === false && !a.skipped) failed.push(p.r.name + ' (sign-in): ' + (a.message || ''));
+  }
+  closeModal();
+  pyInvalidate(); render();
+  alert('Imported ' + Object.keys(ids).length + ' of ' + plan.length + ' to the payout team.\n'
+    + made.length + ' new BOSS team member(s); ' + accounts + ' sign-in account(s) created'
+    + (accounts ? ' — ' + mailed + ' emailed their password' + (notMailed ? ', ' + notMailed + ' could NOT be emailed (no mail connector) — the password is on their profile' : '') : '') + '.'
+    + (failed.length ? '\n\nNot done:\n' + failed.join('\n') : ''));
 }
 function pyCopyAccess(i){
   const u = PY.rows.users[i]; if(!u) return;
