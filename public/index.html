@@ -2688,6 +2688,30 @@ html,body{overflow-x:hidden;max-width:100%}
 @media print{
   .ai-panel,.ai-scrim,.ai-open-btn,.ai-selbtn{display:none!important}
 }
+/* Partner Journey › Performance › Business. Chart colours are the dataviz
+   reference palette, checked against this card's light and dark surfaces. */
+:root{--pf-1:#2a78d6;--pf-2:#eb6834;--pf-3:#1baf7a;--pf-4:#eda100;--pf-5:#e87ba4;--pf-grid:#e1e0d9;--pf-axis:#898781;
+  --pf-r5:#104281;--pf-r4:#1c5cab;--pf-r3:#3987e5;--pf-r2:#6da7ec;--pf-r1:#9ec5f4;--pf-r0:#c3c2b7}
+html.dark{--pf-1:#3987e5;--pf-2:#d95926;--pf-3:#199e70;--pf-4:#c98500;--pf-5:#d55181;--pf-grid:#16323f;--pf-axis:#94A1B0;
+  --pf-r5:#cde2fb;--pf-r4:#9ec5f4;--pf-r3:#5598e7;--pf-r2:#256abf;--pf-r1:#184f95;--pf-r0:#383835}
+.pf-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin:4px 0 14px}
+.pf-invested{font-size:13px;color:var(--muted)} .pf-invested b{color:var(--text);font-size:16px}
+.pf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:14px;margin-top:14px}
+.pf-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.pf-card h3{margin:0 0 10px;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.pf-card h3 small{font-weight:500;color:var(--muted);font-size:12px}
+.pf-card svg{width:100%;height:auto;display:block;overflow:visible}
+.pf-card svg text{fill:var(--pf-axis);font-size:10px}
+.pf-card svg .pf-lbl{fill:var(--text);font-size:11px}
+.pf-card table{width:100%;border-collapse:collapse;font-size:12.5px}
+.pf-card th{text-align:left;color:var(--muted);font-weight:600;padding:6px 6px;border-bottom:1px solid var(--line)}
+.pf-card td{padding:6px 6px;border-bottom:1px solid var(--line)} .pf-card .num{text-align:right;font-variant-numeric:tabular-nums}
+.pf-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--text);margin-top:8px}
+.pf-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.pf-note{font-size:12px;color:var(--muted);margin-top:8px}
+.pf-hit{fill:transparent;cursor:default} .pf-hit:hover + .pf-mark,.pf-mark:hover{opacity:.8}
+#pfTip{position:fixed;z-index:9999;pointer-events:none;background:var(--card);color:var(--text);border:1px solid var(--line);
+  border-radius:8px;padding:6px 9px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.12);display:none;max-width:260px;white-space:pre-line}
 </style>
 </head>
 <body>
@@ -5387,6 +5411,8 @@ const SCHEME_FIELDS = [
   {k:'schemeCode',l:'Scheme Code',t:'text'},
   {k:'riskLevel',l:'Risk Level (Riskometer)',t:'select',optsKey:'alloc.riskLevels'},
   {k:'fundManager',l:'Fund Manager',t:'text'},
+  {k:'starRating',l:'Star Rating',t:'select',opts:['5','4','3','2','1'],
+   alias:['Rating','Star Rating','Stars','Value Research Rating','Morningstar Rating']},
   {k:'aboutFundManager',l:'About the Fund Manager',t:'textarea'},
   {k:'fundObjective',l:'Fund Objective',t:'textarea'},
 ];
@@ -51311,8 +51337,293 @@ async function pjSavePayout(id){
    Nothing is typed in here. The funnel is read from PPS, the partners'
    progress from PMS, their questions from PQS and their money from the
    payouts, inside whatever the Timeline is set to. */
+/* =====================================================================
+   PPF › BUSINESS PERFORMANCE (B2B performance doc)
+
+   The back-office view of the business a partner looks after: AUM, its
+   growth month by month, who and what it is made of, and the SIP book.
+   Two scopes on one toggle. Self is the clients the signed-in person is
+   mapped on in Payouts. Team adds everyone who reports to them, however
+   deep; for an admin that is the whole company.
+
+   The figures come from the payout engine (/api/payout/reports/
+   performance), which holds the registrar files. BOSS adds what only it
+   knows: which investors make one family (Family Head on the client),
+   each investor's XIRR from the platform AUM imports, and the star rating
+   an admin keeps on the scheme master.
+   ===================================================================== */
+const PF = {scope:'team', months:12, all:{}, cache:{}, loading:{}, err:{}};
+function pfData(scope){
+  if(PF.cache[scope]) return PF.cache[scope];
+  if(PF.err[scope] || PF.loading[scope]) return undefined;
+  PF.loading[scope] = true;
+  pyGet('/reports/performance?scope=' + scope).then(d=>{ PF.cache[scope] = d; },
+    e=>{ PF.err[scope] = {message: e.message, code: e.code}; })
+    .finally(()=>{ delete PF.loading[scope]; if(currentView === 'ppf') render(); });
+  return undefined;
+}
+function pfRefresh(){ PF.cache = {}; PF.err = {}; render(); }
+const pfLakh = n => (Number(n)||0) / 1e5;
+const pfL = n => pfLakh(n).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+const pfPct = (n, d=2) => (Number(n)||0).toFixed(d) + '%';
+function pfShort(n){
+  n = Number(n)||0; const a = Math.abs(n);
+  if(a >= 1e7) return (n/1e7).toFixed(a >= 1e9 ? 0 : 1).replace(/\.0$/,'') + ' Cr';
+  if(a >= 1e5) return (n/1e5).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/,'') + ' L';
+  if(a >= 1e3) return (n/1e3).toFixed(0) + 'K';
+  return String(Math.round(n));
+}
+const pfNorm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+/* The ticks for a value axis from zero: about four, on a round step. */
+function pfTicks(max){
+  if(!(max > 0)) return [0, 1];
+  const raw = max / 4, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m=>m*mag).find(s=>s >= raw);
+  const out = []; for(let v = 0; v <= max + step*0.001; v += step) out.push(v);
+  if(out[out.length-1] < max) out.push(out[out.length-1] + step);
+  return out;
+}
+/* One tooltip for every chart on the page, fed by data-tip on the mark. */
+function pfTipInit(){
+  if(window._pfTip) return; window._pfTip = true;
+  document.addEventListener('mousemove', e=>{
+    let tip = document.getElementById('pfTip');
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if(!el){ if(tip) tip.style.display = 'none'; return; }
+    if(!tip){ tip = document.createElement('div'); tip.id = 'pfTip'; document.body.appendChild(tip); }
+    tip.textContent = el.getAttribute('data-tip');
+    tip.style.display = 'block';
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(window.innerWidth - w - 8, e.clientX + 14) + 'px';
+    tip.style.top = Math.max(8, e.clientY - h - 10) + 'px';
+  });
+}
+/* A bar with a rounded data end and a square foot on the baseline. */
+function pfBarPath(x, y, w, h, horiz){
+  const r = Math.min(4, w/2, h);
+  if(h <= 0) return '';
+  if(horiz) return `M${x} ${y} h${h - r} q${r} 0 ${r} ${r} v${w - 2*r} q0 ${r} ${-r} ${r} h${-(h - r)} Z`;
+  return `M${x} ${y + h} v${-(h - r)} q0 ${-r} ${r} ${-r} h${w - 2*r} q${r} 0 ${r} ${r} v${h - r} Z`;
+}
+const PF_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const pfMonLabel = p => PF_MON[Number(p.slice(5,7)) - 1] + ' ' + p.slice(2,4);
+
+/* Last four calendar years, month by month: one bar per year in each month. */
+function pfYearBars(monthly, latest){
+  const y1 = Number(latest.slice(0,4)), years = [y1-3, y1-2, y1-1, y1];
+  const at = new Map(monthly.map(m=>[m.period, m.aum]));
+  const used = years.filter(y=>PF_MON.some((_, i)=>at.get(`${y}-${String(i+1).padStart(2,'0')}`) > 0));
+  const W = 460, H = 220, L = 40, B = 20, T = 8, slot = (W - L) / 12;
+  const max = Math.max(0, ...monthly.map(m=>m.aum)), ticks = pfTicks(max), top = ticks[ticks.length-1];
+  const y = v => T + (H - T - B) * (1 - v/top);
+  const bw = Math.max(3, Math.min(10, (slot - 8) / Math.max(1, used.length) - 2));
+  const color = y => 'var(--pf-' + (years.indexOf(y) + 1) + ')';
+  let marks = '';
+  PF_MON.forEach((mon, i)=>{
+    const x0 = L + i*slot + (slot - used.length*(bw+2) + 2)/2;
+    used.forEach((yr, j)=>{
+      const v = at.get(`${yr}-${String(i+1).padStart(2,'0')}`) || 0;
+      if(!v) return;
+      const x = x0 + j*(bw+2), h = y(0) - y(v);
+      marks += `<path class="pf-mark" d="${pfBarPath(x, y(v), bw, h)}" fill="${color(yr)}" data-tip="${esc(mon + ' ' + yr + '\nAUM ₹' + pfL(v) + ' lakhs')}"/>`;
+    });
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Monthly AUM, last four years">
+    ${ticks.map(v=>`<line x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="var(--pf-grid)" stroke-width="1"/>
+      <text x="${L-6}" y="${y(v)+3}" text-anchor="end">${pfShort(v)}</text>`).join('')}
+    ${marks}
+    ${PF_MON.map((m, i)=>`<text x="${L + i*slot + slot/2}" y="${H-6}" text-anchor="middle">${m}</text>`).join('')}
+  </svg>
+  <div class="pf-legend">${used.map(y=>`<span><i style="background:${color(y)}"></i>${y}</span>`).join('')}</div>`;
+}
+
+/* AUM over the last N months: a line with a light area under it. */
+function pfTrend(monthly, latest, n){
+  const at = new Map(monthly.map(m=>[m.period, m.aum]));
+  const pts = []; for(let i = n-1; i >= 0; i--){ const p = pfShift(latest, -i); pts.push({p, v: at.get(p) || 0}); }
+  const W = 460, H = 200, L = 40, B = 20, T = 10, R = 10;
+  const ticks = pfTicks(Math.max(0, ...pts.map(p=>p.v))), top = ticks[ticks.length-1];
+  const x = i => L + (pts.length < 2 ? 0 : i * (W - L - R) / (pts.length - 1));
+  const y = v => T + (H - T - B) * (1 - v/top);
+  const d = pts.map((p, i)=>(i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.v).toFixed(1)).join(' ');
+  const every = Math.ceil(pts.length / 6), half = (W - L - R) / Math.max(1, pts.length - 1) / 2;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="AUM, last ${n} months">
+    ${ticks.map(v=>`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--pf-grid)" stroke-width="1"/>
+      <text x="${L-6}" y="${y(v)+3}" text-anchor="end">${pfShort(v)}</text>`).join('')}
+    <path d="${d} L${x(pts.length-1)} ${y(0)} L${x(0)} ${y(0)} Z" fill="var(--pf-1)" opacity=".12"/>
+    <path d="${d}" fill="none" stroke="var(--pf-1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${pts.map((p, i)=>`<g><rect class="pf-hit" x="${x(i)-half}" y="${T}" width="${half*2}" height="${H-T-B}" data-tip="${esc(pfMonLabel(p.p) + '\nAUM ₹' + pfL(p.v) + ' lakhs')}"/>
+      ${i === pts.length-1 ? `<circle cx="${x(i)}" cy="${y(p.v)}" r="4" fill="var(--pf-1)" stroke="var(--card)" stroke-width="2"/>` : ''}</g>`).join('')}
+    ${pts.map((p, i)=>i % every && i !== pts.length-1 ? '' : `<text x="${x(i)}" y="${H-6}" text-anchor="middle">${pfMonLabel(p.p)}</text>`).join('')}
+  </svg>`;
+}
+function pfShift(p, k){ let y = Number(p.slice(0,4)), m = Number(p.slice(5,7)) + k; while(m < 1){ m += 12; y--; } while(m > 12){ m -= 12; y++; } return y + '-' + String(m).padStart(2,'0'); }
+
+/* The broad category split: a donut, the legend carrying % and amount. */
+const PF_BROAD = ['Equity','Hybrid','Debt','Solution Oriented','Other'];
+function pfDonut(broad){
+  const total = broad.reduce((s, b)=>s + b.value, 0) || 1;
+  const items = PF_BROAD.map((name, i)=>({name, color:`var(--pf-${i+1})`, value:(broad.find(b=>b.name === name) || {}).value || 0})).filter(b=>b.value > 0);
+  const R = 56, C = 2*Math.PI*R; let at = 0;
+  const segs = items.map(b=>{
+    const len = b.value/total*C, gap = items.length > 1 ? Math.min(2, len/2) : 0;
+    const s = `<circle cx="80" cy="80" r="${R}" fill="none" stroke="${b.color}" stroke-width="22" stroke-dasharray="${Math.max(0, len-gap)} ${C}" stroke-dashoffset="${-at}"
+      data-tip="${esc(b.name + '\n' + pfPct(b.value*100/total) + ' · ₹' + pfL(b.value) + ' lakhs')}"/>`;
+    at += len; return s;
+  }).join('');
+  return `<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+    <svg viewBox="0 0 160 160" style="width:170px;flex:none" role="img" aria-label="AUM by broad category"><g transform="rotate(-90 80 80)">${segs}</g>
+      <text x="80" y="76" text-anchor="middle" class="pf-lbl" style="font-size:10px;fill:var(--muted)">AUM</text>
+      <text x="80" y="92" text-anchor="middle" class="pf-lbl" style="font-weight:700;font-size:13px">₹${pfShort(total)}</text></svg>
+    <table style="flex:1;min-width:200px"><tbody>${items.map(b=>`<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${b.color};margin-right:7px"></i>${esc(b.name)}</td>
+      <td class="num">${pfPct(b.value*100/total)}</td><td class="num">₹${pfL(b.value)} L</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+/* Ranked horizontal bars in one colour: name on the left, share on the right. */
+function pfHBars(rows, total, tip){
+  if(!rows.length) return `<div class="pf-note">Nothing to show yet.</div>`;
+  const W = 460, row = 24, L = 150, R = 52, H = rows.length*row;
+  const max = Math.max(...rows.map(r=>r.value)) || 1;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img">${rows.map((r, i)=>{
+    const w = Math.max(1, (W - L - R) * r.value / max), y = i*row + 5, pct = r.value*100/(total || 1);
+    const name = r.name.length > 26 ? r.name.slice(0, 25) + '…' : r.name;
+    return `<g data-tip="${esc(r.name + '\n' + pfPct(pct) + ' · ₹' + pfL(r.value) + ' lakhs' + (tip ? '\n' + tip : ''))}">
+      <rect class="pf-hit" x="0" y="${i*row}" width="${W}" height="${row}"/>
+      <text x="${L-8}" y="${y+10}" text-anchor="end" class="pf-lbl">${esc(name)}</text>
+      <path class="pf-mark" d="${pfBarPath(L, y, 14, w, true)}" fill="var(--pf-1)"/>
+      <text x="${L + w + 6}" y="${y+10}" class="pf-lbl">${pfPct(pct)}</text></g>`;
+  }).join('')}</svg>`;
+}
+
+/* Star ratings as one 100% bar, darker for more stars. */
+function pfRatings(rated, total){
+  const order = ['5','4','3','2','1','unrated'];
+  const label = k => k === 'unrated' ? 'Not rated' : k + ' Star';
+  const items = order.map(k=>({k, value: rated[k] || 0})).filter(x=>x.value > 0);
+  const W = 460, H = 28; let at = 0;
+  const segs = items.map(x=>{
+    const w = W * x.value/(total || 1), s = `<rect x="${at}" y="0" width="${Math.max(1, w - 2)}" height="${H}" rx="4" fill="var(--pf-r${x.k === 'unrated' ? 0 : x.k})"
+      data-tip="${esc(label(x.k) + '\n' + pfPct(x.value*100/(total||1)) + ' of AUM · ₹' + pfL(x.value) + ' lakhs')}"/>`;
+    at += w; return s;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="AUM by scheme star rating">${segs}</svg>
+    <div class="pf-legend">${items.map(x=>`<span><i style="background:var(--pf-r${x.k === 'unrated' ? 0 : x.k})"></i>${label(x.k)} · ${pfPct(x.value*100/(total||1))}</span>`).join('')}</div>`;
+}
+
+const PF_SIZE = [['Upto 2 Lakhs',0,2e5],['2-5 Lakhs',2e5,5e5],['5-10 Lakhs',5e5,1e6],['10-25 Lakhs',1e6,25e5],['25-50 Lakhs',25e5,5e6],
+  ['50-75 Lakhs',5e6,75e5],['75 Lakhs-1 Crore',75e5,1e7],['1-2 Crores',1e7,2e7],['2-5 Crores',2e7,5e7],['Above 5 Crores',5e7,Infinity]];
+const PF_RET = [['Negative',-Infinity,0],['0-5%',0,5],['5-10%',5,10],['10-12%',10,12],['12-15%',12,15],['15-20%',15,20],['Above 20%',20,Infinity]];
+
+/* BOSS's half: families, XIRR and star ratings, matched by PAN and scheme name. */
+function pfEnrich(d){
+  const byPan = new Map();
+  (DB.clients||[]).forEach(c=>{ if(!c.deletedAt && c.pan) byPan.set(String(c.pan).toUpperCase().trim(), c); });
+  const xirr = new Map();
+  (DB.platformHoldings||[]).forEach(h=>{
+    if(h.deletedAt || !h.clientId || h.xirr === '' || h.xirr == null || isNaN(Number(h.xirr))) return;
+    const a = xirr.get(h.clientId) || {w:0, s:0}, w = Number(h.current) || 1;
+    a.w += w; a.s += w*Number(h.xirr); xirr.set(h.clientId, a);
+  });
+  const families = new Map();
+  const investors = d.investors.map(inv=>{
+    const c = inv.pan ? byPan.get(inv.pan) : null;
+    let ret = null, basis = '';
+    if(c && xirr.has(c.id)){ const a = xirr.get(c.id); ret = a.s/a.w; basis = 'xirr'; }
+    else if(inv.invested > 0){ ret = (inv.aum - inv.invested)*100/inv.invested; basis = 'abs'; }
+    const head = c && (c.familyHeadLookup || (c.familyHead ? 'name:' + pfNorm(c.familyHead) : c.id));
+    const fk = head ? 'f:' + head : 'i:' + inv.key;
+    const f = families.get(fk) || {name: c ? (c.familyHeadLookup ? clientName(c.familyHeadLookup) : (c.familyHead || c.cmsName || inv.name)) : inv.name, members:0, aum:0};
+    f.members++; f.aum += inv.aum; families.set(fk, f);
+    return {...inv, ret, basis};
+  });
+  const stars = new Map();
+  (DB.schemes||[]).forEach(s=>{ if(!s.deletedAt && s.starRating) stars.set(pfNorm(s.schemeName), String(s.starRating).replace(/\D/g,'').slice(0,1)); });
+  const rated = {};
+  d.schemes.forEach(s=>{ const k = stars.get(pfNorm(s.scheme)) || 'unrated'; rated[k] = (rated[k]||0) + s.aum; });
+  return {investors, families: [...families.values()].sort((a, b)=>b.aum - a.aum), rated, anyRated: stars.size > 0};
+}
+
+function pfTable(id, head, rows, limit){
+  const all = PF.all[id], shown = all ? rows : rows.slice(0, limit);
+  return `<table><thead><tr>${head.map(h=>`<th class="${h[1]||''}">${esc(h[0])}</th>`).join('')}</tr></thead>
+    <tbody>${shown.join('') || `<tr><td colspan="${head.length}" class="empty">Nothing yet.</td></tr>`}</tbody></table>
+    ${rows.length > limit ? `<div style="margin-top:8px"><button class="btn sm ghost" onclick="PF.all['${id}']=${all ? 'false' : 'true'}; render()">${all ? 'Show top ' + limit : 'View all ' + rows.length}</button></div>` : ''}`;
+}
+
+function pfBusinessHtml(){
+  pfTipInit();
+  const scope = PF.scope, d = pfData(scope), err = PF.err[scope];
+  const toggle = `<div class="pf-bar"><div class="pill-tabs" role="tablist" aria-label="Whose performance">
+      ${[['team','Team'],['self','Self']].map(([k,l])=>`<button class="${scope === k ? 'active' : ''}" onclick="PF.scope='${k}'; render()">${l}</button>`).join('')}
+    </div>${d ? `<div class="pf-invested">Invested Amount: <b>₹${pfL(d.kpis.invested)}</b> (in lakhs)</div>` : ''}</div>`;
+  if(err){
+    const msg = err.code === 'NOT_IN_TEAM'
+      ? 'Your sign-in is not on the payout team yet, so there is no business to show. An admin adds you under Payouts › Clients & Map › Hierarchy, and maps your clients to you.'
+      : err.message;
+    return toggle + `<div class="pf-card"><div class="pf-note">${esc(msg)}</div><button class="btn sm ghost" style="margin-top:8px" onclick="pfRefresh()">Try again</button></div>`;
+  }
+  if(!d) return toggle + `<div class="pf-card"><div class="pf-note">Loading the ${scope === 'team' ? 'team' : 'your'} figures…</div></div>`;
+  const who = scope === 'self' ? 'the clients you are mapped on' : d.people == null ? 'the whole company' : `you and the ${d.people - 1} ${d.people - 1 === 1 ? 'person' : 'people'} under you`;
+  if(!d.hasData) return toggle + `<div class="pf-card"><div class="pf-note">No AUM on file for ${esc(who)} yet. It fills in once the registrar brokerage files are imported under Payouts › Data Import and the clients are mapped.</div></div>`;
+  const k = d.kpis, e = pfEnrich(d), total = k.aum;
+  const up = k.change >= 0;
+  const tile = (label, html) => ({label, html});
+  const sizes = PF_SIZE.map(([l, lo, hi])=>({l, n: e.investors.filter(i=>i.aum >= lo && i.aum < hi).length,
+    v: e.investors.filter(i=>i.aum >= lo && i.aum < hi).reduce((s, i)=>s + i.aum, 0)}));
+  const withRet = e.investors.filter(i=>i.ret != null);
+  const rets = PF_RET.map(([l, lo, hi])=>({l, list: withRet.filter(i=>i.ret >= lo && i.ret < hi)}));
+  const xirrN = withRet.filter(i=>i.basis === 'xirr').length;
+  const sipTotal = d.sipByAmc.reduce((s, x)=>s + x.value, 0);
+  return toggle + `
+    <div class="pf-note" style="margin:-6px 0 10px">Showing ${esc(who)} · AUM as of ${esc(pfMonLabel(d.latest))}</div>
+    ${kpiCards([
+      tile('Total AUM (in lakhs)', `₹${pfL(total)}<div style="font-size:12px;font-weight:500;margin-top:4px;color:${up ? 'var(--ok)' : 'var(--danger)'}">${up ? '▲' : '▼'} ₹${Math.abs(Math.round(k.change)).toLocaleString('en-IN')} · ${pfPct(Math.abs(k.changePct))} vs last month</div>`),
+      tile('No of Investors', k.investors.toLocaleString('en-IN')),
+      tile('No of Families', e.families.length.toLocaleString('en-IN')),
+      tile('No of ELSS Investors', k.elssInvestors.toLocaleString('en-IN')),
+      tile('No of SIP Count', k.sipCount.toLocaleString('en-IN')),
+      tile('SIP Amount', '₹' + Math.round(k.sipAmount).toLocaleString('en-IN')),
+      tile('Average SIP Amount', '₹' + Math.round(k.sipAverage).toLocaleString('en-IN')),
+    ])}
+    <div class="pf-grid">
+      <div class="pf-card"><h3>Last 4 years Monthly AUM</h3>${pfYearBars(d.monthly, d.latest)}</div>
+      <div class="pf-card"><h3>Top Investors <small>Amount in lakhs</small></h3>
+        ${pfTable('inv', [['Name'],['PAN'],['Amount','num']], e.investors.map(i=>`<tr><td>${esc(i.name)}</td><td>${esc(i.pan || '—')}</td><td class="num">${pfL(i.aum)}</td></tr>`), 10)}</div>
+      <div class="pf-card"><h3>AUM <span class="pill-tabs">${[12,24,36].map(n=>`<button class="${PF.months === n ? 'active' : ''}" onclick="PF.months=${n}; render()">Last ${n} Months</button>`).join('')}</span></h3>
+        ${pfTrend(d.monthly, d.latest, PF.months)}</div>
+      <div class="pf-card"><h3>Top Families <small>Amount in lakhs</small></h3>
+        ${pfTable('fam', [['Family Head'],['Members','num'],['Amount','num']], e.families.map(f=>`<tr><td>${esc(f.name)}</td><td class="num">${f.members}</td><td class="num">${pfL(f.aum)}</td></tr>`), 10)}
+        <div class="pf-note">Investors are grouped by the Family Head on their BOSS client record, matched by PAN. One with no family set counts as a family of one.</div></div>
+      <div class="pf-card"><h3>AUM Break-up Broad Category</h3>${pfDonut(d.broad)}</div>
+      <div class="pf-card"><h3>AUM Break-up Category (Top-10)</h3>${pfHBars(d.categories.slice(0, 10), total)}</div>
+      <div class="pf-card"><h3>Top Schemes <small>Amount in lakhs</small></h3>
+        ${pfTable('sch', [['Scheme'],['Amount','num']], d.schemes.map(s=>`<tr><td>${esc(s.scheme)}</td><td class="num">${pfL(s.aum)}</td></tr>`), 10)}</div>
+      <div class="pf-card"><h3>Scheme Ratings <small>share of AUM</small></h3>${pfRatings(e.rated, total)}
+        ${e.anyRated ? '' : `<div class="pf-note">No star ratings on file yet. Add them under Products › Schemes (Star Rating) and this bar fills in.</div>`}</div>
+      <div class="pf-card"><h3>Investor Classification <small>by AUM</small></h3>
+        <table><thead><tr><th>Investment</th><th class="num">Count</th><th class="num">AUM (lakhs)</th></tr></thead>
+        <tbody>${sizes.map(s=>`<tr><td>${s.l}</td><td class="num">${s.n}</td><td class="num">${pfL(s.v)}</td></tr>`).join('')}</tbody></table></div>
+      <div class="pf-card"><h3>Investors Returns Classification</h3>
+        <table><thead><tr><th>Returns</th><th class="num">Count</th><th class="num">Percentage</th><th class="num">Total (lakhs)</th></tr></thead>
+        <tbody>${rets.map(r=>`<tr><td>${r.l}</td><td class="num">${r.list.length}</td><td class="num">${withRet.length ? pfPct(r.list.length*100/withRet.length) : '—'}</td>
+          <td class="num">${pfL(r.list.reduce((s, i)=>s + i.aum, 0))}</td></tr>`).join('')}</tbody></table>
+        <div class="pf-note">${withRet.length} of ${e.investors.length} investors have a return. ${xirrN} use the XIRR from BOSS's platform AUM import; the rest use (current value − net invested) ÷ net invested from the registrar transactions.</div></div>
+      <div class="pf-card"><h3>SIP Info <small>share of SIP amount by AMC</small></h3>
+        ${pfHBars(d.sipByAmc.slice(0, 10), sipTotal)}
+        <div class="pf-note">${k.sipTo ? `SIP instalments from ${esc(fmtDate(k.sipSince))} to ${esc(fmtDate(k.sipTo))}, the last month of transaction files.` : 'No SIP transactions on file yet.'}</div></div>
+    </div>`;
+}
+
 function viewPPF(){
   if(!can('PPF','view')) return permissionWall('Partners');
+  const tab = window._ppfTab || 'business';
+  const tabs = `<div class="pill-tabs" style="margin:0 0 14px">${[['business','Business Performance'],['funnel','Partner Funnel']].map(([k,l])=>
+    `<button class="${tab === k ? 'active' : ''}" onclick="window._ppfTab='${k}'; render()">${l}</button>`).join('')}</div>`;
+  if(tab === 'business') return `${moduleHeader({title:'Partner Performance System', subtitle:'The business under you: AUM, investors, schemes and SIPs',
+    actions:[{label:'Refresh', onclick:'pfRefresh()'}]})}${tabs}${pfBusinessHtml()}`;
+  return viewPPFFunnel(tabs);
+}
+function viewPPFFunnel(tabs){
   const prospects = applyTimeline('PPS', visibleRecords(pjProspects(), r=>r.assignedTo, r=>r.branch));
   const partners = visibleRecords(pjPartners(), r=>r.assignedTo, r=>r.branch);
   const payouts = applyTimeline('PPF', pjPayouts().filter(p=>!p.deletedAt && (p.status==='Paid' || p.status==='Approved' || p.status==='Calculated')));
@@ -51331,7 +51642,7 @@ function viewPPF(){
       attempts: (p.examAttempts||[]).length};
   }).sort((a,b)=>b.business-a.business);
   return `${moduleHeader({title:'Partner Performance System', subtitle:'The prospect funnel, and how each partner is doing', actions:[]})}
-    ${timelineBarHtml('PPS')}
+    ${tabs}${timelineBarHtml('PPS')}
     ${kpiCards([
       {label:'Registrations', value: reg, tone:'info'},
       {label:'Attended', value: attended + ' · ' + pct(attended, reg), tone:'info'},

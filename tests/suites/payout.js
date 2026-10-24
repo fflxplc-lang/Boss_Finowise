@@ -101,6 +101,33 @@ suite(async t => {
     return '9 clients mapped';
   });
 
+  await t.step('Partner Journey › Performance shows the business, team and self', async () => {
+    const d = await t.eval(() => pyGet('/reports/performance?scope=team'));
+    if(!d.hasData || !(d.kpis.aum > 0) || !d.investors.length || !d.schemes.length) throw new Error(JSON.stringify(d.kpis));
+    const broad = d.broad.reduce((s, b) => s + b.value, 0), inv = d.investors.reduce((s, i) => s + i.aum, 0);
+    if(Math.abs(broad - d.kpis.aum) > 1 || Math.abs(inv - d.kpis.aum) > 1) throw new Error(`AUM ${d.kpis.aum}, broad ${broad}, investors ${inv}`);
+    if(d.latest !== '2026-08' || !d.monthly.find(m => m.period === '2026-07')) throw new Error('months ' + JSON.stringify(d.monthly));
+    await t.eval(() => { window._ppfTab = 'business'; PF.scope = 'team'; pfRefresh(); navigate('ppf'); });
+    await p.waitForFunction(() => /Last 4 years Monthly AUM/.test(document.getElementById('content').innerText), null, {timeout: 15000});
+    const seen = await t.eval(() => {
+      const c = document.getElementById('content');
+      return {svgs: c.querySelectorAll('.pf-card svg').length, tips: c.querySelectorAll('[data-tip]').length,
+        heads: Array.from(c.querySelectorAll('.pf-card h3')).map(h => h.firstChild.textContent.trim())};
+    });
+    const want = ['Last 4 years Monthly AUM', 'Top Investors', 'AUM', 'Top Families', 'AUM Break-up Broad Category', 'AUM Break-up Category (Top-10)',
+      'Top Schemes', 'Scheme Ratings', 'Investor Classification', 'Investors Returns Classification', 'SIP Info'];
+    const missing = want.filter(w => !seen.heads.includes(w));
+    if(missing.length || seen.svgs < 5 || seen.tips < 10) throw new Error(JSON.stringify({missing, ...seen}));
+    await t.eval(() => { PF.scope = 'self'; render(); });
+    await p.waitForFunction(() => PF.cache.self || PF.err.self, null, {timeout: 15000});
+    const self = await t.eval(() => PF.cache.self);
+    if(!self || self.scope !== 'self' || self.people !== 1) throw new Error('self: ' + JSON.stringify(self && self.kpis));
+    await t.eval(() => { window._ppfTab = 'funnel'; render(); });
+    if(!await t.eval(() => !!document.getElementById('ppfTable'))) throw new Error('the Partner Funnel tab lost its table');
+    await t.eval(() => { window._ppfTab = undefined; });
+    return `₹${(d.kpis.aum / 1e5).toFixed(2)} L across ${d.investors.length} investors, ${seen.svgs} charts; Self shows ₹${(self.kpis.aum / 1e5).toFixed(2)} L`;
+  });
+
   await t.step('Team payouts shows the July and August figures from TEST-GUIDE', async () => {
     const read = async month => {
       await t.eval(m => { PY.s.repTab = 'team'; PY.s.repYear = '2026'; PY.s.repMonth = m; navigate('pyreports'); }, month);

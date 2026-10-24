@@ -76,7 +76,7 @@ function pyData(url){
 }
 function pyErr(url){ return PY.errors[url]; }
 /* Anything that changes data calls this: every cached answer is stale. */
-function pyInvalidate(){ PY.cache = {}; PY.errors = {}; }
+function pyInvalidate(){ PY.cache = {}; PY.errors = {}; if(typeof PF !== 'undefined'){ PF.cache = {}; PF.err = {}; } }
 function pyRefresh(){ pyInvalidate(); render(); }
 
 /* Who am I to the payout module. Asked once; a 403 means "not on the team". */
