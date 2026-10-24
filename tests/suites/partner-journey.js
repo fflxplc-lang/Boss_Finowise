@@ -352,7 +352,7 @@ suite(async t => {
 
   await t.step('the performance board reads the funnel and the partner', async () => {
     const r = await t.eval(async ()=>{
-      navigate('ppf'); await new Promise(r=>setTimeout(r,80));
+      window._ppfTab = 'funnel'; navigate('ppf'); await new Promise(r=>setTimeout(r,80));
       const row = Array.from(document.querySelectorAll('#ppfTable tbody tr')).find(tr=>tr.textContent.includes('Asha Rao'));
       return {row: row ? row.textContent.replace(/\s+/g,' ').trim() : '',
         tiles: Array.from(document.querySelectorAll('.mkpi')).map(k=>k.textContent.replace(/\s+/g,' ').trim())};

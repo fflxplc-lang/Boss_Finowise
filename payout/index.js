@@ -10,6 +10,7 @@ import importRoutes from './routes/imports.js';
 import userRoutes from './routes/users.js';
 import clientRoutes from './routes/clients.js';
 import reportRoutes from './routes/reports.js';
+import performanceRoutes from './routes/performance.js';
 import rateRoutes from './routes/rates.js';
 import partnerRoutes from './routes/partner.js';
 import payoutRoutes from './routes/payouts.js';
@@ -25,6 +26,7 @@ export function createPayoutRouter({ currentAccount }) {
   r.use('/imports', importRoutes);
   r.use('/users', userRoutes);
   r.use('/clients', clientRoutes);
+  r.use('/reports/performance', performanceRoutes);
   r.use('/reports', reportRoutes);
   r.use('/rates', rateRoutes);
   r.use('/partner', partnerRoutes);
