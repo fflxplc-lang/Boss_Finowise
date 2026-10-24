@@ -65,4 +65,29 @@ suite({mail: true}, async t => {
     if(after.lvl !== 3 || after.n !== 2 || after.team !== 1 || t.mail.received.length) throw new Error(JSON.stringify(after) + ' mails ' + t.mail.received.length);
     return 'Ravi moved to L3; still one of each; no mail';
   });
+
+  await t.step('picking the primary level fills Sharing % from the rule, and a custom rate stays', async () => {
+    const r = await t.eval(async () => {
+      await pyUserModal(-1);
+      const val = () => document.getElementById('pyU_sharing_pct').value;
+      const lvl = v => { const s = document.getElementById('pyU_level'); s.value = String(v); s.dispatchEvent(new Event('change')); return val(); };
+      const out = {l1: val(), l3: lvl(3), l4: lvl(4), l5: lvl(5), l2: lvl(2), note: document.querySelector('#modal, .modal, body').textContent.includes('Rule for L2')};
+      document.getElementById('pyU_sharing_pct').value = '40';
+      out.custom = lvl(3);
+      lvl(2); document.getElementById('pyU_sharing_pct').value = '50';
+      document.getElementById('pyU_sharing_pct').dispatchEvent(new Event('input'));
+      document.getElementById('pyU_name').value = 'Rule Follower'; document.getElementById('pyU_email').value = 'rule@example.com';
+      // back to the rule's own figure before saving
+      lvl(2);
+      document.getElementById('pyU_sharing_pct').value = '50';
+      await pyUserSave(false);
+      const u = (await pyGet('/users')).find(x => x.email === 'rule@example.com');
+      let got; const was = window.downloadXlsx; window.downloadXlsx = (sh) => { got = sh[0].rows; }; await pyUserExport(); window.downloadXlsx = was;
+      const col = got[0].indexOf('Sharing %'), row = got.find(x => x[1] === 'rule@example.com');
+      return Object.assign(out, {stored: u && u.sharing_pct, exported: row && row[col]});
+    });
+    if(r.l1 !== '25' || r.l3 !== '75' || r.l4 !== '85' || r.l5 !== '5' || r.l2 !== '50' || !r.note) throw new Error(JSON.stringify(r));
+    if(r.custom !== '40' || r.stored !== 0 || Number(r.exported) !== 50) throw new Error(JSON.stringify(r));
+    return 'L1 25 · L2 50 · L3 75 · L4 85 · L5 5; a typed 40 kept; the rule saved as "follow the rule", exported as 50';
+  });
 });

@@ -799,13 +799,14 @@ function pyHierarchy(){
 async function pyUserExport(){
   let all;
   try { all = await pyGet('/users'); } catch(e){ pyToast(e.message, 'err'); return; }
+  await pySharingRules();
   const roleName = {ops: 'Ops / RM', partner: 'Partner', mentor: 'Mentor', admin: 'Admin'};
   const rows = (all || []).map(u=>{
     const b = u.bank || {}, a = u.address || {};
     return {'Name': u.name || '', 'Email (BOSS login)': u.email || '', 'Employee / ARN Code': u.code || '',
       'Role': roleName[u.role] || u.role || '', 'Primary Level': 'L' + u.level, 'Level Name': u.level_name || PY_LEVELS[u.level] || '',
       'Additional Levels': (u.extra_levels || []).map(l=>'L' + l).join(', '), 'Reports To': u.parent_name || '',
-      'Sharing %': u.sharing_pct === null || u.sharing_pct === undefined ? '' : u.sharing_pct, 'Direct Clients': u.clients || 0,
+      'Sharing %': Number(u.sharing_pct) > 0 ? Number(u.sharing_pct) : pyPolicyRate(u.level), 'Direct Clients': u.clients || 0,
       'Status': u.active === 0 ? 'Disabled' : 'Active', 'GST': u.gst || '',
       'Bank Account Holder': b.holder || '', 'Bank Name': b.bankName || '', 'Account Number': b.account || '', 'IFSC': b.ifsc || '', 'Bank Branch': b.branch || '',
       'Street': a.street || '', 'City': a.city || '', 'State': a.state || '', 'Pincode': a.pincode || '', 'Country': a.country || ''};
@@ -852,7 +853,9 @@ function pyTeamRows(table){
   }).filter(o=>o.name || o.email);
 }
 const pyLevelNum = v => { const n = Number(String(v || '').replace(/[^\d]/g, '')); return n >= 1 && n <= 7 ? n : 0; };
+const pyOwnRate = (rate, level) => PY.s._sharing && rate === pyPolicyRate(level) ? 0 : rate;
 async function pyTeamImport(file){
+  await pySharingRules();
   let tables, existing;
   try { tables = (await impReadAllSheets(file)).tables; existing = await pyGet('/users'); }
   catch(e){ pyToast(e.message, 'err'); return; }
@@ -909,7 +912,7 @@ async function pyTeamImportApply(){
     const extra = String(r.extra || '').split(/[,;/ ]+/).map(pyLevelNum).filter(l=>l && l !== p.level);
     return Object.assign({}, cur, {name: r.name, email: r.email, code: r.code || cur.code || '', gst: r.gst || cur.gst || '', pan: r.pan || cur.pan || '',
       role: p.role, level: p.level, extra_levels: r.extra ? extra : (cur.extra_levels || []).filter(l=>l !== p.level),
-      sharing_pct: r.sharing !== '' ? Number(String(r.sharing).replace('%', '')) || 0 : (cur.sharing_pct || 0), bank, address});
+      sharing_pct: r.sharing !== '' ? pyOwnRate(Number(String(r.sharing).replace('%', '')) || 0, p.level) : (cur.sharing_pct || 0), bank, address});
   };
   // 1. Everyone onto the payout team, then who reports to whom, once all of them exist.
   const ids = {};
@@ -982,17 +985,55 @@ function pyUserDelete(i){
   pyConfirm('Delete ' + u.name + '?', u.name + ' will be removed from every client hierarchy and their reports move up to their manager. Payouts recalculate.', 'Delete',
     ()=>pyRun(()=>pyDel('/users/' + u.id), 'Person deleted'));
 }
+/* THE SHARING RULE FOR A LEVEL, as Settings › Sharing has it: L1–L3 take
+   their lead rate (25 / 50 / 75 by default), L4 the pool left after the
+   top share, L5–L7 their top share. A person whose Sharing % equals the
+   rule is saved as 0, "follow the rule", so a later change to the rule
+   reaches them, and a person put at more than one level earns each
+   level's own rate rather than their primary level's. */
+async function pySharingRules(){
+  // Read fresh each time: Settings may have changed the rule since.
+  try { PY.s._sharing = (await pyGet('/settings/global')).sharing; } catch(e){ PY.s._sharing = null; }
+  return PY.s._sharing;
+}
+function pyPolicyRate(level, sh){
+  sh = sh || PY.s._sharing;
+  if(!sh) return 0;
+  const l = Number(level), top = sh.top || {};
+  if(l >= 1 && l <= 3) return Number((sh.rates || {})[l]) || 0;
+  if(l === 4) return Math.max(0, 100 - Object.values(top).reduce((a, b)=>a + (Number(b) || 0), 0));
+  return Number(top[l]) || 0;
+}
+function pyPolicyNote(level){
+  const l = Number(level), r = pyPolicyRate(l);
+  if(!PY.s._sharing) return 'The rule could not be read; leave it at 0 to follow Settings.';
+  const what = l <= 3 ? r + '% of the brokerage on their own leads' : l === 4 ? 'the whole pool (' + r + '%) on their own leads' : r + '% top share';
+  return 'Rule for L' + l + ' · ' + (PY_LEVELS[l] || '') + ': ' + what + '. Filled in by itself; change it only for a custom rate.';
+}
+function pyUserSetLevel(v){
+  const f = PY.s._user;
+  const shown = Number(f._shownLevel || f.level);
+  pyUserKeep();
+  f.level = Number(v);
+  // The rate follows the level unless somebody typed a custom one.
+  const cur = Number(f.sharing_pct);
+  if(!cur || cur === pyPolicyRate(shown)) f.sharing_pct = pyPolicyRate(f.level);
+  pyUserDraw();
+}
 async function pyUserModal(i){
   let all;
   try { all = await pyGet('/users'); } catch(e){ pyToast(e.message, 'err'); return; }
+  await pySharingRules();
   const u = i >= 0 ? PY.rows.users[i] : {};
   const f = PY.s._user = Object.assign({name: '', email: '', code: '', gst: '', parent_id: '', sharing_pct: 0, role: 'ops', level: 1, extra_levels: []}, u,
     {bank: Object.assign({}, u.bank || {}), address: Object.assign({country: 'India'}, u.address || {}), extra_levels: (u.extra_levels || []).slice()});
   PY.s._userAll = all.filter(x=>x.id !== u.id);
+  if(!Number(f.sharing_pct)) f.sharing_pct = pyPolicyRate(f.level);
   pyUserDraw();
 }
 function pyUserDraw(){
   const f = PY.s._user;
+  f._shownLevel = Number(f.level);
   const inp = (k, ph, o, attrs) => pyInput('pyU_' + (o ? o + '_' : '') + k, o ? f[o][k] : f[k], `placeholder="${esc(ph || '')}" ${attrs || ''}`);
   openModal(f.id ? 'Edit person' : 'Add person to the payout team', `
     <div class="section-title">Basic information</div>
@@ -1002,10 +1043,10 @@ function pyUserDraw(){
     <div class="section-title">Hierarchy and sharing</div>
     <div class="field-grid">
       ${pyField('Reports to', pySelect('pyU_parent_id', f.parent_id || '', [['', '— Nobody (top) —']].concat(PY.s._userAll.map(x=>[x.id, x.name + ' · L' + x.level])), ''))}
-      ${pyField('Sharing % rate', inp('sharing_pct', '', '', 'type="number" step="0.01"'))}
+      ${pyField('Sharing % rate', inp('sharing_pct', '', '', 'type="number" step="0.01"'), pyPolicyNote(f.level))}
       ${pyField('Role', pySelect('pyU_role', f.role, [['ops', 'Ops / RM — own data'], ['partner', 'Partner — own data'], ['mentor', 'Mentor — own data + direct reports'], ['admin', 'Admin — full access']], ''),
         'A mentor sees their own data and that of everyone who reports to them directly.')}
-      ${pyField('Primary level', pySelect('pyU_level', f.level, [1, 2, 3, 4, 5, 6, 7].map(l=>[l, 'Level ' + l + ' · ' + PY_LEVELS[l]]), "PY.s._user.level=Number(this.value); pyUserKeep(); pyUserDraw()"))}
+      ${pyField('Primary level', pySelect('pyU_level', f.level, [1, 2, 3, 4, 5, 6, 7].map(l=>[l, 'Level ' + l + ' · ' + PY_LEVELS[l]]), "pyUserSetLevel(this.value)"))}
     </div>
     <div class="card py-sub">
       <b>Additional levels (multi-role)</b>
@@ -1046,7 +1087,10 @@ function pyUserLevel(l){
 async function pyUserSave(recalculate){
   pyUserKeep();
   const f = PY.s._user;
-  const body = Object.assign({}, f, {recalculate, parent_id: f.parent_id || null, extra_levels: f.extra_levels.filter(l=>l !== f.level)});
+  const rate = Number(f.sharing_pct) || 0;
+  const body = Object.assign({}, f, {recalculate, parent_id: f.parent_id || null, extra_levels: f.extra_levels.filter(l=>l !== f.level),
+    sharing_pct: PY.s._sharing && rate === pyPolicyRate(f.level) ? 0 : rate});
+  delete body._shownLevel;
   const ok = await pyRun(()=>f.id ? pyPut('/users/' + f.id, body) : pyPost('/users', body), recalculate ? 'Saved and payouts recalculated' : 'Saved');
   if(ok) closeModal();
 }
