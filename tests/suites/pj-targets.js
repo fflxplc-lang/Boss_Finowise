@@ -105,6 +105,40 @@ suite(async t => {
     return 'own prospects target 2 (business still the role’s ₹1,00,000); onboarded 1 + 2 outside = 3; both in the audit trail';
   });
 
+  await t.step('Tara signs in at /partner and sees the same scorecard, of her own work only', async () => {
+    const acct = await t.eval(() => pobPortalCall('accounts', {pobId: 'POB-PT1', email: 'tara.pt@example.com'}));
+    if(!acct.ok) throw new Error(JSON.stringify(acct));
+    const token = decodeURIComponent(acct.setupUrl.split('t=')[1]);
+    const set = await fetch(t.base + '/partner/setup', {method: 'POST', redirect: 'manual', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({t: token, password: 'tarapass123', confirm: 'tarapass123'})});
+    const cookie = ((set.headers.get('set-cookie') || '').match(/flx_partner=[^;]+/) || [])[0] || '';
+    if(!cookie) throw new Error('no partner session: ' + set.status);
+    const d = await (await fetch(t.base + '/api/partner-portal/performance', {headers: {Cookie: cookie}})).json();
+    const crm = await t.eval(() => { const r = pobLive().find(x => x.id === 'POB-PT1'), m0 = ptToday().slice(0,7);
+      return {a: ptSum(ptEventsOf(r), m0, m0), t: ptTargets(r, m0, m0)}; });
+    const cur = d.month && d.month.data[0];
+    if(!d.ok || !cur || JSON.stringify(cur.achieved) !== JSON.stringify(crm.a) || JSON.stringify(cur.target) !== JSON.stringify(crm.t)) throw new Error(JSON.stringify({d: cur, crm}));
+    if(cur.achieved.prospects !== 4 || cur.target.prospects !== 2 || cur.target.business !== 100000 || d.month.data[1].achieved.prospects !== 3) throw new Error(JSON.stringify(cur));
+    if(JSON.stringify(d).includes('Imran')) throw new Error('another partner leaked into Tara\u2019s answer');
+    const anon = await fetch(t.base + '/api/partner-portal/performance');
+    if(anon.status !== 401) throw new Error('signed out got ' + anon.status);
+    const [name, value] = cookie.split('=');
+    const ctx = await t.page.context().browser().newContext();
+    await ctx.addCookies([{name, value, url: t.base}]);
+    const p2 = await ctx.newPage();
+    await p2.goto(t.base + '/partner', {waitUntil: 'domcontentloaded'});
+    await p2.waitForSelector('nav button');
+    await p2.click('nav button:has-text("My Performance")');
+    await p2.waitForSelector('text=Target vs achievement', {timeout: 10000});
+    const month = await p2.textContent('main');
+    await p2.click('button[data-pmode="year"]');
+    const year = await p2.textContent('main');
+    if(process.env.PT_SHOT) await p2.screenshot({path: process.env.PT_SHOT, fullPage: true});
+    await ctx.close();
+    if(!/Prospects collected/.test(month) || !/Month by month/.test(month) || !/whole year/.test(year)) throw new Error(month.slice(0, 400));
+    return 'the server\u2019s count matches the CRM\u2019s to the measure; month and year views draw; signed out is refused';
+  });
+
   await t.step('all partners: the board ranks them, the imported FBM included', async () => {
     const r = await t.eval(async () => {
       Object.assign(PT, {mode: 'month', partner: '', role: ''}); render(); await new Promise(r => setTimeout(r, 60));

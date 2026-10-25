@@ -45,6 +45,12 @@
   .msg.ok{ background:var(--ok-bg); color:var(--ok); } .msg.info{ background:var(--info-bg); color:var(--info); }
   .next li{ margin:6px 0; } .lock{ color:var(--muted); font-size:12.5px; }
   .note{ font-size:12.5px; margin-top:4px; }
+  .bar{ height:8px; border-radius:4px; background:#eef0f3; overflow:hidden; min-width:90px; } .bar i{ display:block; height:100%; border-radius:4px; }
+  .bar i.ok{ background:var(--ok); } .bar i.info{ background:var(--info); } .bar i.warn{ background:var(--warn); } .bar i.danger{ background:var(--danger); }
+  .up{ color:var(--ok); font-weight:600; } .down{ color:var(--danger); font-weight:600; } .num{ text-align:right; font-variant-numeric:tabular-nums; }
+  .c-ok{ background:var(--ok-bg); } .c-info{ background:var(--info-bg); } .c-warn{ background:var(--warn-bg); } .c-danger{ background:var(--danger-bg); } .future{ opacity:.5; }
+  .pill{ display:inline-flex; gap:4px; } .pill button{ font:inherit; font-size:12.5px; font-weight:600; padding:6px 12px; border-radius:999px; border:1px solid var(--line); background:#fff; color:var(--muted); cursor:pointer; }
+  .pill button.on{ background:var(--navy); border-color:var(--navy); color:#fff; }
 </style>
 </head>
 <body>
@@ -53,7 +59,7 @@
 <main id="main"><div class="card muted">Loading…</div></main>
 <script>
 (function(){
-  var ME = null, TAB = 'home', LEADS = null, EDIT_LEAD = null;
+  var ME = null, TAB = 'home', LEADS = null, EDIT_LEAD = null, PERF = null, PMODE = 'month';
   try { TAB = sessionStorage.getItem('flxTab') || 'home'; } catch(e) {}
   var main = document.getElementById('main');
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -77,18 +83,19 @@
       draw();
     });
   }
-  var TABS = [['home','Dashboard'], ['profile','My Profile'], ['empanelment','Empanelment & Documents'], ['tasks','My Tasks'], ['journey','Client Journey'], ['payments','Payments']];
+  var TABS = [['home','Dashboard'], ['profile','My Profile'], ['empanelment','Empanelment & Documents'], ['tasks','My Tasks'], ['journey','Client Journey'], ['performance','My Performance'], ['payments','Payments']];
   function go(t){ TAB = t; try { sessionStorage.setItem('flxTab', t); } catch(e) {} draw(); window.scrollTo(0, 0); }
   window.flxGo = go;
   function draw(){
-    var tabs = TABS.filter(function(t){ return t[0] !== 'payments' || ME.due > 0 || ME.payments.length; });
+    var tabs = TABS.filter(function(t){ return t[0] === 'performance' ? (ME.partner.role || ME.stage.id === 'active') : (t[0] !== 'payments' || ME.due > 0 || ME.payments.length); });
     document.getElementById('nav').innerHTML = tabs.map(function(t){
       var n = t[0] === 'tasks' ? ME.tasks.filter(function(x){ return x.maySubmit; }).length : 0;
       return '<button class="' + (TAB === t[0] ? 'on' : '') + '" onclick="flxGo(\'' + t[0] + '\')">' + esc(t[1]) + (n ? ' (' + n + ')' : '') + '</button>';
     }).join('');
-    var f = {home: home, profile: profile, empanelment: empanelment, tasks: tasks, journey: journey, payments: payments}[TAB] || home;
+    var f = {home: home, profile: profile, empanelment: empanelment, tasks: tasks, journey: journey, performance: performance, payments: payments}[TAB] || home;
     main.innerHTML = f();
     if(TAB === 'journey' && ME.clientJourney.open && !LEADS) loadLeads();
+    if(TAB === 'performance' && !PERF) loadPerf();
     wire();
   }
   function kv(rows){ return '<div class="kv">' + rows.map(function(r){ return '<div>' + esc(r[0]) + '</div><div>' + (r[2] ? r[1] : esc(r[1] || '—')) + '</div>'; }).join('') + '</div>'; }
@@ -200,6 +207,65 @@
         + ME.payments.map(function(p){ return '<tr><td>' + date(p.date) + '</td><td>' + money(p.amount, p.currency) + '</td><td>' + esc(p.method) + '</td><td>' + esc(p.ref) + (p.receiptFileId ? ' · ' + fileLink(p.receiptFileId, 'receipt') : '') + '</td><td>' + badge(p.status) + '</td></tr>'; }).join('')
         + '</tbody></table></div>' : '<div class="muted">No payments recorded yet.</div>') + '</div>';
   }
+  /* Target against achievement: the same count the firm's own Performance
+     page makes, of this partner's work only. */
+  var STATUS = [[100,'Exceeds Target','ok'], [75,'On Track','info'], [50,'Needs Improvement','warn'], [-Infinity,'At Risk','danger']];
+  function status(p){ if(p == null) return null; for(var i = 0; i < STATUS.length; i++) if(p >= STATUS[i][0]) return STATUS[i]; }
+  function fmt(m, v){ return m.money ? money(v) : Math.round(v || 0).toLocaleString('en-IN'); }
+  function growth(cur, prev){
+    if(!prev) return cur ? '<span class="up">New</span>' : '<span class="muted">—</span>';
+    var g = (cur - prev) * 100 / prev;
+    return '<span class="' + (g > 0 ? 'up' : g < 0 ? 'down' : 'muted') + '">' + (g > 0 ? '▲ ' : g < 0 ? '▼ ' : '') + Math.abs(g).toFixed(1) + '%</span>';
+  }
+  function bar(p){ var s = status(p); return '<div class="bar"><i class="' + s[2] + '" style="width:' + Math.max(0, Math.min(100, p)) + '%"></i></div>'; }
+  function performance(){
+    if(!PERF) return '<div class="card muted">Loading your performance…</div>';
+    if(!PERF.ok) return '<div class="msg err">' + esc(PERF.message || 'Could not load your performance.') + '</div>';
+    var view = PMODE === 'year' ? PERF.year : PERF.month, cur = view.data[0], p1 = view.data[1], p2 = view.data[2];
+    var tgt = PMODE === 'year' ? PERF.year.yearTarget : cur.target;
+    var shown = PERF.metrics.filter(function(m){ return tgt[m.k] > 0 || cur.achieved[m.k] || p1.achieved[m.k] || p2.achieved[m.k]; });
+    var aimed = PERF.metrics.filter(function(m){ return tgt[m.k] > 0; });
+    var hit = aimed.filter(function(m){ return cur.achieved[m.k] >= tgt[m.k]; }).length;
+    var s = status(cur.overall);
+    var rows = shown.map(function(m){
+      var a = cur.achieved[m.k], t = tgt[m.k], pct = t > 0 ? a * 100 / t : null;
+      return '<tr><td><b>' + esc(m.l) + '</b><div class="muted small">' + esc(m.step) + '</div></td><td class="num">' + (t > 0 ? fmt(m, t) : '—') + '</td><td class="num"><b>' + fmt(m, a) + '</b></td>'
+        + '<td style="min-width:120px">' + (pct == null ? '<span class="muted small">Not targeted</span>' : bar(pct) + '<div class="muted small">' + pct.toFixed(1) + '% · ' + status(pct)[1] + '</div>') + '</td>'
+        + '<td class="num">' + fmt(m, p1.achieved[m.k]) + '</td><td class="num">' + growth(a, p1.achieved[m.k]) + '</td>'
+        + '<td class="num">' + fmt(m, p2.achieved[m.k]) + '</td><td class="num">' + growth(a, p2.achieved[m.k]) + '</td></tr>';
+    }).join('');
+    var gridMetrics = PERF.metrics.filter(function(m){ return PERF.months.some(function(x){ return x.target[m.k] > 0 || x.achieved[m.k]; }); });
+    var grid = gridMetrics.map(function(m){
+      return '<tr><td><b>' + esc(m.l) + '</b></td>' + PERF.months.map(function(x){
+        var t = x.target[m.k], a = x.achieved[m.k], st = t > 0 && !x.future ? status(a * 100 / t) : null;
+        return '<td class="num ' + (x.future ? 'future' : st ? 'c-' + st[2] : '') + '" title="' + esc(x.label + (t ? ' — target ' + fmt(m, t) : '')) + '">' + (x.future ? (t ? '<span class="muted small">' + fmt(m, t) + '</span>' : '') : fmt(m, a)) + '</td>';
+      }).join('') + '</tr>';
+    }).join('');
+    var y = PERF.today.slice(0, 4);
+    return '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h1>My Performance</h1>'
+      + '<div class="muted">Your targets against what you achieved · ' + esc(PERF.role) + '</div></div>'
+      + '<div class="pill"><button class="' + (PMODE === 'month' ? 'on' : '') + '" data-pmode="month">Month-wise</button><button class="' + (PMODE === 'year' ? 'on' : '') + '" data-pmode="year">Year-wise</button></div></div></div>'
+      + '<div class="kpis">'
+      + '<div class="kpi"><div class="l">Overall · ' + esc(view.periods[0].label) + '</div><div class="v">' + (cur.overall == null ? '—' : cur.overall.toFixed(1) + '%') + '</div>' + (s ? '<span class="badge ' + s[2] + '">' + s[1] + '</span>' : '<span class="badge">No target yet</span>') + '</div>'
+      + '<div class="kpi"><div class="l">Targets met</div><div class="v">' + (aimed.length ? hit + ' of ' + aimed.length : '—') + '</div></div>'
+      + '<div class="kpi"><div class="l">Change vs ' + esc(view.periods[1].label) + '</div><div class="v" style="font-size:16px">' + (cur.overall == null || p1.overall == null ? '—' : growth(cur.overall, p1.overall)) + '</div></div>'
+      + '</div>'
+      + '<div class="card"><h2>Target vs achievement — ' + esc(view.periods[0].label) + '</h2>'
+      + (PMODE === 'year' ? '<div class="muted small" style="margin:-4px 0 8px">The target is the whole year\'s; each year is compared over the same months.</div>' : '')
+      + '<div class="table-wrap"><table><thead><tr><th>Measure</th><th class="num">Target</th><th class="num">Achieved</th><th>Achievement</th><th class="num">' + esc(view.periods[1].label) + '</th><th class="num">Growth</th><th class="num">' + esc(view.periods[2].label) + '</th><th class="num">Growth</th></tr></thead>'
+      + '<tbody>' + (rows || '<tr><td colspan="8" class="muted">Your targets have not been set yet. Your RM sets them with you at your Target Setting.</td></tr>') + '</tbody></table></div></div>'
+      + '<div class="card"><h2>Month by month — ' + esc(y) + '</h2><div class="table-wrap"><table><thead><tr><th>Measure</th>' + PERF.months.map(function(x){ return '<th class="num">' + esc(x.label.slice(0, 3)) + '</th>'; }).join('') + '</tr></thead>'
+      + '<tbody>' + (grid || '<tr><td colspan="13" class="muted">Nothing yet this year.</td></tr>') + '</tbody></table></div>'
+      + '<div class="muted small" style="margin-top:8px">Green: target met. Blue: 75% or more. Amber: 50% or more. Red: under 50%. Faded months are still to come and show their target.</div></div>'
+      + '<div class="card"><h2>Reviews</h2><div class="kv">'
+      + '<div>Last review</div><div>' + (PERF.lastReview ? esc(PERF.lastReview.kind) + ' on ' + date(PERF.lastReview.at) + (PERF.lastReview.outcome ? ' — ' + badge(PERF.lastReview.outcome) : '') : 'None yet') + '</div>'
+      + (PERF.lastReview && PERF.lastReview.targets ? '<div>Agreed for the next period</div><div>' + esc(PERF.lastReview.targets) + '</div>' : '')
+      + '<div>Next review</div><div>' + (PERF.nextReview ? esc(PERF.nextReview.kind) + ' due ' + date(PERF.nextReview.due) : 'Not scheduled yet') + '</div></div>'
+      + '<div class="muted small" style="margin-top:8px">Counted from the leads you add in the Client Journey, the clients they become, their transactions and reviews. Work you did outside BOSS is added by your RM.</div></div>';
+  }
+  function loadPerf(){
+    api('performance').then(function(d){ PERF = d; if(TAB === 'performance'){ main.innerHTML = performance(); wire(); } });
+  }
   function loadLeads(){
     api('leads').then(function(d){ LEADS = d.ok ? d.leads : []; if(d.figures) ME.figures = d.figures; if(TAB === 'journey') { main.innerHTML = journey(); wire(); } });
   }
@@ -217,6 +283,9 @@
     });
   }
   function wire(){
+    Array.prototype.forEach.call(document.querySelectorAll('[data-pmode]'), function(b){
+      b.onclick = function(){ PMODE = b.getAttribute('data-pmode'); main.innerHTML = performance(); wire(); };
+    });
     Array.prototype.forEach.call(document.querySelectorAll('[data-open]'), function(b){
       b.onclick = function(){ var box = document.getElementById('sub_' + b.getAttribute('data-open')); box.style.display = ''; b.style.display = 'none'; };
     });
@@ -244,7 +313,7 @@
       api(EDIT_LEAD ? 'leads/' + encodeURIComponent(EDIT_LEAD.id) : 'leads', {method: EDIT_LEAD ? 'PUT' : 'POST', body: JSON.stringify(body)}).then(function(r){
         ld.disabled = false;
         if(!r.ok) return msg('ldMsg', r.message || 'That did not go through.');
-        EDIT_LEAD = null; LEADS = null; load();
+        EDIT_LEAD = null; LEADS = null; PERF = null; load();
       });
     };
     var lc = document.getElementById('ldCancel');
