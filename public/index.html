@@ -10780,7 +10780,7 @@ function meetingRequestCard(record, module){
     <div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
       <div>
         <div class="section-title" style="margin-top:0">They asked to meet</div>
-        <div class="small-note" style="margin-top:0">Sent from their FQ result on ${fmtDate(m.at)}. ${
+        <div class="small-note" style="margin-top:0">${m.source==='Partner' ? 'Asked by their partner, ' + esc(m.partnerName||'') + ', on ' + fmtDate(m.at) + '.' : 'Sent from their FQ result on ' + fmtDate(m.at) + '.'} ${
           slots.length? 'These are the times they offered.'
                       : 'They gave no times — they would like you to offer one.'}</div>
       </div>
@@ -10814,6 +10814,17 @@ function meetingScheduleTransitionFor(module, record){
 }
 /* Picking one of their times opens the ordinary meeting scheduler with that
    date and time already in it — the rest of scheduling is unchanged. */
+/* What the partner who brought this lead has done on it from their own
+   login (/partner › Client Journey): calls, meetings, follow-ups, notes.
+   It travels with the lead when it becomes a client. */
+function partnerWorkCard(rec){
+  const acts = (rec && rec.partnerActivity) || [];
+  if(!rec || !rec.partnerPobId || (!acts.length && !rec.partnerFollowUp)) return '';
+  const p = (DB.pjOnboarding||[]).find(x=>x && x.id===rec.partnerPobId);
+  return profTable('From the partner' + (p ? ' — ' + pjName(p) : ''), ['When','What','Note','Follow up'],
+    acts.slice().reverse().map(a=>`<tr><td>${esc(fmtDateTime(a.at))}</td><td>${esc(a.kind)}</td><td style="white-space:pre-wrap">${esc(a.note)}</td><td>${esc(a.followUp ? fmtDate(a.followUp) : '')}</td></tr>`),
+    'Nothing logged yet.', rec.partnerFollowUp ? `<div class="small-note">The partner follows up next on <b>${esc(fmtDate(rec.partnerFollowUp))}</b>.</div>` : '');
+}
 function scheduleFromRequest(recordId, module, i){
   const rec = module==='LMS' ? DB.leads.find(l=>l.id===recordId) : DB.clients.find(c=>c.id===recordId);
   const m = rec && rec.meetingRequest; if(!m) return;
@@ -38832,6 +38843,7 @@ function viewLeadDetail(id){
       // Overview
       return `
         ${meetingRequestCard(l, 'LMS')}
+        ${partnerWorkCard(l)}
         ${profCard('Lead Information', [
           ['Mobile', esc(l.mobile)], ['Email', esc(l.email)], ['City', esc(l.city)],
           ['PAN', esc(l.pan)], ['Age', leadAge(l)!==null? String(leadAge(l)) : ''],
@@ -40798,6 +40810,7 @@ function cpOverview(c){
       ['BM Amount', c.mandateAmount? inr(numVal(c.mandateAmount)):''],
     ])}
     ${meetingRequestCard(c, 'CMS')}
+    ${partnerWorkCard(c)}
     <div class="cp-2col">
       ${profCard('Client Information', [
         ['Mobile', esc(c.mobile)], ['Email', esc(c.email)], ['PAN', esc(c.pan)],

@@ -110,6 +110,71 @@ suite(async t => {
     return tabs.join(' · ');
   });
 
+  const post = async (path, body) => { const r = await fetch(t.base + '/api/partner-portal/' + path, {method: 'POST', headers: {Cookie: cookie, 'Content-Type': 'application/json'}, body: JSON.stringify(body)}); return {status: r.status, d: await r.json().catch(()=>({}))}; };
+  const fresh = () => t.eval(async () => {
+    for(const k of ['leads', 'clients', 'notifications']) DB[k] = JSON.parse((await (await fetch('/api/storage/' + k, {headers: apiHeaders()})).json()).value || '[]');
+  });
+
+  await t.step('Client Journey: each lead shows its road in the flowchart’s steps', async () => {
+    await t.eval(async () => {
+      const at = new Date().toISOString();
+      DB.leads.push({id: 'LMS-PLA1', firstName: 'Neha', lastName: 'Lead', mobile: '9811100001', partnerPobId: 'POB-PLA1', assignedTo: currentUser, status: 'qualified', createdAt: at,
+          blueprintHistory: [{state: 'created', at}, {state: 'qualified', at}]},
+        {id: 'LMS-PLA2', firstName: 'Not', lastName: 'Hers', mobile: '9811100002', partnerPobId: 'POB-PLA2', status: 'created', createdAt: at, blueprintHistory: [{state: 'created', at}]});
+      await save('leads');
+    });
+    const list = await get('leads'), one = await get('journey/LMS-PLA1'), other = await get('journey/LMS-PLA2'), client = await get('journey/CMS-PLA1');
+    const row = (list.d.leads || []).find(x => x.id === 'LMS-PLA1');
+    const st = one.d.item && one.d.item.steps;
+    if(!row || row.steps !== 2 || row.of !== 9) throw new Error(JSON.stringify(row));
+    if(!st || !st[0].done || !st[1].done || !st[2].current || st[2].label !== 'Meeting with Client RM') throw new Error(JSON.stringify(st));
+    if(other.status !== 404) throw new Error('another partner’s lead answered ' + other.status);
+    const cs = client.d.item && client.d.item.steps;
+    if(!cs || !cs.find(x => x.k === 'onboarded').done || !cs.find(x => x.k === 'transacted').done || cs.find(x => x.k === 'reviewed').done) throw new Error(JSON.stringify(cs));
+    return 'lead: 2 of 9, next is the meeting with the Client RM; the client is onboarded and transacting; another partner’s lead is 404';
+  });
+
+  await t.step('at /partner the partner opens the lead and logs a call with a follow-up', async () => {
+    const [name, value] = cookie.split('=');
+    const ctx = await t.page.context().browser().newContext();
+    await ctx.addCookies([{name, value, url: t.base}]);
+    const p = await ctx.newPage();
+    await p.goto(t.base + '/partner', {waitUntil: 'domcontentloaded'});
+    await p.waitForSelector('nav button');
+    await p.click('nav button:has-text("Client Journey")');
+    await p.waitForSelector('[data-jopen="LMS-PLA1"]', {timeout: 10000});
+    await p.click('button[data-jopen="LMS-PLA1"]');
+    await p.waitForSelector('#acSave', {timeout: 10000});
+    await p.selectOption('#ac_kind', 'Call');
+    await p.fill('#ac_note', 'Spoke about retirement; sending the MANIA sheet');
+    await p.fill('#ac_follow', '2020-01-02');
+    await p.click('#acSave');
+    await p.waitForSelector('text=Spoke about retirement', {timeout: 10000});
+    if(process.env.PLA_JSHOT) await p.screenshot({path: process.env.PLA_JSHOT, fullPage: true});
+    await p.click('#jBack');
+    await p.waitForSelector('text=Follow-ups due', {timeout: 10000});
+    const list = await p.textContent('main');
+    await ctx.close();
+    if(!/overdue since/.test(list)) throw new Error(list.slice(0, 300));
+    return 'logged from the page; the list shows it as an overdue follow-up';
+  });
+
+  await t.step('the partner asks for a meeting with the Client RM; the RM sees it all on the lead', async () => {
+    const ask = await post('journey/LMS-PLA1/meeting', {slots: ['2030-05-01T11:00', 'bad'], note: 'Wants to talk about a SIP'});
+    const again = await post('journey/LMS-PLA1/meeting', {slots: []});
+    const bad = await post('journey/LMS-PLA1/activity', {kind: 'Dance', note: 'x'});
+    await fresh();
+    const r = await t.eval(async () => {
+      navigate('lms', 'LMS-PLA1'); await new Promise(r => setTimeout(r, 80));
+      const l = DB.leads.find(x => x.id === 'LMS-PLA1');
+      return {text: document.getElementById('content').textContent, slots: l.meetingRequest && l.meetingRequest.slots,
+        note: DB.notifications.some(n => n.userId === currentUser && /asks for a meeting with Neha Lead/.test(n.title))};
+    });
+    if(ask.status !== 200 || again.status !== 409 || bad.status !== 400) throw new Error(JSON.stringify({ask: ask.status, again: again.status, bad: bad.status}));
+    if(JSON.stringify(r.slots) !== '["2030-05-01T11:00"]' || !r.note || !/Asked by their partner, Kiran Rao/.test(r.text) || !/From the partner — Kiran Rao/.test(r.text) || !/Spoke about retirement/.test(r.text)) throw new Error(JSON.stringify(Object.assign({}, r, {text: r.text.slice(0, 500)})));
+    return 'one ask, one time kept; the RM is notified; the lead shows the ask and the partner’s log';
+  });
+
   await t.step('the BOSS sign-in page points partners to their own login', async () => {
     const html = await (await fetch(t.base + '/login')).text();
     if(!/href="\/partner\/login"/.test(html)) throw new Error('no partner link on /login');

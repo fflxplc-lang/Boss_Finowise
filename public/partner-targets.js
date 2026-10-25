@@ -154,6 +154,6 @@
     };
   }
 
-  return {METRICS, DEFAULTS, ROLES, NO_ROLE, STATUS, MON, monthKey, shiftMonth, monLabel, num, roleOf, roleKeys, roleTargets,
+  return {METRICS, DEFAULTS, ROLES, NO_ROLE, STATUS, MON, LMS, CLIENT_ONBOARDED_FROM, monthKey, shiftMonth, monLabel, num, roleOf, roleKeys, roleTargets,
     events, sum, startMonth, targetFor, targets, overall, status, growth, scorecard};
 });

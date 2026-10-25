@@ -646,19 +646,129 @@ function install(deps) {
      A lead the partner brings is an ordinary LMS lead, owned by their RM,
      carrying who brought it (partnerPobId). It travels to CMS with that
      mark when it converts, which is what the figures count. */
+  /* The road a lead travels, in the steps of the Partner Onboarding
+     flowchart and counted the way My Performance counts them, so a step
+     ticked here is a step counted there. */
+  const JOURNEY_STEPS = [
+    ['created', 'Lead added'], ['qualified', 'Qualified'], ['meetings', 'Meeting with Client RM'], ['riskProfiles', 'Risk profiling'],
+    ['allocations', 'Allocation presented'], ['converted', 'Became a client'], ['onboarded', 'Onboarded'], ['transacted', 'First transaction'], ['reviewed', 'Reviewed'],
+  ];
+  function journeyOf(x, isClient) {
+    const hist = (isClient ? x.lmsHistory : x.blueprintHistory) || [];
+    const at = (ids) => { const h = hist.find((y) => y && ids.includes(y.state)); return h ? h.at : (!isClient && ids.includes(x.status) ? (x.updatedAt || x.createdAt) : ''); };
+    const done = { created: (isClient ? x.lmsCreatedAt : x.createdAt) || x.createdAt || '' };
+    Object.keys(PartnerTargets.LMS).forEach((k) => { done[k] = at(PartnerTargets.LMS[k]); });
+    if (isClient) {
+      const savedCms = (((config().blueprints || {}).CMS || {}).states || []).map((y) => y && y.id);
+      const order = savedCms.length ? savedCms : CMS_ORDER, from = order.indexOf(CLIENT_ONBOARDED_FROM);
+      const onb = (x.blueprintHistory || []).find((h) => h && from >= 0 && order.indexOf(h.state) >= from);
+      done.converted = x.createdAt || '';
+      done.onboarded = (onb && onb.at) || (from >= 0 && order.indexOf(x.cmsStage || 'clientCreated') >= from ? x.createdAt : '');
+      const tx = storeList('transactions').filter((t) => t && !t.deletedAt && t.clientId === x.id && !/reject|cancel|fail/i.test(t.status || ''))
+        .map((t) => t.initiatedDate || t.createdAt || '').filter(Boolean).sort();
+      done.transacted = tx[0] || '';
+      const rv = storeList('reviews').filter((v) => v && !v.deletedAt && v.clientId === x.id && v.rmsStatus === 'closed').map((v) => v.updatedAt || v.meetingDate || '').sort();
+      done.reviewed = rv[0] || '';
+    }
+    // A step reached later stands for the ones before it: a client was qualified, whatever the history kept.
+    let later = false;
+    const steps = JOURNEY_STEPS.slice().reverse().map(([k, l]) => { if (done[k]) later = true; return { k, label: l, at: done[k] || '', done: later || !!done[k] }; }).reverse();
+    const cur = steps.findIndex((y) => !y.done);
+    if (cur >= 0) steps[cur].current = true;
+    return steps;
+  }
+  const ACTIVITY_KINDS = ['Call', 'Meeting', 'Follow-up', 'Note'];
+  const activityView = (x) => (x.partnerActivity || []).slice().reverse().map((a) => ({ at: a.at, kind: a.kind, note: a.note, followUp: a.followUp || '' }));
   function leadsView(r) {
     const saved = ((config().blueprints || {}).LMS || {}).states || [];
     const savedCms = ((config().blueprints || {}).CMS || {}).states || [];
     const label = (states, id) => { const s = states.find((x) => x && x.id === id); return s ? s.label : humanize(id); };
-    const leads = storeList('leads').filter((l) => l && !l.deletedAt && l.partnerPobId === r.id).map((l) => ({
+    const extra = (x, isClient) => { const steps = journeyOf(x, isClient); return { steps: steps.filter((y) => y.done).length, of: steps.length,
+      followUp: x.partnerFollowUp || '', activities: (x.partnerActivity || []).length, meetingAsked: !!(x.meetingRequest && x.meetingRequest.status === 'Open' && x.meetingRequest.source === 'Partner') }; };
+    const leads = storeList('leads').filter((l) => l && !l.deletedAt && l.partnerPobId === r.id).map((l) => Object.assign({
       id: l.id, name: nameOf(l), mobile: l.mobile || '', email: l.email || '', city: l.city || '', interest: l.productInterest || '',
       notes: l.description || '', stage: label(saved, l.status || 'created'), client: false, createdAt: l.createdAt || '',
-      editable: LEAD_STATUSES_OPEN_TO_EDIT.includes(l.status || 'created') }));
-    const clients = storeList('clients').filter((c) => c && !c.deletedAt && c.partnerPobId === r.id).map((c) => ({
+      editable: LEAD_STATUSES_OPEN_TO_EDIT.includes(l.status || 'created') }, extra(l, false)));
+    const clients = storeList('clients').filter((c) => c && !c.deletedAt && c.partnerPobId === r.id).map((c) => Object.assign({
       id: c.id, name: c.cmsName || nameOf(c), mobile: c.mobile || '', email: c.email || '', city: c.city || '', interest: c.productInterest || '',
-      notes: '', stage: 'Client — ' + label(savedCms, c.cmsStage || 'clientCreated'), client: true, createdAt: c.lmsCreatedAt || c.createdAt || '', editable: false }));
+      notes: '', stage: 'Client — ' + label(savedCms, c.cmsStage || 'clientCreated'), client: true, createdAt: c.lmsCreatedAt || c.createdAt || '', editable: false }, extra(c, true)));
     return leads.concat(clients).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
+  /* One of the partner's own leads or clients, and the list it lives in. */
+  function myJourneyItem(r, id) {
+    for (const key of ['leads', 'clients']) {
+      const list = storeList(key);
+      const x = list.find((y) => y && !y.deletedAt && y.id === id && y.partnerPobId === r.id);
+      if (x) return { key, list, x, isClient: key === 'clients' };
+    }
+    return null;
+  }
+  function journeyGate(req, res) {
+    const m = mine(req, res);
+    if (!m || !may(m, res, 'journey')) return null;
+    if (!clientJourneyOpen(m.r)) { res.status(403).json({ ok: false, message: 'The Client Journey opens once your onboarding tasks are approved.' }); return null; }
+    const it = myJourneyItem(m.r, req.params.id);
+    if (!it) { res.status(404).json({ ok: false, message: 'No such lead of yours.' }); return null; }
+    return Object.assign(m, { it });
+  }
+  app.get('/api/partner-portal/journey/:id', (req, res) => {
+    const m = journeyGate(req, res);
+    if (!m) return;
+    const { x, isClient } = m.it;
+    const states = ((config().blueprints || {})[isClient ? 'CMS' : 'LMS'] || {}).states || [];
+    const lms = ((config().blueprints || {}).LMS || {}).states || [];
+    const label = (list, id) => { const s = list.find((y) => y && y.id === id); return s ? s.label : humanize(id); };
+    const history = (isClient ? (x.lmsHistory || []).map((h) => ({ at: h.at, label: label(lms, h.state) })).concat((x.blueprintHistory || []).map((h) => ({ at: h.at, label: 'Client — ' + label(states, h.state) })))
+      : (x.blueprintHistory || []).map((h) => ({ at: h.at, label: label(states, h.state) }))).filter((h) => h.at).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    const mr = x.meetingRequest && x.meetingRequest.status === 'Open' ? x.meetingRequest : null;
+    res.json({ ok: true, item: { id: x.id, client: isClient, name: isClient ? (x.cmsName || nameOf(x)) : nameOf(x), mobile: x.mobile || '', email: x.email || '', city: x.city || '',
+      interest: x.productInterest || '', stage: isClient ? 'Client — ' + label(states, x.cmsStage || 'clientCreated') : label(states, x.status || 'created'),
+      rm: memberName(x.assignedTo) || memberName(m.r.assignedTo), steps: journeyOf(x, isClient), history: history.slice(0, 30),
+      activities: activityView(x), followUp: x.partnerFollowUp || '', kinds: ACTIVITY_KINDS,
+      meetingRequest: mr ? { at: mr.at, slots: mr.slots || [], note: mr.note || '', fromPartner: mr.source === 'Partner' } : null } });
+  });
+  /* The partner's own work on a lead: a call, a meeting, a follow-up, a
+     note. Kept on the lead (it travels to the client when it converts)
+     and shown to the RM on the record. */
+  app.post('/api/partner-portal/journey/:id/activity', (req, res) => {
+    const m = journeyGate(req, res);
+    if (!m) return;
+    const b = req.body || {}, { x, key, list } = m.it;
+    const kind = ACTIVITY_KINDS.includes(b.kind) ? b.kind : '';
+    const note = String(b.note || '').trim().slice(0, 2000);
+    const followUp = /^\d{4}-\d{2}-\d{2}$/.test(String(b.followUp || '')) ? b.followUp : '';
+    if (!kind) return res.status(400).json({ ok: false, message: 'Say what it was: a call, a meeting, a follow-up or a note.' });
+    if (!note) return res.status(400).json({ ok: false, message: 'Say what happened.' });
+    const at = nowIso();
+    x.partnerActivity = (x.partnerActivity || []).concat([{ id: uid('PAC'), at, kind, note, followUp, by: 'Partner', partnerPobId: m.r.id }]);
+    if (followUp) x.partnerFollowUp = followUp;
+    else if (b.clearFollowUp) delete x.partnerFollowUp;
+    putList(key, list);
+    putList('auditLog', storeList('auditLog').concat([{ id: uid('AUD'), at, by: 'Partner', module: key === 'leads' ? 'LMS' : 'CMS', recordId: x.id, action: 'Partner ' + kind,
+      details: [{ field: nameOf(m.r), oldValue: '', newValue: note + (followUp ? ' · follow up ' + followUp : '') }] }]));
+    writeToDisk();
+    res.json({ ok: true });
+  });
+  /* "Schedule a meeting of the lead with the Client RM": the partner asks,
+     with the times that suit the lead; the RM books it from the record. */
+  app.post('/api/partner-portal/journey/:id/meeting', (req, res) => {
+    const m = journeyGate(req, res);
+    if (!m) return;
+    const b = req.body || {}, { x, key, list } = m.it;
+    if (x.meetingRequest && x.meetingRequest.status === 'Open') return res.status(409).json({ ok: false, message: 'A meeting is already asked for. Your RM will book it.' });
+    const slots = (Array.isArray(b.slots) ? b.slots : []).map((v) => String(v || '').trim()).filter((v) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v)).slice(0, 3);
+    const note = String(b.note || '').trim().slice(0, 1000);
+    const at = nowIso(), rm = x.assignedTo || m.r.assignedTo;
+    x.meetingRequest = { at, slots, note, status: 'Open', source: 'Partner', partnerPobId: m.r.id, partnerName: nameOf(m.r), timesOffered: slots.length };
+    putList(key, list);
+    putList('auditLog', storeList('auditLog').concat([{ id: uid('AUD'), at, by: 'Partner', module: key === 'leads' ? 'LMS' : 'CMS', recordId: x.id, action: 'Meeting Asked by Partner',
+      details: [{ field: nameOf(m.r), oldValue: '', newValue: (slots.length ? 'Times: ' + slots.join(', ') : 'No times given') + (note ? ' · ' + note : '') }] }]));
+    if (rm) putList('notifications', storeList('notifications').concat([{ id: uid('NTF'), at, userId: rm,
+      title: nameOf(m.r) + ' asks for a meeting with ' + (m.it.isClient ? (x.cmsName || nameOf(x)) : nameOf(x)), body: slots.length ? slots.join(' · ') : 'No times given',
+      view: m.it.isClient ? 'cms' : 'lms', arg: x.id, kind: 'lead', by: 'Partner' }]));
+    writeToDisk();
+    res.json({ ok: true });
+  });
   app.get('/api/partner-portal/leads', (req, res) => {
     const m = mine(req, res);
     if (!m || !may(m, res, 'journey')) return;

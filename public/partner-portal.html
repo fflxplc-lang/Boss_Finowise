@@ -59,7 +59,7 @@
 <main id="main"><div class="card muted">Loading…</div></main>
 <script>
 (function(){
-  var ME = null, TAB = 'home', LEADS = null, EDIT_LEAD = null, PERF = null, PMODE = 'month', CLIENTS = null, PAYOUTS = null;
+  var ME = null, TAB = 'home', LEADS = null, EDIT_LEAD = null, PERF = null, PMODE = 'month', CLIENTS = null, PAYOUTS = null, JID = null, JITEM = null;
   try { TAB = sessionStorage.getItem('flxTab') || 'home'; } catch(e) {}
   var main = document.getElementById('main');
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -86,7 +86,7 @@
   var TABS = [['home','Dashboard'], ['profile','My Profile'], ['empanelment','Empanelment & Documents'], ['tasks','My Tasks'], ['journey','Client Journey'], ['clients','My Clients'], ['performance','My Performance'], ['payments','Payments'], ['payouts','My Payouts']];
   // A section is shown only when the partner's login opens it (Setup › Partner Login Access in BOSS).
   function opens(k){ return k === 'home' ? true : !ME.access || ME.access.indexOf(k) >= 0; }
-  function go(t){ TAB = t; try { sessionStorage.setItem('flxTab', t); } catch(e) {} draw(); window.scrollTo(0, 0); }
+  function go(t){ TAB = t; JID = null; JITEM = null; try { sessionStorage.setItem('flxTab', t); } catch(e) {} draw(); window.scrollTo(0, 0); }
   window.flxGo = go;
   function draw(){
     var tabs = TABS.filter(function(t){ return opens(t[0]) && (t[0] === 'performance' ? (ME.partner.role || ME.stage.id === 'active') : (t[0] !== 'payments' || ME.due > 0 || ME.payments.length)); });
@@ -98,6 +98,7 @@
     var f = {home: home, profile: profile, empanelment: empanelment, tasks: tasks, journey: journey, performance: performance, payments: payments, clients: clients, payouts: payouts}[TAB] || home;
     main.innerHTML = f();
     if(TAB === 'journey' && ME.clientJourney.open && !LEADS) loadLeads();
+    if(TAB === 'journey' && JID && (!JITEM || JITEM.id !== JID)) loadItem();
     if(TAB === 'performance' && !PERF) loadPerf();
     if(TAB === 'clients' && !CLIENTS) api('clients').then(function(d){ CLIENTS = d; if(TAB === 'clients') main.innerHTML = clients(); });
     if(TAB === 'payouts' && !PAYOUTS) api('payouts').then(function(d){ PAYOUTS = d; if(TAB === 'payouts') main.innerHTML = payouts(); });
@@ -189,8 +190,13 @@
   function journey(){
     var cj = ME.clientJourney;
     if(!cj.open) return '<div class="card"><h2>Client Journey</h2><div class="msg info">' + esc(cj.reason) + '</div></div>';
+    if(JID) return journeyItem();
     var l = EDIT_LEAD || {};
-    return '<div class="kpis">' + [['leads','Leads collected'], ['conversions','Leads converted'], ['clients','Clients onboarded']].map(function(m){
+    var today = new Date().toISOString().slice(0, 10);
+    var due = (LEADS || []).filter(function(x){ return x.followUp && x.followUp <= today; });
+    return (due.length ? '<div class="card"><h2>Follow-ups due</h2><ul class="next">' + due.map(function(x){
+        return '<li><a href="javascript:void(0)" data-jopen="' + esc(x.id) + '">' + esc(x.name) + '</a> — ' + (x.followUp < today ? '<span class="down">overdue since ' + date(x.followUp) + '</span>' : 'today') + '</li>'; }).join('') + '</ul></div>' : '')
+      + '<div class="kpis">' + [['leads','Leads collected'], ['conversions','Leads converted'], ['clients','Clients onboarded']].map(function(m){
         return '<div class="kpi"><div class="l">' + m[1] + '</div><div class="v">' + (ME.figures[m[0]] || 0) + '</div></div>'; }).join('') + '</div>'
       + '<div class="card"><h2>' + (EDIT_LEAD ? 'Change ' + esc(l.name) : 'Add a lead') + '</h2><div class="grid">'
       + [['firstName','First name *'], ['lastName','Last name'], ['mobile','Mobile *'], ['email','Email'], ['city','City'], ['productInterest','Interested in']].map(function(f){
@@ -200,10 +206,52 @@
       + '<div class="muted small" style="margin-top:8px">Your lead goes to your RM, ' + esc(ME.partner.rm || '') + ', who works it through the Client Journey with you. Each one counts in your figures.</div></div>'
       + '<div class="card"><h2>My leads</h2>' + (LEADS === null ? '<div class="muted">Loading…</div>'
         : !LEADS.length ? '<div class="muted">No leads yet.</div>'
-        : '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Mobile</th><th>City</th><th>Stage</th><th>Added</th><th></th></tr></thead><tbody>'
+        : '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Mobile</th><th>City</th><th>Stage</th><th>Journey</th><th>Follow up</th><th>Added</th><th></th></tr></thead><tbody>'
           + LEADS.map(function(x){ return '<tr><td><b>' + esc(x.name) + '</b>' + (x.interest ? '<div class="muted small">' + esc(x.interest) + '</div>' : '') + '</td><td>' + esc(x.mobile) + '</td><td>' + esc(x.city || '—')
-            + '</td><td>' + (x.client ? badge('Client') + ' ' : '') + esc(x.stage) + '</td><td>' + date(x.createdAt) + '</td><td>' + (x.editable ? '<button class="btn sm" data-edit="' + esc(x.id) + '">Edit</button>' : '') + '</td></tr>'; }).join('')
+            + '</td><td>' + (x.client ? badge('Client') + ' ' : '') + esc(x.stage) + (x.meetingAsked ? '<div class="muted small">Meeting asked</div>' : '') + '</td>'
+            + '<td style="min-width:90px"><div class="bar"><i class="ok" style="width:' + Math.round(x.steps * 100 / (x.of || 1)) + '%"></i></div><div class="muted small">' + x.steps + ' of ' + x.of + ' steps</div></td>'
+            + '<td>' + (x.followUp ? date(x.followUp) : '—') + '</td><td>' + date(x.createdAt) + '</td>'
+            + '<td style="white-space:nowrap"><button class="btn sm primary" data-jopen="' + esc(x.id) + '">Open</button>' + (x.editable ? ' <button class="btn sm" data-edit="' + esc(x.id) + '">Edit</button>' : '') + '</td></tr>'; }).join('')
           + '</tbody></table></div>') + '</div>';
+  }
+  /* One lead's journey, the partner's work on it, and the ask for a meeting with the Client RM. */
+  function journeyItem(){
+    var back = '<a href="javascript:void(0)" id="jBack">← All my leads</a>';
+    if(!JITEM || JITEM.id !== JID) return '<div class="card">' + back + '<div class="muted" style="margin-top:8px">Loading…</div></div>';
+    if(JITEM.error) return '<div class="card">' + back + '<div class="msg err" style="margin-top:8px">' + esc(JITEM.error) + '</div></div>';
+    var x = JITEM, mr = x.meetingRequest;
+    var when = function(v){ return v ? date(v.slice(0, 10)) + (v.length > 10 ? ' · ' + v.slice(11, 16) : '') : ''; };
+    return '<div class="card">' + back + '<h1 style="margin-top:8px">' + esc(x.name) + (x.client ? ' ' + badge('Client') : '') + '</h1>'
+      + '<div class="muted">' + esc([x.mobile, x.email, x.city, x.interest].filter(Boolean).join(' · ')) + '</div>'
+      + '<div class="muted small" style="margin-top:4px">Stage: <b>' + esc(x.stage) + '</b> · Client RM: <b>' + esc(x.rm || '—') + '</b></div></div>'
+      + '<div class="card"><h2>The journey</h2><div class="steps">' + x.steps.map(function(s){
+          return '<span class="step ' + (s.current ? 'cur' : s.done ? 'done' : '') + '" title="' + esc(s.at ? date(s.at) : '') + '">' + (s.done ? '✓ ' : '') + esc(s.label) + '</span>'; }).join('') + '</div>'
+      + '<div class="muted small" style="margin-top:8px">The steps of the Partner Onboarding flowchart. Each one reached counts in My Performance.</div></div>'
+      + '<div class="card"><h2>Meeting with the Client RM</h2>'
+      + (mr ? '<div class="msg info">' + (mr.fromPartner ? 'You asked for a meeting on ' + date(mr.at) : 'A meeting was asked for on ' + date(mr.at)) + '. '
+            + (mr.slots.length ? 'Times offered: ' + mr.slots.map(when).map(esc).join(', ') + '. ' : '') + 'Your RM will book it and the stage moves when it is in the diary.</div>'
+        : '<div class="muted small" style="margin-bottom:8px">Give up to three times that suit the lead. Your RM books one and tells you.</div><div class="grid">'
+          + [1, 2, 3].map(function(i){ return '<div class="field"><label>Time ' + i + (i > 1 ? ' (optional)' : '') + '</label><input type="datetime-local" id="mt_' + i + '"></div>'; }).join('')
+          + '</div><div class="field"><label>What the lead would like to cover</label><textarea id="mt_note"></textarea></div><div id="mtMsg"></div>'
+          + '<button class="btn primary" id="mtSave">Ask for the Meeting</button>') + '</div>'
+      + '<div class="card"><h2>Log your work</h2><div class="grid">'
+      + '<div class="field"><label>What *</label><select id="ac_kind">' + x.kinds.map(function(k){ return '<option>' + esc(k) + '</option>'; }).join('') + '</select></div>'
+      + '<div class="field"><label>Follow up on</label><input type="date" id="ac_follow" value="' + esc(x.followUp || '') + '"></div></div>'
+      + '<div class="field"><label>What happened *</label><textarea id="ac_note" placeholder="Spoke to them about their goals; sending the MANIA sheet…"></textarea></div><div id="acMsg"></div>'
+      + '<button class="btn primary" id="acSave">Save</button>'
+      + '<div class="muted small" style="margin-top:8px">Your RM sees this on the lead in BOSS.</div></div>'
+      + '<div class="card"><h2>Your work on this lead</h2>' + (x.activities.length ? '<div class="table-wrap"><table><thead><tr><th>When</th><th>What</th><th>Note</th><th>Follow up</th></tr></thead><tbody>'
+          + x.activities.map(function(a){ return '<tr><td>' + date(a.at) + '</td><td>' + esc(a.kind) + '</td><td style="white-space:pre-wrap">' + esc(a.note) + '</td><td>' + (a.followUp ? date(a.followUp) : '—') + '</td></tr>'; }).join('')
+          + '</tbody></table></div>' : '<div class="muted">Nothing logged yet.</div>') + '</div>'
+      + '<div class="card"><h2>What has happened</h2>' + (x.history.length ? '<div class="kv">' + x.history.map(function(h){ return '<div>' + date(h.at) + '</div><div>' + esc(h.label) + '</div>'; }).join('') + '</div>'
+          : '<div class="muted">Nothing yet.</div>') + '</div>';
+  }
+  function loadItem(){
+    var id = JID;
+    api('journey/' + encodeURIComponent(id)).then(function(d){
+      JITEM = d.ok ? d.item : {id: id, error: d.message || 'Could not open this lead.'};
+      if(TAB === 'journey' && JID === id){ main.innerHTML = journey(); wire(); }
+    });
   }
   function payments(){
     var add = ME.mayRecordPayment ? '<div class="card"><h2>Record a payment</h2><div class="muted small" style="margin-bottom:10px">Due: <b>' + money(ME.due, ME.currency) + '</b>. Your RM checks it against the bank before it counts.</div><div class="grid">'
@@ -331,6 +379,31 @@
     });
   }
   function wire(){
+    Array.prototype.forEach.call(document.querySelectorAll('[data-jopen]'), function(b){
+      b.onclick = function(){ JID = b.getAttribute('data-jopen'); JITEM = null; draw(); window.scrollTo(0, 0); };
+    });
+    var jb = document.getElementById('jBack');
+    if(jb) jb.onclick = function(){ JID = null; JITEM = null; LEADS = null; draw(); };
+    var ac = document.getElementById('acSave');
+    if(ac) ac.onclick = function(){
+      ac.disabled = true;
+      api('journey/' + encodeURIComponent(JID) + '/activity', {method:'POST', body: JSON.stringify({kind: document.getElementById('ac_kind').value,
+        note: document.getElementById('ac_note').value, followUp: document.getElementById('ac_follow').value})}).then(function(r){
+        ac.disabled = false;
+        if(!r.ok) return msg('acMsg', r.message || 'That did not go through.');
+        JITEM = null; loadItem();
+      });
+    };
+    var mt = document.getElementById('mtSave');
+    if(mt) mt.onclick = function(){
+      mt.disabled = true;
+      api('journey/' + encodeURIComponent(JID) + '/meeting', {method:'POST', body: JSON.stringify({slots: [1, 2, 3].map(function(i){ return document.getElementById('mt_' + i).value; }).filter(Boolean),
+        note: document.getElementById('mt_note').value})}).then(function(r){
+        mt.disabled = false;
+        if(!r.ok) return msg('mtMsg', r.message || 'That did not go through.');
+        JITEM = null; loadItem();
+      });
+    };
     Array.prototype.forEach.call(document.querySelectorAll('[data-pmode]'), function(b){
       b.onclick = function(){ PMODE = b.getAttribute('data-pmode'); main.innerHTML = performance(); wire(); };
     });
