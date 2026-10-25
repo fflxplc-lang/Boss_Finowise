@@ -12,6 +12,8 @@
      way round. -->
 <script src="/appraisal-engine.js"></script>
 <script src="/payout.js"></script>
+<script src="/partner-targets.js"></script>
+<script src="/partner-access.js"></script>
 <title>BOSS</title>
 <!-- THE TAB SHOULD SAY WHOSE SYSTEM THIS IS.
      The browser drew its own globe because nothing here named an icon.
@@ -10778,7 +10780,7 @@ function meetingRequestCard(record, module){
     <div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
       <div>
         <div class="section-title" style="margin-top:0">They asked to meet</div>
-        <div class="small-note" style="margin-top:0">Sent from their FQ result on ${fmtDate(m.at)}. ${
+        <div class="small-note" style="margin-top:0">${m.source==='Partner' ? 'Asked by their partner, ' + esc(m.partnerName||'') + ', on ' + fmtDate(m.at) + '.' : 'Sent from their FQ result on ' + fmtDate(m.at) + '.'} ${
           slots.length? 'These are the times they offered.'
                       : 'They gave no times — they would like you to offer one.'}</div>
       </div>
@@ -10812,6 +10814,17 @@ function meetingScheduleTransitionFor(module, record){
 }
 /* Picking one of their times opens the ordinary meeting scheduler with that
    date and time already in it — the rest of scheduling is unchanged. */
+/* What the partner who brought this lead has done on it from their own
+   login (/partner › Client Journey): calls, meetings, follow-ups, notes.
+   It travels with the lead when it becomes a client. */
+function partnerWorkCard(rec){
+  const acts = (rec && rec.partnerActivity) || [];
+  if(!rec || !rec.partnerPobId || (!acts.length && !rec.partnerFollowUp)) return '';
+  const p = (DB.pjOnboarding||[]).find(x=>x && x.id===rec.partnerPobId);
+  return profTable('From the partner' + (p ? ' — ' + pjName(p) : ''), ['When','What','Note','Follow up'],
+    acts.slice().reverse().map(a=>`<tr><td>${esc(fmtDateTime(a.at))}</td><td>${esc(a.kind)}</td><td style="white-space:pre-wrap">${esc(a.note)}</td><td>${esc(a.followUp ? fmtDate(a.followUp) : '')}</td></tr>`),
+    'Nothing logged yet.', rec.partnerFollowUp ? `<div class="small-note">The partner follows up next on <b>${esc(fmtDate(rec.partnerFollowUp))}</b>.</div>` : '');
+}
 function scheduleFromRequest(recordId, module, i){
   const rec = module==='LMS' ? DB.leads.find(l=>l.id===recordId) : DB.clients.find(c=>c.id===recordId);
   const m = rec && rec.meetingRequest; if(!m) return;
@@ -38830,6 +38843,7 @@ function viewLeadDetail(id){
       // Overview
       return `
         ${meetingRequestCard(l, 'LMS')}
+        ${partnerWorkCard(l)}
         ${profCard('Lead Information', [
           ['Mobile', esc(l.mobile)], ['Email', esc(l.email)], ['City', esc(l.city)],
           ['PAN', esc(l.pan)], ['Age', leadAge(l)!==null? String(leadAge(l)) : ''],
@@ -40796,6 +40810,7 @@ function cpOverview(c){
       ['BM Amount', c.mandateAmount? inr(numVal(c.mandateAmount)):''],
     ])}
     ${meetingRequestCard(c, 'CMS')}
+    ${partnerWorkCard(c)}
     <div class="cp-2col">
       ${profCard('Client Information', [
         ['Mobile', esc(c.mobile)], ['Email', esc(c.email)], ['PAN', esc(c.pan)],
@@ -51343,54 +51358,27 @@ async function pjSavePayout(id){
    Setting, wins over it. A year's target is its twelve months added up.
    Work done outside BOSS is added by hand per month, and shows as such.
    ===================================================================== */
-const PT_METRICS = [
-  {k:'prospects',   l:'Prospects collected',              step:'Collection of 100 prospects and data feed in CRM'},
-  {k:'qualified',   l:'Leads qualified',                  step:'MANIA sheet updation for lead qualification'},
-  {k:'meetings',    l:'Meetings with Client RM',          step:'Schedule a meeting of the lead with the Client RM'},
-  {k:'riskProfiles',l:'Risk profiling / data gathering',  step:'Get the RR sheet · complete the risk profiling'},
-  {k:'allocations', l:'Allocation presented',             step:'Send the investment allocation sheet to the client'},
-  {k:'conversions', l:'Leads converted to clients',       step:'Is the lead converted to a client?'},
-  {k:'onboarded',   l:'Clients onboarded',                step:'Complete the onboarding of the client'},
-  {k:'transactions',l:'Financial transactions',           step:'Complete the financial transactions'},
-  {k:'business',    l:'Business amount',                  step:'Value of those transactions', money:true},
-  {k:'reviews',     l:'Client reviews conducted',         step:'Conduct client reviews as per frequency'},
-  {k:'monthly',     l:'Monthly reviews held',             step:'Target setting, monthly review and follow up'},
-];
-/* What the flowchart asks of each role, per month, until Setup says otherwise. */
-const PT_DEFAULTS = {
-  'Ninja':       {prospects:25, qualified:10, meetings:5, conversions:1, monthly:1},
-  'Super Ninja': {meetings:4, riskProfiles:3, allocations:3, conversions:2, onboarded:2, transactions:4, business:500000, monthly:1},
-  'Sherpa':      {prospects:20, qualified:8, meetings:4, conversions:2, onboarded:2, transactions:4, business:300000, reviews:4, monthly:1},
-};
-/* A partner whose role was never confirmed in BOSS — an FBM or FBP brought
-   over from the old system — is measured too, on targets of their own. */
-const PT_NO_ROLE = 'No role yet';
-// A function: POB_ROLES is declared further down the page.
-const ptRoleKeys = () => POB_ROLES.concat([PT_NO_ROLE]);
-const ptRoleOf = r => r.role || PT_NO_ROLE;
+/* The counting lives in public/partner-targets.js, which the partner's own
+   login (partner-portal.js) counts with too, so the two never disagree.
+   These are this page's names for it. */
+const PTX = window.PartnerTargets;
+const PT_METRICS = PTX.METRICS, PT_DEFAULTS = PTX.DEFAULTS, PT_NO_ROLE = PTX.NO_ROLE, PT_STATUS = PTX.STATUS, PT_MON = PTX.MON;
+const ptRoleKeys = PTX.roleKeys, ptRoleOf = PTX.roleOf, ptMonthKey = PTX.monthKey, ptShiftMonth = PTX.shiftMonth, ptMonLabel = PTX.monLabel, ptNum = PTX.num;
 const ptRoleLabel = r => r.role || (r.partnerType ? r.partnerType + ' · no role yet' : PT_NO_ROLE);
-const PT_STATUS = [[100,'Exceeds Target','ok'], [75,'On Track','info'], [50,'Needs Improvement','warn'], [-Infinity,'At Risk','danger']];
-const PT_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
+const ptSum = PTX.sum, ptOverall = PTX.overall, ptStatus = PTX.status, ptStartMonth = PTX.startMonth;
 let ptCfgMemo = null, ptCfgSrc;
 function ptConfig(){
-  const saved = (DB.config && DB.config.partnerTargets) || {};
-  if(ptCfgMemo && ptCfgSrc === (DB.config && DB.config.partnerTargets)) return ptCfgMemo;
-  const roles = {};
-  ptRoleKeys().forEach(role=>{ roles[role] = Object.assign({}, PT_DEFAULTS[role] || {}, (saved.roles||{})[role] || {}); });
-  ptCfgSrc = DB.config && DB.config.partnerTargets;
-  return (ptCfgMemo = {roles});
+  const saved = DB.config && DB.config.partnerTargets;
+  if(ptCfgMemo && ptCfgSrc === saved) return ptCfgMemo;
+  ptCfgSrc = saved;
+  return (ptCfgMemo = {roles: PTX.roleTargets(saved)});
 }
-function ptMonthKey(d){ return String(d||'').slice(0,7); }
 function ptToday(){ return new Date().toISOString().slice(0,10); }
-function ptShiftMonth(m, k){ let y = +m.slice(0,4), n = +m.slice(5,7) + k; while(n < 1){ n += 12; y--; } while(n > 12){ n -= 12; y++; } return y + '-' + String(n).padStart(2,'0'); }
-const ptMonLabel = m => PT_MON[+m.slice(5,7) - 1] + ' ' + m.slice(0,4);
-function ptNum(v){ const n = Number(String(v===undefined||v===null?'':v).replace(/[^0-9.\-]/g,'')); return isFinite(n) ? n : 0; }
 function ptFmt(metric, v){ return metric.money ? money(v) : Math.round(v).toLocaleString(numberLocale()); }
 
-/* The partners on the page: every onboarding record with a role, as far as
-   this person may see — their own, their branch or team, or the partners
-   they mentor. */
+/* The partners on the page: every onboarding record with a role, or any
+   Active Partner, as far as this person may see — their own, their branch
+   or team, or the partners they mentor. */
 function ptPartners(){
   const measured = r => r.role || stateOf('POB', r)==='active';
   const seen = visibleRecords(pobLive().filter(measured), r=>r.assignedTo, r=>r.branch);
@@ -51398,81 +51386,12 @@ function ptPartners(){
   pobLive().forEach(r=>{ if(measured(r) && r.mentorId===currentUser && !ids.has(r.id)) seen.push(r); });
   return seen.sort((a,b)=>pjName(a).localeCompare(pjName(b)));
 }
-
-/* Every dated achievement of one partner: [{k, at, v}]. Built once per
-   draw for each partner and then summed for whatever period is asked. */
 function ptEventsOf(r){
-  const out = [];
-  const add = (k, at, v) => { if(at) out.push({k, at: String(at), v: v===undefined ? 1 : v}); };
-  const firstAt = (hist, ids) => { const h = (hist||[]).find(x=>x && ids.includes(x.state)); return h && h.at; };
-  const leads = pobPartnerLeads(r), clients = pobPartnerClients(r);
-  const LMS = {qualified:['qualified'], meetings:['firstMeetingScheduled'], riskProfiles:['planInputSubmitted','dataGatheringSent'],
-    allocations:['thirdMeetingDone','blueprintSentToLead']};
-  leads.forEach(l=>{
-    add('prospects', l.createdAt);
-    Object.keys(LMS).forEach(k=>add(k, firstAt(l.blueprintHistory, LMS[k])));
-  });
-  const cms = getBlueprint('CMS').states.map(s=>s.id);
-  const onbFrom = cms.indexOf(POB_CLIENT_ONBOARDED_FROM);
-  const clientIds = new Set();
-  clients.forEach(c=>{
-    clientIds.add(c.id);
-    add('prospects', c.lmsCreatedAt || c.createdAt);
-    Object.keys(LMS).forEach(k=>add(k, firstAt(c.lmsHistory, LMS[k])));
-    add('conversions', c.createdAt);
-    const onb = (c.blueprintHistory||[]).find(h=>h && onbFrom >= 0 && cms.indexOf(h.state) >= onbFrom);
-    add('onboarded', onb && onb.at);
-  });
-  (DB.transactions||[]).forEach(t=>{
-    if(!t || t.deletedAt || !clientIds.has(t.clientId) || /reject|cancel|fail/i.test(t.status||'')) return;
-    const at = t.initiatedDate || t.createdAt;
-    add('transactions', at);
-    add('business', at, ptNum(t.amount));
-  });
-  (DB.reviews||[]).forEach(rv=>{
-    if(!rv || rv.deletedAt || !clientIds.has(rv.clientId) || stateOf('RMS', rv)!=='closed') return;
-    const h = (rv.blueprintHistory||[]).slice().reverse().find(x=>x && x.state==='closed');
-    add('reviews', (h && h.at) || rv.updatedAt || rv.meetingDate);
-  });
-  pobReviews().forEach(rv=>{ if(!rv.deletedAt && rv.pobId===r.id && rv.kind!=='Annual Review' && rv.status==='Completed') add('monthly', rv.completedAt); });
-  // Achievements outside BOSS, entered by hand per month.
-  Object.entries(r.ptManual||{}).forEach(([m, row])=>Object.entries(row||{}).forEach(([k, v])=>{ if(ptNum(v)) add(k, m + '-15', ptNum(v)); }));
-  return out;
+  return PTX.events(r, {leads: DB.leads, clients: DB.clients, transactions: DB.transactions, reviews: DB.reviews,
+    partnerReviews: pobReviews(), cmsOrder: getBlueprint('CMS').states.map(x=>x.id)});
 }
-/* Achieved in the months from..to (YYYY-MM, inclusive), per measure. */
-function ptSum(events, from, to){
-  const out = {}; PT_METRICS.forEach(m=>{ out[m.k] = 0; });
-  events.forEach(e=>{ const m = ptMonthKey(e.at); if(m >= from && m <= to && out[e.k] !== undefined) out[e.k] += e.v; });
-  return out;
-}
-/* Targets start in the month the partner's road started: the role
-   confirmed, else activation, else the record itself. Before that there
-   was nothing to hit, so nothing is counted as missed. */
-function ptStartMonth(r){
-  const h = (r.blueprintHistory||[]).find(x=>x && (x.state==='roleWorkflow' || x.state==='active'));
-  return ptMonthKey((h && h.at) || r.activatedAt || r.createdAt) || '0000-00';
-}
-/* A partner's monthly target for a measure in a given month. */
-function ptTargetFor(r, k, month){
-  if(month < ptStartMonth(r)) return 0;
-  const own = ((r.ptTargets||{})[month.slice(0,4)]||{})[k];
-  if(own !== undefined && own !== '') return ptNum(own);
-  const role = ptConfig().roles[ptRoleOf(r)];
-  return ptNum(role && role[k]);
-}
-function ptTargets(r, from, to){
-  const out = {}; PT_METRICS.forEach(m=>{ out[m.k] = 0; });
-  for(let m = from; m <= to; m = ptShiftMonth(m, 1)) PT_METRICS.forEach(x=>{ out[x.k] += ptTargetFor(r, x.k, m); });
-  return out;
-}
-/* Overall achievement: the average of each targeted measure's %, each
-   capped at 150% so one runaway figure cannot hide the rest. */
-function ptOverall(ach, tgt){
-  const ks = PT_METRICS.filter(m=>tgt[m.k] > 0);
-  if(!ks.length) return null;
-  return ks.reduce((s, m)=>s + Math.min(150, ach[m.k] * 100 / tgt[m.k]), 0) / ks.length;
-}
-function ptStatus(pct){ return pct == null ? null : PT_STATUS.find(([min])=>pct >= min); }
+const ptTargetFor = (r, k, month) => PTX.targetFor(r, k, month, ptConfig().roles);
+const ptTargets = (r, from, to) => PTX.targets(r, from, to, ptConfig().roles);
 function ptBadge(pct){ const s = ptStatus(pct); return s ? `<span class="badge ${s[2]}">${s[1]}</span>` : '<span class="badge muted">No target</span>'; }
 function ptGrowth(cur, prev){
   if(!prev) return cur ? `<span class="pt-up">New</span>` : '<span class="pt-flat">—</span>';
@@ -52787,8 +52706,8 @@ function pobOpenLoginModal(module, id, tid){
   const l = r.login || {};
   openModal('Create Login Access — ' + pjName(r), `<p class="small-note" style="margin-top:0">Creates ${esc(pjName(r))}’s own Freedom LifeX partner login, and emails <b>${esc(r.email||'no address on file')}</b> a link to set their password. Signed in at <b>${esc(location.origin)}/partner</b>, they see their dashboard, their own profile, empanelment, agreement and documents, and their tasks — nobody else’s, and nothing of BOSS. This is their account, not their activation as a partner: that comes at the end, after the readiness review.</p>`
     + fieldInput({k:'lgUser', l:'Login ID (email)', t:'text', vk:'email', req:1}, l.userId || r.email || '')
-    + fieldInput({k:'lgAccess', l:'Initial access', t:'select', opts:['Onboarding tasks only','Onboarding + learning']}, l.access || 'Onboarding tasks only'),
-    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveLogin('${esc(id)}','${esc(tid)}')">Create &amp; Send Login</button>`);
+    + pobAccessBoxes(r),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveLogin('${esc(id)}','${esc(tid||'')}')">Create &amp; Send Login</button>`);
 }
 /* The partner's account lives on the server, in its own table beside the
    staff accounts, never in the store the CRM hands to every browser.
@@ -52803,22 +52722,98 @@ async function pobPortalCall(path, body){
     return j;
   }catch(e){ return {ok: false, message: 'Could not reach the server: ' + e.message}; }
 }
+/* ---------- what the partner's login opens (public/partner-access.js) ----------
+   The server enforces it; these are the boxes that set it. A partner
+   follows their role's list from Setup › Partner Login Access until
+   somebody ticks a list of their own. */
+const PA = window.PartnerAccess;
+function pobAccessBoxes(r, own){
+  const res = PA.resolve(r, DB.config.partnerPortal), on = new Set(res.sections);
+  const role = PA.roleKey(r);
+  return `<div class="field" style="margin-top:6px"><label>What the login opens</label>
+    <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:4px 0 8px"><input type="checkbox" id="pa_follow" ${res.from==='role' ? 'checked' : ''}
+      onchange="document.querySelectorAll('.pa-box').forEach(b=>{ if(!b.dataset.fixed) b.disabled = this.checked; })">
+      Follow the ${esc(role)} default (Setup › Partner Login Access)</label>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:6px 14px">
+    ${PA.SECTIONS.map(x=>`<label style="display:flex;gap:8px;align-items:flex-start;font-weight:400">
+      <input type="checkbox" class="pa-box" id="pa_${x.k}" ${on.has(x.k) ? 'checked' : ''} ${x.fixed ? 'disabled data-fixed="1"' : res.from==='role' ? 'disabled' : ''}>
+      <span><b>${esc(x.l)}</b><br><span class="small-note" style="margin:0">${esc(x.d)}${x.fixed ? ' · always open' : ''}</span></span></label>`).join('')}
+    </div></div>`;
+}
+function pobReadAccessBoxes(){
+  const follow = document.getElementById('pa_follow');
+  if(follow && follow.checked) return null;
+  return PA.SECTIONS.filter(x=>{ const b = document.getElementById('pa_' + x.k); return b && b.checked; }).map(x=>x.k);
+}
+function pobApplyAccess(r, list){
+  if(list === null) delete r.portalAccess;
+  else r.portalAccess = PA.clean(list);
+}
+function pobAccessSummary(r){
+  const res = PA.resolve(r, DB.config.partnerPortal);
+  return (res.from==='role' ? PA.roleKey(r) + ' default: ' : 'Own list: ') + PA.SECTIONS.filter(x=>res.sections.includes(x.k)).map(x=>x.l).join(', ');
+}
+function pobOpenAccessModal(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !can('POB','edit')) return;
+  openModal('Login Access — ' + pjName(r), `<p class="small-note" style="margin-top:0">What ${esc(pjName(r))} sees when they sign in at <b>${esc(location.origin)}/partner</b>.
+    A section left out is not shown to them, and the server refuses it too.</p>` + pobAccessBoxes(r),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveAccess('${esc(id)}')">Save Access</button>`);
+}
+async function pobSaveAccess(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !can('POB','edit')) return;
+  const was = pobAccessSummary(r);
+  pobApplyAccess(r, pobReadAccessBoxes());
+  const now = pobAccessSummary(r);
+  await save('pjOnboarding');
+  if(was !== now) await logAudit('POB', id, 'Login Access Changed', [{field:'sections', oldValue: was, newValue: now}]);
+  closeModal(); render();
+}
+/* Setup › Partner Login Access: each role's sections. */
+function renderSettingsPartnerLogin(){
+  const saved = DB.config.partnerPortal;
+  return `<div class="card" style="padding:16px">
+    <p class="small-note" style="margin-top:0">What a partner opens when they sign in with their Freedom LifeX login at <b>${esc(location.origin)}/partner</b>, by role.
+      A partner follows their role's column until their own list is ticked (Partner Onboarding › the partner › Login Access). Dashboard and My Profile are always open.
+      The login itself is given from the partner's Login Access step — or, for a partner already active, from Create Partner Login on their record.</p>
+    <div class="table-wrap"><table><thead><tr><th>Section</th><th>What it holds</th>${PA.ROLES.map(x=>`<th style="text-align:center">${esc(x)}</th>`).join('')}</tr></thead><tbody>
+    ${PA.SECTIONS.map(x=>`<tr><td><b>${esc(x.l)}</b></td><td class="small-note">${esc(x.d)}</td>
+      ${PA.ROLES.map(role=>`<td style="text-align:center"><input type="checkbox" id="pas_${role.replace(/\W+/g,'')}_${x.k}" ${PA.roleSections(saved, role).includes(x.k) ? 'checked' : ''} ${x.fixed ? 'disabled' : ''}></td>`).join('')}</tr>`).join('')}
+    </tbody></table></div>
+    <div class="row" style="gap:8px;margin-top:10px"><button class="btn primary" onclick="pobSavePortalSettings()">Save Access</button></div>
+  </div>`;
+}
+async function pobSavePortalSettings(){
+  if(!pjMaySetUp()){ alert('You do not have permission to change these settings.'); return; }
+  const roles = {};
+  PA.ROLES.forEach(role=>{ roles[role] = PA.clean(PA.SECTIONS.filter(x=>{ const b = document.getElementById('pas_' + role.replace(/\W+/g,'') + '_' + x.k); return b && b.checked; }).map(x=>x.k)); });
+  DB.config.partnerPortal = {roles, updatedAt: new Date().toISOString(), updatedBy: currentUser};
+  await save('config');
+  alert('Saved.'); render();
+}
 async function pobSaveLogin(id, tid){
   const r = pobRecords().find(x=>x.id===id);
   if(!r) return;
-  const f = [{k:'lgUser', l:'Login ID', req:1, vk:'email'}, {k:'lgAccess', l:'Access'}];
+  const f = [{k:'lgUser', l:'Login ID', req:1, vk:'email'}];
   const d = readFields(f);
   if(!validateRequired(f, d)) return;
+  const access = pobReadAccessBoxes();
   const taken = pobLive().find(x=>x.id!==id && x.login && String(x.login.userId).toLowerCase()===String(d.lgUser).trim().toLowerCase());
   if(taken){ alert('The login ID ' + d.lgUser + ' already belongs to ' + pjName(taken) + '.'); return; }
   const acct = await pobPortalCall('accounts', {pobId: id, email: d.lgUser.trim()});
   if(!acct.ok){ alert('The login could not be created: ' + acct.message); return; }
   const at = new Date().toISOString();
-  r.login = Object.assign({}, r.login, {userId: d.lgUser.trim(), link: acct.loginUrl, portal: true, access: d.lgAccess, status: 'Created', createdAt: at, createdBy: currentUser,
-    history: ((r.login||{}).history||[]).concat([{at, by: currentUser, status: 'Created', note: d.lgAccess}])});
+  pobApplyAccess(r, access);
+  const note = pobAccessSummary(r);
+  r.login = Object.assign({}, r.login, {userId: d.lgUser.trim(), link: acct.loginUrl, portal: true, status: 'Created', createdAt: at, createdBy: currentUser,
+    history: ((r.login||{}).history||[]).concat([{at, by: currentUser, status: 'Created', note}])});
   closeModal();
   const res = await pjMail('POB', r, 'pobLogin', {LoginId: r.login.userId, LoginLink: acct.setupUrl, PartnerCode: r.partnerCode}, 'Login access');
-  await doTransition('POB', id, tid);
+  /* From the Login Access stage the record moves on. A partner who is past
+     it — active before BOSS, imported — just gets the login. */
+  if(tid) await doTransition('POB', id, tid);
+  else { await save('pjOnboarding'); await logAudit('POB', id, 'Partner Login Created', [{field:'login', oldValue:'', newValue: r.login.userId + ' · ' + note}]); render(); }
   pjSaidMail(res, 'The login letter');
 }
 async function pobResendLogin(id){
@@ -53896,12 +53891,16 @@ function viewPOBDetail(id){
           ['Stage', esc(stateLabel('POB', st))], ['Application', statusBadge(r.applicationStatus)], ['Payment', statusBadge(pobPaymentStatus(r))],
           ['Verification', r.applicationStatus==='Approved' ? '<span class="badge ok">Completed</span>' : esc(dv.approved + ' of ' + dv.total + ' documents approved')],
           ['Login Account', r.login ? statusBadge(r.login.status) + ' ' + esc(r.login.userId) : 'Not created'],
+          ['Login Opens', esc(pobAccessSummary(r))],
           ['Operational', statusBadge(r.operationalStatus || 'Onboarding')],
           ['Role Clarity Session', rcs ? statusBadge(rcs.status) : (req.some(t=>t.kind==='session') ? 'Not scheduled' : '—')],
           ['Onboarding Tasks', esc(req.filter(t=>t.status==='Approved').length + ' of ' + req.length)],
           ['Outstanding Approvals', pendingApprovals.length ? esc(pendingApprovals.map(x=>x.what + ': ' + x.detail).join('; ')) : 'None'],
           ['Activated', esc(r.activatedAt ? fmtDate(r.activatedAt) : '')],
-        ], r.login && pobMayApprove() ? `<div class="row" style="gap:6px;margin-top:8px">
+        ], !r.login && can('POB','edit') && ['roleMeeting','roleWorkflow','readiness','active'].includes(st) ? `<div class="row" style="gap:6px;margin-top:8px">
+          <button class="btn sm" onclick="pobOpenLoginModal('POB','${esc(id)}','')">Create Partner Login</button></div>`
+        : r.login && pobMayApprove() ? `<div class="row" style="gap:6px;margin-top:8px">
+          <button class="btn sm" onclick="pobOpenAccessModal('${esc(id)}')">Login Access</button>
           ${r.login.status!=='Activated' ? `<button class="btn sm" onclick="pobSetLoginStatus('${esc(id)}','Activated')">Activate Account</button>` : ''}
           ${r.login.status!=='Suspended' ? `<button class="btn sm ghost" onclick="pobSetLoginStatus('${esc(id)}','Suspended')">Suspend Account</button>` : ''}
           <button class="btn sm ghost" onclick="pobResendLogin('${esc(id)}')">Send a New Password Link</button></div>` : '')
@@ -74770,6 +74769,7 @@ const SETTINGS_CATEGORIES = [
     ['cfg_business','Business & Transactions','manageWorkflows','tab','Products, transaction types and the daily business tracker.'],
     ['cfg_alloc','Asset Allocation','manageWorkflows','tab','How an allocation is prepared, consented to and completed.'],
     ['cfg_projects','Projects Tracker','manageWorkflows','tab','Project types, statuses and their checklists.'],
+    ['partnerlogin','Partner Login Access','manageWorkflows','tab','What a partner opens in their own Freedom LifeX login — dashboard, client journey, clients, performance, payouts — by role.'],
     ['partnertargets','Partner Targets','manageWorkflows','tab','What a Ninja, Super Ninja and Sherpa is expected to achieve each month, measured from the partner onboarding workflow.'],
     ['cfg_campaign','Marketing','manageWorkflows','tab','Campaign types, audiences, opt-out and the sending rules.'],
   ]},
@@ -74865,6 +74865,7 @@ const SETTINGS_CATEGORIES = [
    be their own route are the same function, called from here. */
 const SETTINGS_TAB_VIEWS = {
   partnertargets: ()=>renderSettingsPartnerTargets(),
+  partnerlogin: ()=>renderSettingsPartnerLogin(),
   hrsettings: ()=>renderSettingsHr(),
   hrsources: ()=>renderSettingsHrSources(),
   incentivegrid: ()=>renderSettingsIncentiveGrid(),
