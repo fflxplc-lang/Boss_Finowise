@@ -30,6 +30,7 @@
    CRM, and every write is published, so an open BOSS screen redraws. */
 const crypto = require('crypto');
 const path = require('path');
+const PartnerTargets = require('./public/partner-targets.js');
 
 const PARTNER_COOKIE = 'flx_partner';
 const SESSION_MS = 7 * 24 * 3600000;
@@ -701,6 +702,25 @@ function install(deps) {
       details: Object.keys(got.data).filter((k) => String(before[k] || '') !== String(got.data[k] || '')).map((k) => ({ field: k, oldValue: String(before[k] || ''), newValue: String(got.data[k] || '') })) }]));
     writeToDisk();
     res.json({ ok: true });
+  });
+
+  /* ---------- the partner's own performance ----------
+     Target against achievement, counted by the same code the CRM's
+     Partner Journey › Performance uses, on this partner's records only. */
+  app.get('/api/partner-portal/performance', (req, res) => {
+    const m = mine(req, res);
+    if (!m) return;
+    const { r } = m;
+    const savedCms = (((config().blueprints || {}).CMS || {}).states || []).map((x) => x && x.id).filter(Boolean);
+    const src = { leads: storeList('leads'), clients: storeList('clients'), transactions: storeList('transactions'), reviews: storeList('reviews'),
+      partnerReviews: storeList('pjReviews'), cmsOrder: savedCms.length ? savedCms : CMS_ORDER };
+    const card = PartnerTargets.scorecard(r, src, PartnerTargets.roleTargets(config().partnerTargets), nowIso().slice(0, 10));
+    const reviews = storeList('pjReviews').filter((x) => x && !x.deletedAt && x.pobId === r.id);
+    const last = reviews.filter((x) => x.status === 'Completed').sort((a, b) => String(b.completedAt || '').localeCompare(String(a.completedAt || '')))[0];
+    const next = reviews.filter((x) => x.status !== 'Completed').sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')))[0];
+    res.json(Object.assign({ ok: true, today: nowIso().slice(0, 10),
+      lastReview: last ? { kind: last.kind, at: last.completedAt, outcome: last.outcome || '', targets: last.targets || '' } : null,
+      nextReview: next ? { kind: next.kind, due: next.dueDate } : null }, card));
   });
 
   /* ---------- the one empanelment form ---------- */

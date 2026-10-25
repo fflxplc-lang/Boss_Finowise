@@ -12,6 +12,7 @@
      way round. -->
 <script src="/appraisal-engine.js"></script>
 <script src="/payout.js"></script>
+<script src="/partner-targets.js"></script>
 <title>BOSS</title>
 <!-- THE TAB SHOULD SAY WHOSE SYSTEM THIS IS.
      The browser drew its own globe because nothing here named an icon.
@@ -51343,54 +51344,27 @@ async function pjSavePayout(id){
    Setting, wins over it. A year's target is its twelve months added up.
    Work done outside BOSS is added by hand per month, and shows as such.
    ===================================================================== */
-const PT_METRICS = [
-  {k:'prospects',   l:'Prospects collected',              step:'Collection of 100 prospects and data feed in CRM'},
-  {k:'qualified',   l:'Leads qualified',                  step:'MANIA sheet updation for lead qualification'},
-  {k:'meetings',    l:'Meetings with Client RM',          step:'Schedule a meeting of the lead with the Client RM'},
-  {k:'riskProfiles',l:'Risk profiling / data gathering',  step:'Get the RR sheet · complete the risk profiling'},
-  {k:'allocations', l:'Allocation presented',             step:'Send the investment allocation sheet to the client'},
-  {k:'conversions', l:'Leads converted to clients',       step:'Is the lead converted to a client?'},
-  {k:'onboarded',   l:'Clients onboarded',                step:'Complete the onboarding of the client'},
-  {k:'transactions',l:'Financial transactions',           step:'Complete the financial transactions'},
-  {k:'business',    l:'Business amount',                  step:'Value of those transactions', money:true},
-  {k:'reviews',     l:'Client reviews conducted',         step:'Conduct client reviews as per frequency'},
-  {k:'monthly',     l:'Monthly reviews held',             step:'Target setting, monthly review and follow up'},
-];
-/* What the flowchart asks of each role, per month, until Setup says otherwise. */
-const PT_DEFAULTS = {
-  'Ninja':       {prospects:25, qualified:10, meetings:5, conversions:1, monthly:1},
-  'Super Ninja': {meetings:4, riskProfiles:3, allocations:3, conversions:2, onboarded:2, transactions:4, business:500000, monthly:1},
-  'Sherpa':      {prospects:20, qualified:8, meetings:4, conversions:2, onboarded:2, transactions:4, business:300000, reviews:4, monthly:1},
-};
-/* A partner whose role was never confirmed in BOSS — an FBM or FBP brought
-   over from the old system — is measured too, on targets of their own. */
-const PT_NO_ROLE = 'No role yet';
-// A function: POB_ROLES is declared further down the page.
-const ptRoleKeys = () => POB_ROLES.concat([PT_NO_ROLE]);
-const ptRoleOf = r => r.role || PT_NO_ROLE;
+/* The counting lives in public/partner-targets.js, which the partner's own
+   login (partner-portal.js) counts with too, so the two never disagree.
+   These are this page's names for it. */
+const PTX = window.PartnerTargets;
+const PT_METRICS = PTX.METRICS, PT_DEFAULTS = PTX.DEFAULTS, PT_NO_ROLE = PTX.NO_ROLE, PT_STATUS = PTX.STATUS, PT_MON = PTX.MON;
+const ptRoleKeys = PTX.roleKeys, ptRoleOf = PTX.roleOf, ptMonthKey = PTX.monthKey, ptShiftMonth = PTX.shiftMonth, ptMonLabel = PTX.monLabel, ptNum = PTX.num;
 const ptRoleLabel = r => r.role || (r.partnerType ? r.partnerType + ' · no role yet' : PT_NO_ROLE);
-const PT_STATUS = [[100,'Exceeds Target','ok'], [75,'On Track','info'], [50,'Needs Improvement','warn'], [-Infinity,'At Risk','danger']];
-const PT_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
+const ptSum = PTX.sum, ptOverall = PTX.overall, ptStatus = PTX.status, ptStartMonth = PTX.startMonth;
 let ptCfgMemo = null, ptCfgSrc;
 function ptConfig(){
-  const saved = (DB.config && DB.config.partnerTargets) || {};
-  if(ptCfgMemo && ptCfgSrc === (DB.config && DB.config.partnerTargets)) return ptCfgMemo;
-  const roles = {};
-  ptRoleKeys().forEach(role=>{ roles[role] = Object.assign({}, PT_DEFAULTS[role] || {}, (saved.roles||{})[role] || {}); });
-  ptCfgSrc = DB.config && DB.config.partnerTargets;
-  return (ptCfgMemo = {roles});
+  const saved = DB.config && DB.config.partnerTargets;
+  if(ptCfgMemo && ptCfgSrc === saved) return ptCfgMemo;
+  ptCfgSrc = saved;
+  return (ptCfgMemo = {roles: PTX.roleTargets(saved)});
 }
-function ptMonthKey(d){ return String(d||'').slice(0,7); }
 function ptToday(){ return new Date().toISOString().slice(0,10); }
-function ptShiftMonth(m, k){ let y = +m.slice(0,4), n = +m.slice(5,7) + k; while(n < 1){ n += 12; y--; } while(n > 12){ n -= 12; y++; } return y + '-' + String(n).padStart(2,'0'); }
-const ptMonLabel = m => PT_MON[+m.slice(5,7) - 1] + ' ' + m.slice(0,4);
-function ptNum(v){ const n = Number(String(v===undefined||v===null?'':v).replace(/[^0-9.\-]/g,'')); return isFinite(n) ? n : 0; }
 function ptFmt(metric, v){ return metric.money ? money(v) : Math.round(v).toLocaleString(numberLocale()); }
 
-/* The partners on the page: every onboarding record with a role, as far as
-   this person may see — their own, their branch or team, or the partners
-   they mentor. */
+/* The partners on the page: every onboarding record with a role, or any
+   Active Partner, as far as this person may see — their own, their branch
+   or team, or the partners they mentor. */
 function ptPartners(){
   const measured = r => r.role || stateOf('POB', r)==='active';
   const seen = visibleRecords(pobLive().filter(measured), r=>r.assignedTo, r=>r.branch);
@@ -51398,81 +51372,12 @@ function ptPartners(){
   pobLive().forEach(r=>{ if(measured(r) && r.mentorId===currentUser && !ids.has(r.id)) seen.push(r); });
   return seen.sort((a,b)=>pjName(a).localeCompare(pjName(b)));
 }
-
-/* Every dated achievement of one partner: [{k, at, v}]. Built once per
-   draw for each partner and then summed for whatever period is asked. */
 function ptEventsOf(r){
-  const out = [];
-  const add = (k, at, v) => { if(at) out.push({k, at: String(at), v: v===undefined ? 1 : v}); };
-  const firstAt = (hist, ids) => { const h = (hist||[]).find(x=>x && ids.includes(x.state)); return h && h.at; };
-  const leads = pobPartnerLeads(r), clients = pobPartnerClients(r);
-  const LMS = {qualified:['qualified'], meetings:['firstMeetingScheduled'], riskProfiles:['planInputSubmitted','dataGatheringSent'],
-    allocations:['thirdMeetingDone','blueprintSentToLead']};
-  leads.forEach(l=>{
-    add('prospects', l.createdAt);
-    Object.keys(LMS).forEach(k=>add(k, firstAt(l.blueprintHistory, LMS[k])));
-  });
-  const cms = getBlueprint('CMS').states.map(s=>s.id);
-  const onbFrom = cms.indexOf(POB_CLIENT_ONBOARDED_FROM);
-  const clientIds = new Set();
-  clients.forEach(c=>{
-    clientIds.add(c.id);
-    add('prospects', c.lmsCreatedAt || c.createdAt);
-    Object.keys(LMS).forEach(k=>add(k, firstAt(c.lmsHistory, LMS[k])));
-    add('conversions', c.createdAt);
-    const onb = (c.blueprintHistory||[]).find(h=>h && onbFrom >= 0 && cms.indexOf(h.state) >= onbFrom);
-    add('onboarded', onb && onb.at);
-  });
-  (DB.transactions||[]).forEach(t=>{
-    if(!t || t.deletedAt || !clientIds.has(t.clientId) || /reject|cancel|fail/i.test(t.status||'')) return;
-    const at = t.initiatedDate || t.createdAt;
-    add('transactions', at);
-    add('business', at, ptNum(t.amount));
-  });
-  (DB.reviews||[]).forEach(rv=>{
-    if(!rv || rv.deletedAt || !clientIds.has(rv.clientId) || stateOf('RMS', rv)!=='closed') return;
-    const h = (rv.blueprintHistory||[]).slice().reverse().find(x=>x && x.state==='closed');
-    add('reviews', (h && h.at) || rv.updatedAt || rv.meetingDate);
-  });
-  pobReviews().forEach(rv=>{ if(!rv.deletedAt && rv.pobId===r.id && rv.kind!=='Annual Review' && rv.status==='Completed') add('monthly', rv.completedAt); });
-  // Achievements outside BOSS, entered by hand per month.
-  Object.entries(r.ptManual||{}).forEach(([m, row])=>Object.entries(row||{}).forEach(([k, v])=>{ if(ptNum(v)) add(k, m + '-15', ptNum(v)); }));
-  return out;
+  return PTX.events(r, {leads: DB.leads, clients: DB.clients, transactions: DB.transactions, reviews: DB.reviews,
+    partnerReviews: pobReviews(), cmsOrder: getBlueprint('CMS').states.map(x=>x.id)});
 }
-/* Achieved in the months from..to (YYYY-MM, inclusive), per measure. */
-function ptSum(events, from, to){
-  const out = {}; PT_METRICS.forEach(m=>{ out[m.k] = 0; });
-  events.forEach(e=>{ const m = ptMonthKey(e.at); if(m >= from && m <= to && out[e.k] !== undefined) out[e.k] += e.v; });
-  return out;
-}
-/* Targets start in the month the partner's road started: the role
-   confirmed, else activation, else the record itself. Before that there
-   was nothing to hit, so nothing is counted as missed. */
-function ptStartMonth(r){
-  const h = (r.blueprintHistory||[]).find(x=>x && (x.state==='roleWorkflow' || x.state==='active'));
-  return ptMonthKey((h && h.at) || r.activatedAt || r.createdAt) || '0000-00';
-}
-/* A partner's monthly target for a measure in a given month. */
-function ptTargetFor(r, k, month){
-  if(month < ptStartMonth(r)) return 0;
-  const own = ((r.ptTargets||{})[month.slice(0,4)]||{})[k];
-  if(own !== undefined && own !== '') return ptNum(own);
-  const role = ptConfig().roles[ptRoleOf(r)];
-  return ptNum(role && role[k]);
-}
-function ptTargets(r, from, to){
-  const out = {}; PT_METRICS.forEach(m=>{ out[m.k] = 0; });
-  for(let m = from; m <= to; m = ptShiftMonth(m, 1)) PT_METRICS.forEach(x=>{ out[x.k] += ptTargetFor(r, x.k, m); });
-  return out;
-}
-/* Overall achievement: the average of each targeted measure's %, each
-   capped at 150% so one runaway figure cannot hide the rest. */
-function ptOverall(ach, tgt){
-  const ks = PT_METRICS.filter(m=>tgt[m.k] > 0);
-  if(!ks.length) return null;
-  return ks.reduce((s, m)=>s + Math.min(150, ach[m.k] * 100 / tgt[m.k]), 0) / ks.length;
-}
-function ptStatus(pct){ return pct == null ? null : PT_STATUS.find(([min])=>pct >= min); }
+const ptTargetFor = (r, k, month) => PTX.targetFor(r, k, month, ptConfig().roles);
+const ptTargets = (r, from, to) => PTX.targets(r, from, to, ptConfig().roles);
 function ptBadge(pct){ const s = ptStatus(pct); return s ? `<span class="badge ${s[2]}">${s[1]}</span>` : '<span class="badge muted">No target</span>'; }
 function ptGrowth(cur, prev){
   if(!prev) return cur ? `<span class="pt-up">New</span>` : '<span class="pt-flat">—</span>';
