@@ -59,7 +59,7 @@
 <main id="main"><div class="card muted">Loading…</div></main>
 <script>
 (function(){
-  var ME = null, TAB = 'home', LEADS = null, EDIT_LEAD = null, PERF = null, PMODE = 'month';
+  var ME = null, TAB = 'home', LEADS = null, EDIT_LEAD = null, PERF = null, PMODE = 'month', CLIENTS = null, PAYOUTS = null;
   try { TAB = sessionStorage.getItem('flxTab') || 'home'; } catch(e) {}
   var main = document.getElementById('main');
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -83,19 +83,24 @@
       draw();
     });
   }
-  var TABS = [['home','Dashboard'], ['profile','My Profile'], ['empanelment','Empanelment & Documents'], ['tasks','My Tasks'], ['journey','Client Journey'], ['performance','My Performance'], ['payments','Payments']];
+  var TABS = [['home','Dashboard'], ['profile','My Profile'], ['empanelment','Empanelment & Documents'], ['tasks','My Tasks'], ['journey','Client Journey'], ['clients','My Clients'], ['performance','My Performance'], ['payments','Payments'], ['payouts','My Payouts']];
+  // A section is shown only when the partner's login opens it (Setup › Partner Login Access in BOSS).
+  function opens(k){ return k === 'home' ? true : !ME.access || ME.access.indexOf(k) >= 0; }
   function go(t){ TAB = t; try { sessionStorage.setItem('flxTab', t); } catch(e) {} draw(); window.scrollTo(0, 0); }
   window.flxGo = go;
   function draw(){
-    var tabs = TABS.filter(function(t){ return t[0] === 'performance' ? (ME.partner.role || ME.stage.id === 'active') : (t[0] !== 'payments' || ME.due > 0 || ME.payments.length); });
+    var tabs = TABS.filter(function(t){ return opens(t[0]) && (t[0] === 'performance' ? (ME.partner.role || ME.stage.id === 'active') : (t[0] !== 'payments' || ME.due > 0 || ME.payments.length)); });
+    if(!tabs.some(function(t){ return t[0] === TAB; })) TAB = 'home';
     document.getElementById('nav').innerHTML = tabs.map(function(t){
       var n = t[0] === 'tasks' ? ME.tasks.filter(function(x){ return x.maySubmit; }).length : 0;
       return '<button class="' + (TAB === t[0] ? 'on' : '') + '" onclick="flxGo(\'' + t[0] + '\')">' + esc(t[1]) + (n ? ' (' + n + ')' : '') + '</button>';
     }).join('');
-    var f = {home: home, profile: profile, empanelment: empanelment, tasks: tasks, journey: journey, performance: performance, payments: payments}[TAB] || home;
+    var f = {home: home, profile: profile, empanelment: empanelment, tasks: tasks, journey: journey, performance: performance, payments: payments, clients: clients, payouts: payouts}[TAB] || home;
     main.innerHTML = f();
     if(TAB === 'journey' && ME.clientJourney.open && !LEADS) loadLeads();
     if(TAB === 'performance' && !PERF) loadPerf();
+    if(TAB === 'clients' && !CLIENTS) api('clients').then(function(d){ CLIENTS = d; if(TAB === 'clients') main.innerHTML = clients(); });
+    if(TAB === 'payouts' && !PAYOUTS) api('payouts').then(function(d){ PAYOUTS = d; if(TAB === 'payouts') main.innerHTML = payouts(); });
     wire();
   }
   function kv(rows){ return '<div class="kv">' + rows.map(function(r){ return '<div>' + esc(r[0]) + '</div><div>' + (r[2] ? r[1] : esc(r[1] || '—')) + '</div>'; }).join('') + '</div>'; }
@@ -121,10 +126,15 @@
           return '<span class="step ' + (s.current ? 'cur' : s.done ? 'done' : '') + '">' + (s.done ? '✓ ' : '') + esc(s.label) + '</span>'; }).join('') + '</div></div>'
       + '<div class="card"><h2>What to do next</h2>' + (next.length ? '<ul class="next">' + next.map(function(x){ return '<li>' + x + '</li>'; }).join('') + '</ul>'
           : '<div class="muted">Nothing is waiting on you right now. Your RM will be in touch about the next step.</div>') + '</div>'
-      + '<div class="card"><h2>Your figures</h2><div class="kpis" style="margin:0">'
+      + (!opens('journey') && !opens('clients') ? '' : '<div class="card"><h2>Your figures</h2><div class="kpis" style="margin:0">'
       + [['leads','Leads collected'], ['conversions','Leads converted'], ['clients','Clients onboarded']].map(function(m){
           return '<div class="kpi"><div class="l">' + m[1] + '</div><div class="v">' + (ME.figures[m[0]] || 0) + '</div></div>'; }).join('') + '</div>'
-      + '<div class="muted small" style="margin-top:8px">Counted from the leads you add in the Client Journey. ' + esc(ME.clientJourney.reason) + '</div></div>';
+      + '<div class="muted small" style="margin-top:8px">Counted from the leads you add in the Client Journey. ' + esc(ME.clientJourney.reason) + '</div></div>')
+      + (opens('clients') || opens('performance') || opens('payouts') ? '<div class="card"><h2>Also in your login</h2><ul class="next">'
+        + (opens('clients') ? '<li><a href="javascript:flxGo(\'clients\')">My Clients</a> — the clients your leads became, and their business.</li>' : '')
+        + (opens('performance') && (ME.partner.role || ME.stage.id === 'active') ? '<li><a href="javascript:flxGo(\'performance\')">My Performance</a> — your targets against what you achieved.</li>' : '')
+        + (opens('payouts') ? '<li><a href="javascript:flxGo(\'payouts\')">My Payouts</a> — what the firm pays you, month by month.</li>' : '')
+        + '</ul></div>' : '');
   }
   function profile(){
     var p = ME.partner;
@@ -263,6 +273,44 @@
       + '<div>Next review</div><div>' + (PERF.nextReview ? esc(PERF.nextReview.kind) + ' due ' + date(PERF.nextReview.due) : 'Not scheduled yet') + '</div></div>'
       + '<div class="muted small" style="margin-top:8px">Counted from the leads you add in the Client Journey, the clients they become, their transactions and reviews. Work you did outside BOSS is added by your RM.</div></div>';
   }
+  function clients(){
+    var d = CLIENTS;
+    if(!d) return '<div class="card muted">Loading your clients…</div>';
+    if(!d.ok) return '<div class="msg err">' + esc(d.message || 'Could not load your clients.') + '</div>';
+    var t = d.totals;
+    return '<div class="card"><h1>My Clients</h1><div class="muted">The leads you brought who became clients of the firm.</div></div>'
+      + '<div class="kpis">'
+      + '<div class="kpi"><div class="l">Clients</div><div class="v">' + t.clients + '</div></div>'
+      + '<div class="kpi"><div class="l">Onboarded</div><div class="v">' + t.onboarded + '</div></div>'
+      + '<div class="kpi"><div class="l">Transactions</div><div class="v">' + t.transactions + '</div></div>'
+      + '<div class="kpi"><div class="l">Business</div><div class="v" style="font-size:16px">' + money(t.business) + '</div></div>'
+      + '</div>'
+      + '<div class="card"><div class="table-wrap"><table><thead><tr><th>Client</th><th>City</th><th>Where they are</th><th>Client since</th><th class="num">Transactions</th><th class="num">Business</th><th>Last transaction</th></tr></thead><tbody>'
+      + (d.clients.length ? d.clients.map(function(c){
+          return '<tr><td><b>' + esc(c.name) + '</b>' + (c.onboarded ? ' ' + badge('Onboarded') : '') + '</td><td>' + esc(c.city || '—') + '</td><td>' + esc(c.stage) + '</td><td>' + date(c.since) + '</td>'
+            + '<td class="num">' + c.transactions + '</td><td class="num">' + money(c.business) + '</td><td>' + date(c.lastTransaction) + '</td></tr>';
+        }).join('') : '<tr><td colspan="7" class="muted">None yet. A lead you add in the Client Journey shows here once it becomes a client.</td></tr>')
+      + '</tbody></table></div></div>';
+  }
+  function payouts(){
+    var d = PAYOUTS;
+    if(!d) return '<div class="card muted">Loading your payouts…</div>';
+    if(!d.ok) return '<div class="msg err">' + esc(d.message || 'Could not load your payouts.') + '</div>';
+    var t = d.totals;
+    return '<div class="card"><h1>My Payouts</h1><div class="muted">What the firm pays you for the business you bring, after TDS.</div></div>'
+      + '<div class="kpis">'
+      + '<div class="kpi"><div class="l">Paid to you</div><div class="v" style="font-size:16px">' + money(t.paid) + '</div></div>'
+      + '<div class="kpi"><div class="l">Still to be paid</div><div class="v" style="font-size:16px">' + money(t.due) + '</div></div>'
+      + '<div class="kpi"><div class="l">All payouts (net)</div><div class="v" style="font-size:16px">' + money(t.net) + '</div></div>'
+      + '</div>'
+      + '<div class="card"><div class="table-wrap"><table><thead><tr><th>Period</th><th class="num">Business</th><th class="num">Rate</th><th class="num">Gross</th><th class="num">TDS</th><th class="num">Net</th><th>Status</th><th>Paid on</th><th>Reference</th></tr></thead><tbody>'
+      + (d.payouts.length ? d.payouts.map(function(p){
+          return '<tr><td>' + esc(p.period) + '</td><td class="num">' + money(p.business) + '</td><td class="num">' + p.rate + '%</td><td class="num">' + money(p.gross) + '</td>'
+            + '<td class="num">' + money(p.tds) + ' <span class="muted small">(' + p.tdsPct + '%)</span></td><td class="num"><b>' + money(p.net) + '</b></td><td>' + badge(p.status) + '</td>'
+            + '<td>' + (p.paidOn ? date(p.paidOn) : '—') + '</td><td>' + esc(p.reference || '—') + '</td></tr>';
+        }).join('') : '<tr><td colspan="9" class="muted">No payouts yet. They show here once your RM calculates them.</td></tr>')
+      + '</tbody></table></div><div class="muted small" style="margin-top:8px">A question about a payout? Speak to your RM.</div></div>';
+  }
   function loadPerf(){
     api('performance').then(function(d){ PERF = d; if(TAB === 'performance'){ main.innerHTML = performance(); wire(); } });
   }
@@ -313,7 +361,7 @@
       api(EDIT_LEAD ? 'leads/' + encodeURIComponent(EDIT_LEAD.id) : 'leads', {method: EDIT_LEAD ? 'PUT' : 'POST', body: JSON.stringify(body)}).then(function(r){
         ld.disabled = false;
         if(!r.ok) return msg('ldMsg', r.message || 'That did not go through.');
-        EDIT_LEAD = null; LEADS = null; PERF = null; load();
+        EDIT_LEAD = null; LEADS = null; PERF = null; CLIENTS = null; load();
       });
     };
     var lc = document.getElementById('ldCancel');

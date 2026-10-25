@@ -31,6 +31,7 @@
 const crypto = require('crypto');
 const path = require('path');
 const PartnerTargets = require('./public/partner-targets.js');
+const PartnerAccess = require('./public/partner-access.js');
 
 const PARTNER_COOKIE = 'flx_partner';
 const SESSION_MS = 7 * 24 * 3600000;
@@ -293,7 +294,25 @@ function install(deps) {
   /* What the partner sees of themselves. Built field by field, so
      nothing the firm keeps about them internally — the evaluation notes,
      the escalations, the audit — goes with it. */
+  // What this partner may open (Setup › Partner Login Access, or their own list).
+  const accessOf = (r) => PartnerAccess.resolve(r, config().partnerPortal).sections;
+  /* A section the partner may not open is not answered either; drawing
+     it hidden would not be enough. Answers the request when it refuses. */
+  function may(m, res, k) {
+    if (accessOf(m.r).includes(k)) return true;
+    res.status(403).json({ ok: false, message: 'This part of your login is not open to you. Speak to your RM.' });
+    return false;
+  }
   function partnerView(r, req) {
+    const view = fullView(r, req), access = accessOf(r), has = (k) => access.includes(k);
+    view.access = access;
+    if (!has('empanelment')) { view.documents = []; view.agreement = null; view.empanelment = { status: view.empanelment.status, formOpen: false, formUrl: '', decision: null }; }
+    if (!has('tasks')) view.tasks = [];
+    if (!has('payments')) { view.payments = []; view.mayRecordPayment = false; }
+    if (!has('journey')) view.clientJourney = { open: false, reason: 'The Client Journey is not open to your login. Speak to your RM.' };
+    return view;
+  }
+  function fullView(r, req) {
     const fig = metrics(r);
     const st = stageOf(r);
     const idx = POB_STAGES.findIndex((x) => x[0] === st);
@@ -552,7 +571,7 @@ function install(deps) {
      mapped RM to verify against the bank, never counted on their word. */
   app.post('/api/partner-portal/payments', async (req, res) => {
     const m = mine(req, res);
-    if (!m) return;
+    if (!m || !may(m, res, 'payments')) return;
     const { r, list } = m;
     if (!['duePayment', 'paymentAck'].includes(stageOf(r))) return res.status(400).json({ ok: false, message: 'There is no payment due from you now.' });
     const b = req.body || {};
@@ -585,7 +604,7 @@ function install(deps) {
      is done when they say so; the next one opens by itself either way. */
   app.post('/api/partner-portal/tasks/:id/submit', async (req, res) => {
     const m = mine(req, res);
-    if (!m) return;
+    if (!m || !may(m, res, 'tasks')) return;
     const { r, list } = m;
     const t = (r.tasks || []).find((x) => x.id === req.params.id && !x.retired);
     if (!t) return res.status(404).json({ ok: false, message: 'No such task.' });
@@ -642,7 +661,7 @@ function install(deps) {
   }
   app.get('/api/partner-portal/leads', (req, res) => {
     const m = mine(req, res);
-    if (!m) return;
+    if (!m || !may(m, res, 'journey')) return;
     if (!clientJourneyOpen(m.r)) return res.status(403).json({ ok: false, message: 'The Client Journey opens once your onboarding tasks are approved.' });
     res.json({ ok: true, leads: leadsView(m.r), figures: metrics(m.r) });
   });
@@ -663,7 +682,7 @@ function install(deps) {
   }
   app.post('/api/partner-portal/leads', (req, res) => {
     const m = mine(req, res);
-    if (!m) return;
+    if (!m || !may(m, res, 'journey')) return;
     const { r } = m;
     if (!clientJourneyOpen(r)) return res.status(403).json({ ok: false, message: 'The Client Journey opens once your onboarding tasks are approved.' });
     const got = readLead(req.body || {});
@@ -685,7 +704,7 @@ function install(deps) {
   });
   app.put('/api/partner-portal/leads/:id', (req, res) => {
     const m = mine(req, res);
-    if (!m) return;
+    if (!m || !may(m, res, 'journey')) return;
     const { r } = m;
     if (!clientJourneyOpen(r)) return res.status(403).json({ ok: false, message: 'The Client Journey opens once your onboarding tasks are approved.' });
     const leads = storeList('leads');
@@ -709,7 +728,7 @@ function install(deps) {
      Partner Journey › Performance uses, on this partner's records only. */
   app.get('/api/partner-portal/performance', (req, res) => {
     const m = mine(req, res);
-    if (!m) return;
+    if (!m || !may(m, res, 'performance')) return;
     const { r } = m;
     const savedCms = (((config().blueprints || {}).CMS || {}).states || []).map((x) => x && x.id).filter(Boolean);
     const src = { leads: storeList('leads'), clients: storeList('clients'), transactions: storeList('transactions'), reviews: storeList('reviews'),
@@ -721,6 +740,47 @@ function install(deps) {
     res.json(Object.assign({ ok: true, today: nowIso().slice(0, 10),
       lastReview: last ? { kind: last.kind, at: last.completedAt, outcome: last.outcome || '', targets: last.targets || '' } : null,
       nextReview: next ? { kind: next.kind, due: next.dueDate } : null }, card));
+  });
+
+  /* ---------- the clients the partner's leads became ----------
+     Their name, where they are on the road and the business they have
+     done: enough to follow them, and nothing the partner did not bring. */
+  app.get('/api/partner-portal/clients', (req, res) => {
+    const m = mine(req, res);
+    if (!m || !may(m, res, 'clients')) return;
+    const { r } = m;
+    const savedCms = ((config().blueprints || {}).CMS || {}).states || [];
+    const order = savedCms.length ? savedCms.map((x) => x.id) : CMS_ORDER;
+    const from = order.indexOf(CLIENT_ONBOARDED_FROM);
+    const label = (id) => { const x = savedCms.find((y) => y && y.id === id); return x ? x.label : humanize(id); };
+    const txns = storeList('transactions').filter((t) => t && !t.deletedAt && !/reject|cancel|fail/i.test(t.status || ''));
+    const clients = storeList('clients').filter((c) => c && !c.deletedAt && c.partnerPobId === r.id).map((c) => {
+      const mine_ = txns.filter((t) => t.clientId === c.id);
+      const stage = c.cmsStage || 'clientCreated';
+      return { id: c.id, name: c.cmsName || nameOf(c), city: c.city || '', stage: label(stage),
+        onboarded: from >= 0 && order.indexOf(stage) >= from, since: c.createdAt || '', leadSince: c.lmsCreatedAt || '',
+        transactions: mine_.length, business: mine_.reduce((s, t) => s + (Number(String(t.amount || 0).replace(/[^0-9.\-]/g, '')) || 0), 0),
+        lastTransaction: mine_.map((t) => t.initiatedDate || t.createdAt || '').sort().slice(-1)[0] || '' };
+    }).sort((a, b) => String(b.since).localeCompare(String(a.since)));
+    res.json({ ok: true, clients, totals: { clients: clients.length, onboarded: clients.filter((c) => c.onboarded).length,
+      business: clients.reduce((s, c) => s + c.business, 0), transactions: clients.reduce((s, c) => s + c.transactions, 0) } });
+  });
+
+  /* ---------- what the firm pays the partner (Partner Journey › PPO) ---------- */
+  app.get('/api/partner-portal/payouts', (req, res) => {
+    const m = mine(req, res);
+    if (!m || !may(m, res, 'payouts')) return;
+    const { r } = m;
+    const round = (n) => Math.round(n * 100) / 100;
+    const rows = storeList('partnerPayouts').filter((p) => p && !p.deletedAt && r.partnerId && p.partnerId === r.partnerId)
+      .map((p) => {
+        const gross = round((Number(p.businessAmount) || 0) * (Number(p.ratePct) || 0) / 100);
+        const tds = round(gross * (Number(p.tdsPct) || 0) / 100);
+        return { period: p.period || '', business: Number(p.businessAmount) || 0, rate: Number(p.ratePct) || 0, gross, tdsPct: Number(p.tdsPct) || 0, tds,
+          net: round(gross - tds), status: p.status || '', paidOn: p.paidOn || '', reference: p.status === 'Paid' ? (p.reference || '') : '' };
+      }).sort((a, b) => String(b.period).localeCompare(String(a.period)));
+    const sum = (k, f) => round(rows.filter(f || (() => true)).reduce((s, x) => s + x[k], 0));
+    res.json({ ok: true, payouts: rows, totals: { net: sum('net'), paid: sum('net', (x) => x.status === 'Paid'), due: sum('net', (x) => x.status !== 'Paid') } });
   });
 
   /* ---------- the one empanelment form ---------- */

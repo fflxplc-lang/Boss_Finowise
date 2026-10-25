@@ -13,6 +13,7 @@
 <script src="/appraisal-engine.js"></script>
 <script src="/payout.js"></script>
 <script src="/partner-targets.js"></script>
+<script src="/partner-access.js"></script>
 <title>BOSS</title>
 <!-- THE TAB SHOULD SAY WHOSE SYSTEM THIS IS.
      The browser drew its own globe because nothing here named an icon.
@@ -52692,8 +52693,8 @@ function pobOpenLoginModal(module, id, tid){
   const l = r.login || {};
   openModal('Create Login Access — ' + pjName(r), `<p class="small-note" style="margin-top:0">Creates ${esc(pjName(r))}’s own Freedom LifeX partner login, and emails <b>${esc(r.email||'no address on file')}</b> a link to set their password. Signed in at <b>${esc(location.origin)}/partner</b>, they see their dashboard, their own profile, empanelment, agreement and documents, and their tasks — nobody else’s, and nothing of BOSS. This is their account, not their activation as a partner: that comes at the end, after the readiness review.</p>`
     + fieldInput({k:'lgUser', l:'Login ID (email)', t:'text', vk:'email', req:1}, l.userId || r.email || '')
-    + fieldInput({k:'lgAccess', l:'Initial access', t:'select', opts:['Onboarding tasks only','Onboarding + learning']}, l.access || 'Onboarding tasks only'),
-    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveLogin('${esc(id)}','${esc(tid)}')">Create &amp; Send Login</button>`);
+    + pobAccessBoxes(r),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveLogin('${esc(id)}','${esc(tid||'')}')">Create &amp; Send Login</button>`);
 }
 /* The partner's account lives on the server, in its own table beside the
    staff accounts, never in the store the CRM hands to every browser.
@@ -52708,22 +52709,98 @@ async function pobPortalCall(path, body){
     return j;
   }catch(e){ return {ok: false, message: 'Could not reach the server: ' + e.message}; }
 }
+/* ---------- what the partner's login opens (public/partner-access.js) ----------
+   The server enforces it; these are the boxes that set it. A partner
+   follows their role's list from Setup › Partner Login Access until
+   somebody ticks a list of their own. */
+const PA = window.PartnerAccess;
+function pobAccessBoxes(r, own){
+  const res = PA.resolve(r, DB.config.partnerPortal), on = new Set(res.sections);
+  const role = PA.roleKey(r);
+  return `<div class="field" style="margin-top:6px"><label>What the login opens</label>
+    <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:4px 0 8px"><input type="checkbox" id="pa_follow" ${res.from==='role' ? 'checked' : ''}
+      onchange="document.querySelectorAll('.pa-box').forEach(b=>{ if(!b.dataset.fixed) b.disabled = this.checked; })">
+      Follow the ${esc(role)} default (Setup › Partner Login Access)</label>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:6px 14px">
+    ${PA.SECTIONS.map(x=>`<label style="display:flex;gap:8px;align-items:flex-start;font-weight:400">
+      <input type="checkbox" class="pa-box" id="pa_${x.k}" ${on.has(x.k) ? 'checked' : ''} ${x.fixed ? 'disabled data-fixed="1"' : res.from==='role' ? 'disabled' : ''}>
+      <span><b>${esc(x.l)}</b><br><span class="small-note" style="margin:0">${esc(x.d)}${x.fixed ? ' · always open' : ''}</span></span></label>`).join('')}
+    </div></div>`;
+}
+function pobReadAccessBoxes(){
+  const follow = document.getElementById('pa_follow');
+  if(follow && follow.checked) return null;
+  return PA.SECTIONS.filter(x=>{ const b = document.getElementById('pa_' + x.k); return b && b.checked; }).map(x=>x.k);
+}
+function pobApplyAccess(r, list){
+  if(list === null) delete r.portalAccess;
+  else r.portalAccess = PA.clean(list);
+}
+function pobAccessSummary(r){
+  const res = PA.resolve(r, DB.config.partnerPortal);
+  return (res.from==='role' ? PA.roleKey(r) + ' default: ' : 'Own list: ') + PA.SECTIONS.filter(x=>res.sections.includes(x.k)).map(x=>x.l).join(', ');
+}
+function pobOpenAccessModal(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !can('POB','edit')) return;
+  openModal('Login Access — ' + pjName(r), `<p class="small-note" style="margin-top:0">What ${esc(pjName(r))} sees when they sign in at <b>${esc(location.origin)}/partner</b>.
+    A section left out is not shown to them, and the server refuses it too.</p>` + pobAccessBoxes(r),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveAccess('${esc(id)}')">Save Access</button>`);
+}
+async function pobSaveAccess(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !can('POB','edit')) return;
+  const was = pobAccessSummary(r);
+  pobApplyAccess(r, pobReadAccessBoxes());
+  const now = pobAccessSummary(r);
+  await save('pjOnboarding');
+  if(was !== now) await logAudit('POB', id, 'Login Access Changed', [{field:'sections', oldValue: was, newValue: now}]);
+  closeModal(); render();
+}
+/* Setup › Partner Login Access: each role's sections. */
+function renderSettingsPartnerLogin(){
+  const saved = DB.config.partnerPortal;
+  return `<div class="card" style="padding:16px">
+    <p class="small-note" style="margin-top:0">What a partner opens when they sign in with their Freedom LifeX login at <b>${esc(location.origin)}/partner</b>, by role.
+      A partner follows their role's column until their own list is ticked (Partner Onboarding › the partner › Login Access). Dashboard and My Profile are always open.
+      The login itself is given from the partner's Login Access step — or, for a partner already active, from Create Partner Login on their record.</p>
+    <div class="table-wrap"><table><thead><tr><th>Section</th><th>What it holds</th>${PA.ROLES.map(x=>`<th style="text-align:center">${esc(x)}</th>`).join('')}</tr></thead><tbody>
+    ${PA.SECTIONS.map(x=>`<tr><td><b>${esc(x.l)}</b></td><td class="small-note">${esc(x.d)}</td>
+      ${PA.ROLES.map(role=>`<td style="text-align:center"><input type="checkbox" id="pas_${role.replace(/\W+/g,'')}_${x.k}" ${PA.roleSections(saved, role).includes(x.k) ? 'checked' : ''} ${x.fixed ? 'disabled' : ''}></td>`).join('')}</tr>`).join('')}
+    </tbody></table></div>
+    <div class="row" style="gap:8px;margin-top:10px"><button class="btn primary" onclick="pobSavePortalSettings()">Save Access</button></div>
+  </div>`;
+}
+async function pobSavePortalSettings(){
+  if(!pjMaySetUp()){ alert('You do not have permission to change these settings.'); return; }
+  const roles = {};
+  PA.ROLES.forEach(role=>{ roles[role] = PA.clean(PA.SECTIONS.filter(x=>{ const b = document.getElementById('pas_' + role.replace(/\W+/g,'') + '_' + x.k); return b && b.checked; }).map(x=>x.k)); });
+  DB.config.partnerPortal = {roles, updatedAt: new Date().toISOString(), updatedBy: currentUser};
+  await save('config');
+  alert('Saved.'); render();
+}
 async function pobSaveLogin(id, tid){
   const r = pobRecords().find(x=>x.id===id);
   if(!r) return;
-  const f = [{k:'lgUser', l:'Login ID', req:1, vk:'email'}, {k:'lgAccess', l:'Access'}];
+  const f = [{k:'lgUser', l:'Login ID', req:1, vk:'email'}];
   const d = readFields(f);
   if(!validateRequired(f, d)) return;
+  const access = pobReadAccessBoxes();
   const taken = pobLive().find(x=>x.id!==id && x.login && String(x.login.userId).toLowerCase()===String(d.lgUser).trim().toLowerCase());
   if(taken){ alert('The login ID ' + d.lgUser + ' already belongs to ' + pjName(taken) + '.'); return; }
   const acct = await pobPortalCall('accounts', {pobId: id, email: d.lgUser.trim()});
   if(!acct.ok){ alert('The login could not be created: ' + acct.message); return; }
   const at = new Date().toISOString();
-  r.login = Object.assign({}, r.login, {userId: d.lgUser.trim(), link: acct.loginUrl, portal: true, access: d.lgAccess, status: 'Created', createdAt: at, createdBy: currentUser,
-    history: ((r.login||{}).history||[]).concat([{at, by: currentUser, status: 'Created', note: d.lgAccess}])});
+  pobApplyAccess(r, access);
+  const note = pobAccessSummary(r);
+  r.login = Object.assign({}, r.login, {userId: d.lgUser.trim(), link: acct.loginUrl, portal: true, status: 'Created', createdAt: at, createdBy: currentUser,
+    history: ((r.login||{}).history||[]).concat([{at, by: currentUser, status: 'Created', note}])});
   closeModal();
   const res = await pjMail('POB', r, 'pobLogin', {LoginId: r.login.userId, LoginLink: acct.setupUrl, PartnerCode: r.partnerCode}, 'Login access');
-  await doTransition('POB', id, tid);
+  /* From the Login Access stage the record moves on. A partner who is past
+     it — active before BOSS, imported — just gets the login. */
+  if(tid) await doTransition('POB', id, tid);
+  else { await save('pjOnboarding'); await logAudit('POB', id, 'Partner Login Created', [{field:'login', oldValue:'', newValue: r.login.userId + ' · ' + note}]); render(); }
   pjSaidMail(res, 'The login letter');
 }
 async function pobResendLogin(id){
@@ -53801,12 +53878,16 @@ function viewPOBDetail(id){
           ['Stage', esc(stateLabel('POB', st))], ['Application', statusBadge(r.applicationStatus)], ['Payment', statusBadge(pobPaymentStatus(r))],
           ['Verification', r.applicationStatus==='Approved' ? '<span class="badge ok">Completed</span>' : esc(dv.approved + ' of ' + dv.total + ' documents approved')],
           ['Login Account', r.login ? statusBadge(r.login.status) + ' ' + esc(r.login.userId) : 'Not created'],
+          ['Login Opens', esc(pobAccessSummary(r))],
           ['Operational', statusBadge(r.operationalStatus || 'Onboarding')],
           ['Role Clarity Session', rcs ? statusBadge(rcs.status) : (req.some(t=>t.kind==='session') ? 'Not scheduled' : '—')],
           ['Onboarding Tasks', esc(req.filter(t=>t.status==='Approved').length + ' of ' + req.length)],
           ['Outstanding Approvals', pendingApprovals.length ? esc(pendingApprovals.map(x=>x.what + ': ' + x.detail).join('; ')) : 'None'],
           ['Activated', esc(r.activatedAt ? fmtDate(r.activatedAt) : '')],
-        ], r.login && pobMayApprove() ? `<div class="row" style="gap:6px;margin-top:8px">
+        ], !r.login && can('POB','edit') && ['roleMeeting','roleWorkflow','readiness','active'].includes(st) ? `<div class="row" style="gap:6px;margin-top:8px">
+          <button class="btn sm" onclick="pobOpenLoginModal('POB','${esc(id)}','')">Create Partner Login</button></div>`
+        : r.login && pobMayApprove() ? `<div class="row" style="gap:6px;margin-top:8px">
+          <button class="btn sm" onclick="pobOpenAccessModal('${esc(id)}')">Login Access</button>
           ${r.login.status!=='Activated' ? `<button class="btn sm" onclick="pobSetLoginStatus('${esc(id)}','Activated')">Activate Account</button>` : ''}
           ${r.login.status!=='Suspended' ? `<button class="btn sm ghost" onclick="pobSetLoginStatus('${esc(id)}','Suspended')">Suspend Account</button>` : ''}
           <button class="btn sm ghost" onclick="pobResendLogin('${esc(id)}')">Send a New Password Link</button></div>` : '')
@@ -74675,6 +74756,7 @@ const SETTINGS_CATEGORIES = [
     ['cfg_business','Business & Transactions','manageWorkflows','tab','Products, transaction types and the daily business tracker.'],
     ['cfg_alloc','Asset Allocation','manageWorkflows','tab','How an allocation is prepared, consented to and completed.'],
     ['cfg_projects','Projects Tracker','manageWorkflows','tab','Project types, statuses and their checklists.'],
+    ['partnerlogin','Partner Login Access','manageWorkflows','tab','What a partner opens in their own Freedom LifeX login — dashboard, client journey, clients, performance, payouts — by role.'],
     ['partnertargets','Partner Targets','manageWorkflows','tab','What a Ninja, Super Ninja and Sherpa is expected to achieve each month, measured from the partner onboarding workflow.'],
     ['cfg_campaign','Marketing','manageWorkflows','tab','Campaign types, audiences, opt-out and the sending rules.'],
   ]},
@@ -74770,6 +74852,7 @@ const SETTINGS_CATEGORIES = [
    be their own route are the same function, called from here. */
 const SETTINGS_TAB_VIEWS = {
   partnertargets: ()=>renderSettingsPartnerTargets(),
+  partnerlogin: ()=>renderSettingsPartnerLogin(),
   hrsettings: ()=>renderSettingsHr(),
   hrsources: ()=>renderSettingsHrSources(),
   incentivegrid: ()=>renderSettingsIncentiveGrid(),

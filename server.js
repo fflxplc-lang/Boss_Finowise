@@ -762,6 +762,7 @@ function loginPage({ error = null, next = '/', email = '' } = {}) {
     margin:0 0 18px; padding:11px 13px; border-radius:9px; font-size:13px;
     color:var(--danger); background:rgba(179,67,43,.08); border:1px solid rgba(179,67,43,.25);
   }
+  .foot.partner-link{margin-top:6px} .partner-link a{color:rgba(255,255,255,.75); font-weight:600}
   .foot{
     text-align:center; margin-top:22px; font-size:11.5px; color:rgba(255,255,255,.45);
     letter-spacing:.2px;
@@ -786,6 +787,7 @@ function loginPage({ error = null, next = '/', email = '' } = {}) {
       <button type="submit">Sign in</button>
     </form>
     <div class="foot">Authorised access only</div>
+    <div class="foot partner-link">A Freedom LifeX partner? <a href="/partner/login">Sign in to your partner login</a></div>
   </div>
 </body>
 </html>`;
