@@ -52826,6 +52826,33 @@ async function pobResendLogin(id){
     + '\n\nEvery earlier link stops working now, and this one works once, for 7 days.');
   render();
 }
+/* When a link will not do, the RM sets the password and tells the
+   partner; the partner changes it under My Profile. Nothing of it is kept
+   in BOSS: the server holds only its hash. */
+function pobOpenSetPassword(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !r.login || !pobMayApprove()) return;
+  openModal('Set Password — ' + pjName(r), `<p class="small-note" style="margin-top:0">Sets the password for <b>${esc(r.login.userId)}</b> straight away. Give it to the partner yourself (phone or WhatsApp); they sign in at <b>${esc(location.origin)}/partner/login</b> and can change it under My Profile. Any password link sent earlier stops working.</p>`
+    + fieldInput({k:'spPw', l:'New password (at least 8 characters)', t:'text', req:1}, ''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveSetPassword('${esc(id)}')">Set Password</button>`);
+}
+async function pobSaveSetPassword(id){
+  const r = pobRecords().find(x=>x.id===id);
+  if(!r || !r.login || !pobMayApprove()) return;
+  const el = document.getElementById('f_spPw') || document.querySelector('[id$="spPw"]');
+  const pw = String(el ? el.value : '');
+  if(pw.length < 8){ alert('Use at least 8 characters.'); return; }
+  const res = await pobPortalCall('accounts/password', {pobId: id, password: pw, email: r.login.userId});
+  if(!res.ok){ alert('The password could not be set: ' + res.message); return; }
+  const at = new Date().toISOString();
+  r.login.portal = true;
+  r.login.history = (r.login.history||[]).concat([{at, by: currentUser, status: r.login.status, note: 'Password set by staff'}]);
+  await save('pjOnboarding');
+  await logAudit('POB', id, 'Login Password Set', [{field:'login', oldValue:'', newValue: res.email + ' · set by staff'}]);
+  closeModal();
+  alert('Done. Tell ' + pjName(r) + ':\n\nSign in at: ' + res.loginUrl + '\nLogin ID: ' + res.email + '\nPassword: the one you just set\n\nThey can change it under My Profile.');
+  render();
+}
 async function pobSetLoginStatus(id, status){
   const r = pobRecords().find(x=>x.id===id);
   if(!r || !r.login) return;
@@ -53904,7 +53931,8 @@ function viewPOBDetail(id){
           <button class="btn sm" onclick="pobOpenAccessModal('${esc(id)}')">Login Access</button>
           ${r.login.status!=='Activated' ? `<button class="btn sm" onclick="pobSetLoginStatus('${esc(id)}','Activated')">Activate Account</button>` : ''}
           ${r.login.status!=='Suspended' ? `<button class="btn sm ghost" onclick="pobSetLoginStatus('${esc(id)}','Suspended')">Suspend Account</button>` : ''}
-          <button class="btn sm ghost" onclick="pobResendLogin('${esc(id)}')">Send a New Password Link</button></div>` : '')
+          <button class="btn sm ghost" onclick="pobResendLogin('${esc(id)}')">Send a New Password Link</button>
+          <button class="btn sm ghost" onclick="pobOpenSetPassword('${esc(id)}')">Set Password</button></div>` : '')
         + profTable('Pending & Due', ['Task','Status','Owner','Due'], pobLiveTasks(r).filter(t=>!['Approved','Cancelled'].includes(t.status) && pobTaskState(r, t).open)
             .map(t=>`<tr><td>${esc(t.title)}</td><td>${statusBadge(t.status)}${pobTaskState(r, t).overdue ? ' <span class="badge danger">Overdue</span>' : ''}</td>
               <td>${esc(pobTaskOwner(r, t))}</td><td>${esc(fmtDate(t.dueDate)||'—')}</td></tr>`), r.role ? 'Nothing open right now.' : 'Tasks arrive with the role.');

@@ -480,6 +480,7 @@ function install(deps) {
     const email = a ? a.email : '';
     if (a && !a.active) return loginPage({ email, error: 'Your account is suspended. Speak to your RM.' });
     if (spent && spent.why === 'used') return loginPage({ email, info: 'Your password is already set with this link. Sign in below with your email and that password. Forgotten it? Ask your RM for a new password link.' });
+    if (spent && spent.why === 'set') return loginPage({ email, info: 'Your RM has set a password for you, so this link is no longer needed. Sign in below with your email and the password your RM gave you.' });
     if (spent && spent.why === 'replaced') return loginPage({ email, error: 'A newer password link has been sent to you since this one, so this one no longer works. Open the latest email from us.' });
     return loginPage({ email, error: 'That password link has expired. Ask your RM for a new one.' });
   }
@@ -548,6 +549,35 @@ function install(deps) {
     if (!a) return res.status(404).json({ ok: false, message: 'This partner has no login yet.' });
     updateAcctActive.run((req.body || {}).active === false ? 0 : 1, a.id);
     res.json({ ok: true });
+  });
+
+  /* The RM sets the password for the partner, when a link will not do:
+     the letter did not arrive, or the link keeps failing. The partner
+     signs in with it and changes it under My Profile. An account is made
+     here if this server has none for them yet. */
+  app.post('/api/partner-portal/accounts/password', (req, res, next) => {
+    if (!staffOnly(req, res)) return;
+    checkApiKey(req, res, next);
+  }, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const b = req.body || {};
+    const r = storeList('pjOnboarding').find((x) => x && !x.deletedAt && x.id === b.pobId);
+    if (!r) return res.status(404).json({ ok: false, message: 'No such onboarding record.' });
+    const pw = String(b.password || '');
+    if (pw.length < 8) return res.status(400).json({ ok: false, message: 'Use at least 8 characters.' });
+    let a = acctByPob.get(r.id);
+    if (!a) {
+      const email = checkValue('email', b.email || (r.login && r.login.userId) || r.email);
+      if (!email.ok || !email.value) return res.status(400).json({ ok: false, message: 'The login has to be an email address.' });
+      const clash = acctByEmail.get(email.value);
+      if (clash && clash.pob_id !== r.id) return res.status(409).json({ ok: false, message: email.value + ' is already another partner’s login.' });
+      insertAcct.run(r.id, email.value, null, null);
+      a = acctByPob.get(r.id);
+    }
+    if (a.setup_hash) noteSpent.run(a.setup_hash, a.id, 'set', Date.now());
+    updateAcctPassword.run(hashPassword(pw), a.id);
+    if (!a.active) updateAcctActive.run(1, a.id);
+    res.json({ ok: true, email: a.email, loginUrl: origin(req) + '/partner/login' });
   });
 
   /* ---------- the partner's own answers ---------- */
