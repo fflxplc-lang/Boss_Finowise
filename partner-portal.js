@@ -152,6 +152,17 @@ function install(deps) {
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     last_login_at TEXT
   )`);
+  /* Every password link that stopped working, and why, so a partner who
+     opens an old one is told what happened instead of a bare "expired":
+     they already set their password with it, or a newer link replaced it. */
+  usersDb.exec(`CREATE TABLE IF NOT EXISTS partner_setup_spent (
+    hash     TEXT PRIMARY KEY,
+    acct_id  INTEGER NOT NULL,
+    why      TEXT NOT NULL,
+    at       INTEGER NOT NULL
+  )`);
+  const noteSpent = usersDb.prepare('INSERT OR REPLACE INTO partner_setup_spent (hash, acct_id, why, at) VALUES (?, ?, ?, ?)');
+  const spentBy = usersDb.prepare('SELECT * FROM partner_setup_spent WHERE hash = ?');
   const acctByPob = usersDb.prepare('SELECT * FROM partner_accounts WHERE pob_id = ?');
   const acctByEmail = usersDb.prepare('SELECT * FROM partner_accounts WHERE email = ?');
   const acctById = usersDb.prepare('SELECT * FROM partner_accounts WHERE id = ?');
@@ -461,21 +472,33 @@ function install(deps) {
     const a = acctBySetup.get(sha(token));
     return a && a.active && a.setup_expires && a.setup_expires > Date.now() ? a : null;
   }
+  /* The page for a link that no longer works, saying which way it stopped. */
+  function deadLink(token) {
+    const t = String(token || '');
+    const spent = t.length >= 20 ? spentBy.get(sha(t)) : null;
+    const a = spent ? acctById.get(spent.acct_id) : (t.length >= 20 ? acctBySetup.get(sha(t)) : null);
+    const email = a ? a.email : '';
+    if (a && !a.active) return loginPage({ email, error: 'Your account is suspended. Speak to your RM.' });
+    if (spent && spent.why === 'used') return loginPage({ email, info: 'Your password is already set with this link. Sign in below with your email and that password. Forgotten it? Ask your RM for a new password link.' });
+    if (spent && spent.why === 'replaced') return loginPage({ email, error: 'A newer password link has been sent to you since this one, so this one no longer works. Open the latest email from us.' });
+    return loginPage({ email, error: 'That password link has expired. Ask your RM for a new one.' });
+  }
   app.get('/partner/setup', (req, res) => {
     res.set('Cache-Control', 'no-store');
     const a = setupAccount(String(req.query.t || ''));
-    if (!a) return res.status(404).type('html').send(loginPage({ error: 'That password link has expired or been used. Ask your RM for a new one.' }));
+    if (!a) return res.status(404).type('html').send(deadLink(req.query.t));
     res.type('html').send(setupPage({ token: req.query.t, email: a.email }));
   });
   app.post('/partner/setup', (req, res) => {
     res.set('Cache-Control', 'no-store');
     const b = req.body || {};
     const a = setupAccount(String(b.t || ''));
-    if (!a) return res.status(404).type('html').send(loginPage({ error: 'That password link has expired or been used. Ask your RM for a new one.' }));
+    if (!a) return res.status(404).type('html').send(deadLink(b.t));
     const pw = String(b.password || '');
     if (pw.length < 8) return res.status(400).type('html').send(setupPage({ token: b.t, email: a.email, error: 'Use at least 8 characters.' }));
     if (pw !== String(b.confirm || '')) return res.status(400).type('html').send(setupPage({ token: b.t, email: a.email, error: 'The two passwords are not the same.' }));
     updateAcctPassword.run(hashPassword(pw), a.id);
+    noteSpent.run(a.setup_hash, a.id, 'used', Date.now());
     noteAcctLogin.run(a.id);
     setCookie(req, res, a.id);
     res.redirect('/partner');
@@ -509,6 +532,7 @@ function install(deps) {
     if (clash && clash.pob_id !== r.id) return res.status(409).json({ ok: false, message: email.value + ' is already another partner’s login.' });
     const token = crypto.randomBytes(24).toString('base64url');
     const had = acctByPob.get(r.id);
+    if (had && had.setup_hash) noteSpent.run(had.setup_hash, had.id, 'replaced', Date.now());
     if (had) updateAcctSetup.run(email.value, sha(token), Date.now() + SETUP_MS, had.id);
     else insertAcct.run(r.id, email.value, sha(token), Date.now() + SETUP_MS);
     if (had && !had.active) updateAcctActive.run(1, had.id);

@@ -52822,7 +52822,8 @@ async function pobResendLogin(id){
   const acct = await pobPortalCall('accounts', {pobId: id, email: r.login.userId});
   if(!acct.ok){ alert('A new link could not be made: ' + acct.message); return; }
   const res = await pjMail('POB', r, 'pobLogin', {LoginId: r.login.userId, LoginLink: acct.setupUrl, PartnerCode: r.partnerCode}, 'Login access (new link)');
-  alert(res && res.status==='Sent' ? 'A new password link is on its way to ' + r.login.userId + '.' : 'The letter was not sent: ' + ((res && (res.note || res.status)) || '') + '\n\nThe link is: ' + acct.setupUrl);
+  alert((res && res.status==='Sent' ? 'A new password link is on its way to ' + r.login.userId + '.' : 'The letter was not sent: ' + ((res && (res.note || res.status)) || '') + '\n\nThe link is: ' + acct.setupUrl)
+    + '\n\nEvery earlier link stops working now, and this one works once, for 7 days.');
   render();
 }
 async function pobSetLoginStatus(id, status){
