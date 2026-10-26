@@ -39,12 +39,16 @@ export function requireAdmin(req, res, next) {
 
 // Whose data a request may see: null for an admin (everything), otherwise a
 // list of payout user ids. Ops and partners see their own; a mentor sees their
-// own and that of everyone who reports to them directly.
+// own and that of everyone who reports to them directly. From L3 (Sherpa) up,
+// as in Partner Journey, a person sees everyone mapped below them, however
+// deep: L1 and L2 see only their own business.
 const directReports = db.prepare('SELECT id FROM users WHERE parent_id = ? AND active = 1');
 export function scopeIds(req) {
   if (req.user.role === 'admin') return null;
   const ids = [req.user.id];
-  if (req.user.role === 'mentor') for (const u of directReports.all(req.user.id)) ids.push(u.id);
+  if (Number(req.user.level) >= 3) {
+    for (let i = 0; i < ids.length; i++) for (const u of directReports.all(ids[i])) if (!ids.includes(u.id)) ids.push(u.id);
+  } else if (req.user.role === 'mentor') for (const u of directReports.all(req.user.id)) ids.push(u.id);
   return ids;
 }
 // The same scope as one SQL parameter: `col IN (SELECT value FROM json_each(?))`
@@ -58,5 +62,5 @@ export function targetUser(req) {
   if (!asked) return req.user.id;
   const ids = scopeIds(req);
   if (!ids || ids.includes(asked)) return asked;
-  throw Object.assign(new Error('You can only see your own payouts and your direct reports\''), { status: 403 });
+  throw Object.assign(new Error('You can only see your own payouts and those of the people mapped to you'), { status: 403 });
 }

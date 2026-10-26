@@ -775,14 +775,21 @@ function viewPyClients(){
     + (tab === 'hierarchy' ? pyHierarchy() : tab === 'standardize' ? pyStandardize() : pyClientList(admin));
 }
 
-/* ---- Hierarchy: the payout team ---- */
+/* ---- Hierarchy: the payout team ----
+   Active partners come onto it from Partner Journey: a partner given a BOSS
+   login is added here at the same level, under whoever they report to, and
+   "Sync from Partner Journey" brings everyone into line at once. */
+function pyPartnerOf(u){
+  const e = String(u && u.email || '').toLowerCase();
+  return e && typeof DB !== 'undefined' ? (DB.team || []).find(t=>t && t.partnerPobId && String(t.email || '').toLowerCase() === e) || null : null;
+}
 function pyHierarchy(){
   const url = '/users' + pyQs({q: PY.s.userQ});
   const d = pyData(url);
   PY.rows.users = d || [];
   return pyCard('Payout team', `<div class="small-note" style="margin-top:0">Everyone here signs in with their BOSS account. Add a person with the same email they use for BOSS; a BOSS admin is always a payout admin.</div>`
     + (!d ? pyLoadingHtml(url) : pyTable([{t: 'Person'}, {t: 'Role & level'}, {t: 'Reports to'}, {t: 'Mapped clients', c: 1}, {t: 'Access'}, {t: '', r: 1}],
-      d.map((u, i)=>`<tr><td><b>${esc(u.name)}</b><div class="small-note" style="margin:0">${esc(u.email || '')}${u.code ? ' · ' + esc(u.code) : ''}</div></td>
+      d.map((u, i)=>`<tr><td><b>${esc(u.name)}</b>${pyPartnerOf(u) ? ' ' + pyBadge('Partner Journey', 'ok') : ''}<div class="small-note" style="margin:0">${esc(u.email || '')}${u.code ? ' · ' + esc(u.code) : ''}</div></td>
         <td>${pyBadge(String(u.role).toUpperCase(), u.role === 'admin' ? 'info' : u.role === 'mentor' ? 'ok' : 'muted')} <b>L${u.level}</b> <span class="small-note">${esc(u.level_name || PY_LEVELS[u.level] || '')}</span>
           ${(u.extra_levels || []).length ? `<div class="small-note" style="margin:0">+ ${u.extra_levels.map(l=>'L' + l).join(', ')}</div>` : ''}
           ${u.active === 0 ? ' ' + pyBadge('disabled', 'danger') : ''}</td>
@@ -791,7 +798,7 @@ function pyHierarchy(){
         <td><button class="btn sm" onclick="pyCopyAccess(${i})">Copy access</button></td>
         <td class="py-r py-nowrap"><button class="btn sm ghost" title="Edit" onclick="pyUserModal(${i})">✎</button>
           <button class="btn sm ghost" title="Delete" onclick="pyUserDelete(${i})">🗑</button></td></tr>`), 'Nobody on the payout team yet.')),
-    `${pySearch('pyUserQ', 'userQ', 'Search name or email…', 220)}<button class="btn" onclick="pyUserExport()">⬇ Export</button>${pyFileButton('⬆ Import', 'pyTeamImport', '.xlsx,.xls,.csv')}<button class="btn ghost" onclick="pyTeamTemplate()">Template</button><button class="btn primary" onclick="pyUserModal(-1)">+ New person</button>`);
+    `${pySearch('pyUserQ', 'userQ', 'Search name or email…', 220)}<button class="btn" onclick="pyUserExport()">⬇ Export</button>${pyFileButton('⬆ Import', 'pyTeamImport', '.xlsx,.xls,.csv')}<button class="btn ghost" onclick="pyTeamTemplate()">Template</button>${typeof pySyncFromPartnerJourney === 'function' ? '<button class="btn" onclick="pySyncFromPartnerJourney()">⟳ Sync from Partner Journey</button>' : ''}<button class="btn primary" onclick="pyUserModal(-1)">+ New person</button>`);
 }
 /* The whole team, whatever the search box holds: every RM, mentor,
    partner and admin with their level, who they report to, their sharing,

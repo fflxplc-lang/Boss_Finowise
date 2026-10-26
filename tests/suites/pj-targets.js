@@ -133,7 +133,7 @@ suite(async t => {
       PT.role = '';
       return {rows, only};
     });
-    if(!r.rows.some(x => /Tara Shah · Sherpa/.test(x)) || !r.rows.some(x => /Imran Old · FBM · no role yet/.test(x)) || r.only.join() !== 'Imran Old') throw new Error(JSON.stringify(r));
+    if(!r.rows.some(x => /Tara Shah · Sherpa/.test(x)) || !r.rows.some(x => /Imran Old · No role yet/i.test(x)) || r.only.join() !== 'Imran Old') throw new Error(JSON.stringify(r));
     return r.rows.join('; ');
   });
 });

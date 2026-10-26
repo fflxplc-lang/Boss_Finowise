@@ -835,7 +835,9 @@ suite({mail: true}, async t => {
       const hr = NAV_GROUPS.find(g=>g.id === 'hr');
       const others = NAV_GROUPS.filter(g=>g.id !== 'hr');
       return {groups, hrItems: hr ? hr.items : [],
-        gated: others.filter(g=>g.gate || g.itemGate).map(g=>g.id),
+        /* Payouts has its own gate (the payout team), and Partner Journey
+           shows My Partner Journey to partners only; nothing else is gated. */
+        gated: others.filter(g=>(g.gate || g.itemGate) && !['payouts','partnerjourney'].includes(g.id)).map(g=>g.id),
         modules: MODULES.filter(m=>/hr/i.test(m)),
         actions: ACTIONS.length, flags: ADMIN_FLAGS.length,
         /* every other module still routes */
