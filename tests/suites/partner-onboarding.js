@@ -220,11 +220,13 @@ suite({mail: true}, async t => {
       pobOpenLoginModal('POB', id, 'obLoginT');
       await pobSaveLogin(id, 'obLoginT');
       const o = pobRecords().find(x=>x.id===id);
-      const m = pjComms('POB', id).find(c=>c.label==='Login access');
-      return {stage: stateOf('POB', o), login: o.login.status, user: o.login.userId, mail: !!(m && /\/partner\/setup\?t=/.test(m.body))};
+      const m = pobMemberOf(o);
+      return {stage: stateOf('POB', o), login: o.login.status, user: o.login.userId, boss: o.login.boss,
+        member: m && {email: m.email, level: m.partnerLevel, status: m.status, id: m.id === o.login.memberId}};
     }, pob);
-    if(r.stage !== 'roleMeeting' || r.login !== 'Created' || r.user !== 'kiran.shah@example.com' || !r.mail) throw new Error(JSON.stringify(r));
-    return 'account Created (not yet activated), letter sent';
+    if(r.stage !== 'roleMeeting' || r.login !== 'Created' || r.user !== 'kiran.shah@example.com' || !r.boss) throw new Error(JSON.stringify(r));
+    if(!r.member || r.member.email !== 'kiran.shah@example.com' || r.member.level !== 'L1' || r.member.status !== 'Active' || !r.member.id) throw new Error(JSON.stringify(r.member));
+    return 'BOSS login Created at L1 (Ninja), as a team member of the firm';
   });
 
   await step('the role is confirmed at the one-to-one, and Ninja brings its workflow', async () => {

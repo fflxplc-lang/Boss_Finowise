@@ -22,7 +22,7 @@ suite(async t => {
   await t.step('the rail carries Partner Journey with its six modules', async () => {
     const r = await t.eval(()=>{
       const g = railNavGroups().find(x=>x.id==='partnerjourney');
-      return g ? {label: g.label, items: g.items.map(v=>navFullOf(v))} : null;
+      return g ? {label: g.label, items: railItems(g).map(v=>navFullOf(v))} : null;
     });
     if(!r) throw new Error('no Partner Journey group in the rail');
     if(r.items.length !== 6) throw new Error('expected six modules, got ' + JSON.stringify(r.items));

@@ -13,7 +13,7 @@
 <script src="/appraisal-engine.js"></script>
 <script src="/payout.js"></script>
 <script src="/partner-targets.js"></script>
-<script src="/partner-access.js"></script>
+<script src="/partner-levels.js"></script>
 <title>BOSS</title>
 <!-- THE TAB SHOULD SAY WHOSE SYSTEM THIS IS.
      The browser drew its own globe because nothing here named an icon.
@@ -10815,7 +10815,7 @@ function meetingScheduleTransitionFor(module, record){
 /* Picking one of their times opens the ordinary meeting scheduler with that
    date and time already in it — the rest of scheduling is unchanged. */
 /* What the partner who brought this lead has done on it from their own
-   login (/partner › Client Journey): calls, meetings, follow-ups, notes.
+   login, in the Client Journey: calls, meetings, follow-ups, notes.
    It travels with the lead when it becomes a client. */
 function partnerWorkCard(rec){
   const acts = (rec && rec.partnerActivity) || [];
@@ -33115,6 +33115,8 @@ function pageOpenToMe(view, user){
   if(!u) return false;
   if(isAdmin(u)) return true;
   if(pageIsPersonal(view) || pageIsPayout(view)) return true;
+  // A partner opens what their level opens (Setup › Partner Levels).
+  if(isPartnerMember(u)) return partnerPageOpen(view, u);
   const list = pageAllowList(u);
   if(!list.length) return true;              // nothing written down: nothing restricted
   return list.indexOf(view) >= 0;
@@ -33370,6 +33372,14 @@ function visibleRecords(list, ownerFn, branchFn){
   if(!u) return [];
   const notDeleted = list.filter(r=>!r.deletedAt);
   if(isAdmin(u) || u.scope==='all') return notDeleted;
+  /* A partner's records are the ones they own and the ones they brought
+     (partnerPobId), and on team scope those of every partner reporting to
+     them. Their own onboarding record is theirs too. */
+  if(isPartnerMember(u)){
+    const people = u.scope==='team' ? [u].concat(userDescendants(u.id)) : [u];
+    const ids = new Set(people.map(t=>t.id)), pobs = new Set(people.map(t=>t.partnerPobId).filter(Boolean));
+    return notDeleted.filter(r=>ids.has(ownerFn(r)) || pobs.has(r.partnerPobId) || pobs.has(r.id));
+  }
   if(u.scope==='branch') return notDeleted.filter(r=>branchFn(r)===u.branch);
   if(u.scope==='team') {
     // Real ID-based reporting chain (parentUserId), not name-matching — this is what makes an
@@ -33584,7 +33594,7 @@ function navigate(view, arg){
     pmsDetailId = (arg!==undefined && arg!=='') ? arg : null;
   } else if(view==='pob'){
     pobDetailId = (arg!==undefined && arg!=='') ? arg : null;
-  } else if(['pqs','ppo','ppf'].includes(view)){
+  } else if(['pqs','ppo','ppf','mypj'].includes(view)){
     /* list pages with nothing open on them */
   } else if(view==='dst'){
     dstDetailId = (arg!==undefined) ? arg : null;
@@ -34187,6 +34197,7 @@ function render(){
     pqs:['PQS · Partner Query System','Partner queries, worked to closed'],
     ppo:['Partner Payout System','What each partner is owed and paid'],
     ppf:['Partner Performance System','The funnel and each partner'],
+    mypj:['My Partner Journey','Your tasks, performance and payouts'],
     pydash:['Payout Dashboard','Brokerage, payouts and compliance'], pyimports:['Data Import','Registrar files in'],
     pyclients:['Clients & Map','The payout team and who earns on each client'], pyreports:['Brokerage Settlements','Payouts, invoices and reconciliation'],
     pyrates:['Brokerage Rates','AMC brokerage rate master'], pypartner:['Partner Brokerage','Broking revenue from partners'],
@@ -34196,7 +34207,7 @@ function render(){
   // topbar one would just repeat it.
   const ownsHeader = (blueprintModuleFor(currentView) && window['_bpRec_'+blueprintModuleFor(currentView).type]
                       && planRecordOf(window['_bpRec_'+blueprintModuleFor(currentView).type]))
-    || ['lms','cms','rms','dst','queries','business','djt','campaigns','projects','calls','mis','pps','pms','pob','pqs','ppo','ppf','analytics'].includes(currentView)
+    || ['lms','cms','rms','dst','queries','business','djt','campaigns','projects','calls','mis','pps','pms','pob','pqs','ppo','ppf','mypj','analytics'].includes(currentView)
     || (typeof pyIsView === 'function' && pyIsView(currentView))
     || (currentView==='settings' && !settingsTab)
     || (currentView==='lms' && leadDetailId) || (currentView==='cms' && clientDetailId)
@@ -34276,6 +34287,7 @@ function render(){
   else if(currentView==='pqs') c.innerHTML = viewPQS();
   else if(currentView==='ppo') c.innerHTML = viewPPO();
   else if(currentView==='ppf') c.innerHTML = viewPPF();
+  else if(currentView==='mypj') c.innerHTML = viewMyPartnerJourney();
   else if(typeof pyIsView === 'function' && pyIsView(currentView)) c.innerHTML = pyRender(currentView);
   else { currentView='dashboard'; c.innerHTML = viewDashboard(); } // unknown view (e.g. a stale bookmark) falls back to Dashboard instead of crashing or showing stale content
   seAlignTables();
@@ -34418,7 +34430,7 @@ const NAV_ICONS = {
   fqtests:'🧮', iseqforms:'🛡️', cifforms:'🗂️', planforms:'📐', ctforms:'🤝', mailbox:'✉️', portfolio:'📈',
   systemarchitecture:'🏛️', settings:'⚙️', profile:'👤', teammembers:'🧑‍💼', dwt:'🗓️', arc:'🔁', djt:'📔',
   hrdashboard:'🧭', hrattendance:'⏱️', hrincentive:'💰', hrappraisal:'📈',
-  pps:'🌱', pms:'🤝', pob:'🚀', pqs:'🎫', ppo:'💸', ppf:'🏆',
+  mypj:'🧗', pps:'🌱', pms:'🤝', pob:'🚀', pqs:'🎫', ppo:'💸', ppf:'🏆',
   pydash:'📊', pyimports:'⬆️', pyclients:'🗂️', pyreports:'🧾', pyrates:'💹', pypartner:'🤝', pyledger:'🏦', pyaudit:'📜', pysettings:'⚙️',
 };
 const NAV_LABELS = {
@@ -34434,7 +34446,7 @@ const NAV_LABELS = {
   fqtests:'FQ Assessments', iseqforms:'ISEQ Forms', cifforms:'CIF Forms',
   planforms:'Plan Input Forms', ctforms:'C&T Forms',
   pps:'PPS · Partner Perspective System', pms:'PMS · Partner Managing System', pob:'POB · Partner Onboarding', pqs:'PQS · Partner Query System',
-  ppo:'Partner Payout System', ppf:'Partner Performance System',
+  ppo:'Partner Payout System', ppf:'Partner Performance System', mypj:'My Partner Journey',
   pydash:'Payout Dashboard', pyimports:'Data Import', pyclients:'Clients & Map', pyreports:'Reports & Payouts',
   pyrates:'Brokerage Rates', pypartner:'Partner Brokerage', pyledger:'Payouts Ledger', pyaudit:'Audit Log', pysettings:'Payout Settings',
 };
@@ -34474,7 +34486,8 @@ const NAV_GROUPS = [
   /* The same idea for partners: a prospect walks PPS to the fee, and as a
      partner walks PMS to onboarding. Queries, payouts and performance hang
      off the partner. */
-  {id:'partnerjourney', icon:'🤝', label:'Partner Journey', items:['pps','pms','pob','pqs','ppo','ppf'],
+  {id:'partnerjourney', icon:'🤝', label:'Partner Journey', items:['mypj','pps','pms','pob','pqs','ppo','ppf'],
+   itemGate: v=>v!=='mypj' || isPartnerMember(),
    about:'A partner from first registration, through the fee and the exams, to onboarding, payouts and performance.'},
   /* Portfolio Review and Mail were sections of their own here for a day.
      They belong to a review, not to the sidebar — the firm asked for them
@@ -34772,8 +34785,13 @@ function paintNavGroups(){
    a group of modules, and it is a property of the group rather than a list
    of ids here — so a blueprint registered later is drawn as a sub-module
    with no edit to this function. */
+/* The pages a group shows on the rail. A partner sees only what their
+   level opens, so a group with nothing open to them is not drawn at all. */
+function railItems(g){
+  return g.items.filter(id=>viewIsLive(id) && (!g.itemGate || g.itemGate(id)) && (!isPartnerMember() || pageOpenToMe(id)));
+}
 function renderNavGroups(){
-  return railNavGroups().map(g=>{
+  return railNavGroups().filter(g=>railItems(g).length).map(g=>{
     const collapsed = isNavGroupCollapsed(g.id);
     const hasActive = g.items.includes(currentView);
     return `
@@ -34787,8 +34805,7 @@ function renderNavGroups(){
         </div>
         <div class="nav-group-items" aria-hidden="${collapsed?'true':'false'}">
           <div class="nav-group-inner ${g.nested?'nested':''}">
-            ${g.items.filter(id=>viewIsLive(id) && (!g.itemGate || g.itemGate(id)))
-                .map(id=>navItem(id, null, g.nested)).join('')}
+            ${railItems(g).map(id=>navItem(id, null, g.nested)).join('')}
           </div>
         </div>
       </div>
@@ -40358,6 +40375,7 @@ async function saveLead(id){
   } else {
     data.id = uid('LMS'); data.createdAt = new Date().toISOString(); data.createdBy = currentUser;
     if(!data.assignedTo) data.assignedTo = currentUser; // quick-add never asks for this; default to the creator so 'own'/'team' visibility scope actually works
+    partnerStamp(data);
     initState('LMS', data);
     DB.leads.push(data);
     await logAudit('LMS', data.id, 'Create', [{field:'lead', oldValue:'', newValue:data.firstName+' '+(data.lastName||'')}]);
@@ -41882,6 +41900,7 @@ async function saveClient(id){
     }
   } else {
     data.id = uid('CMS'); data.createdAt = new Date().toISOString();
+    partnerStamp(data);
     initState('CMS', data);
     DB.clients.push(data);
     await logAudit('CMS', data.id, 'Create', [{field:'client', oldValue:'', newValue:data.cmsName}]);
@@ -52699,98 +52718,88 @@ function pobEvaluationHtml(r){
         <td>${esc(fmtDateTime(e.at))}</td><td>${esc(teamName(e.by))}</td><td>${esc(e.note)}</td></tr>`), '') : '');
 }
 
-/* ---------- login access ---------- */
+/* ---------- the partner's BOSS login (public/partner-levels.js) ----------
+   An active partner works in BOSS itself, not on a page of their own. The
+   login is a team member carrying partnerPobId (this record) and
+   partnerLevel (L1–L6, Setup › Partner Levels), so the same sign-in, rail,
+   records and permissions the firm uses decide what they open and whose
+   records they see. It reports to the senior partner it is mapped to (an
+   FBP to its FBM), else to the partner's RM, so the RM's team scope and a
+   Sherpa's reach both follow the reporting line. */
+const PLV = window.PartnerLevels;
+function plvLevels(){ return PLV.levels(DB.config.partnerLevels); }
+function plvLevel(k){ return PLV.level(DB.config.partnerLevels, k) || plvLevels()[0]; }
+function isPartnerMember(u){ u = u || me(); return !!(u && u.partnerPobId); }
+function pobMemberOf(r){ return r ? (DB.team||[]).find(t=>t && t.partnerPobId===r.id) || null : null; }
+function memberPartnerRecord(u){ u = u || me(); return u && u.partnerPobId ? pobRecords().find(x=>x.id===u.partnerPobId) || null : null; }
+function pobLevelOf(r){ const m = pobMemberOf(r); return (m && m.partnerLevel) || PLV.levelForRole(r.role); }
+function pobReportsTo(r){
+  const up = r.fbmPobId ? pobMemberOf(pobRecords().find(x=>x.id===r.fbmPobId)) : null;
+  return (up && up.id) || r.assignedTo || currentUser;
+}
+/* A lead or client a partner adds is theirs: it counts in their
+   performance and travels to the client with the mark. */
+function partnerStamp(rec){
+  const r = memberPartnerRecord();
+  if(!r || rec.partnerPobId) return;
+  rec.partnerPobId = r.id; rec.partnerCode = r.partnerCode || '';
+  if(!rec.source) rec.source = 'Partner';
+}
+function plvScopeLabel(s){ return (PLV.SCOPES.find(x=>x[0]===s) || ['', s])[1]; }
+function plvSummary(lv){
+  return lv.name + ' (' + lv.k + ') · ' + PLV.GROUPS.filter(g=>lv.groups.includes(g.k)).map(g=>g.l).concat(['Partner Journey (own)']).join(', ')
+    + ' · ' + plvScopeLabel(lv.scope);
+}
+/* What a partner may open: their own Partner Journey always; the level's
+   modules once the Client Journey is open to them (onboarding tasks
+   approved, or active), as it always was. */
+function partnerPageOpen(view, u){
+  u = u || me();
+  if(['mypj','ppf'].includes(view)) return true;
+  if(['teammembers','recyclebin','import'].includes(view)) return false;
+  const g = navGroupOf(view);
+  if(!g) return true;
+  if(g === 'partnerjourney') return false;
+  const r = memberPartnerRecord(u);
+  if(!r || !pobClientJourneyOpen(r)) return false;
+  return plvLevel(u.partnerLevel).groups.includes(g);
+}
+/* The level's roles are in the firm's role list, so a partner's profile
+   reads and saves like anybody's. */
+async function plvEnsureRoles(){
+  const want = plvLevels().map(PLV.roleName).filter(n=>!roleList().includes(n));
+  if(!want.length) return;
+  DB.config.roles = roleList().concat(want);
+  await save('config');
+}
+/* One partner's member brought into line with their level. */
+function plvApply(m, lv){
+  m.partnerLevel = lv.k;
+  m.role = PLV.roleName(lv);
+  m.designation = lv.name + ' · Partner';
+  m.scope = lv.scope;
+  m.perms = PLV.perms(lv, MODULES);
+  m.adminFlags = fullAdminFlags(false);
+  m.pagePerms = [];
+  /* HR opens its three modules for a level given it (L5, L6); everybody
+     else's HR, and administering it, stay for HR to grant by hand. */
+  const hr = lv.groups.includes('hr') ? 1 : 0;
+  m.hrAccess = Object.assign({}, m.hrAccess, {attendance: hr, incentive: hr, appraisal: hr});
+  if(!hr) Object.assign(m.hrAccess, {staff: 0, admin: 0});
+}
 function pobOpenLoginModal(module, id, tid){
   const r = pobRecords().find(x=>x.id===id);
   if(!r) return;
-  const l = r.login || {};
-  openModal('Create Login Access — ' + pjName(r), `<p class="small-note" style="margin-top:0">Creates ${esc(pjName(r))}’s own Freedom LifeX partner login, and emails <b>${esc(r.email||'no address on file')}</b> a link to set their password. Signed in at <b>${esc(location.origin)}/partner</b>, they see their dashboard, their own profile, empanelment, agreement and documents, and their tasks — nobody else’s, and nothing of BOSS. This is their account, not their activation as a partner: that comes at the end, after the readiness review.</p>`
-    + fieldInput({k:'lgUser', l:'Login ID (email)', t:'text', vk:'email', req:1}, l.userId || r.email || '')
-    + pobAccessBoxes(r),
-    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveLogin('${esc(id)}','${esc(tid||'')}')">Create &amp; Send Login</button>`);
-}
-/* The partner's account lives on the server, in its own table beside the
-   staff accounts, never in the store the CRM hands to every browser.
-   Asked for here; the server answers with the one-time link that sets
-   the password. */
-async function pobPortalCall(path, body){
-  try{
-    const res = await fetch('/api/partner-portal/' + path, {method:'POST', headers: Object.assign({'Content-Type':'application/json'}, apiHeaders()),
-      body: JSON.stringify(body || {})});
-    const j = await res.json().catch(()=>({}));
-    if(!res.ok || !j.ok) return {ok: false, message: j.message || ('The server said ' + res.status)};
-    return j;
-  }catch(e){ return {ok: false, message: 'Could not reach the server: ' + e.message}; }
-}
-/* ---------- what the partner's login opens (public/partner-access.js) ----------
-   The server enforces it; these are the boxes that set it. A partner
-   follows their role's list from Setup › Partner Login Access until
-   somebody ticks a list of their own. */
-const PA = window.PartnerAccess;
-function pobAccessBoxes(r, own){
-  const res = PA.resolve(r, DB.config.partnerPortal), on = new Set(res.sections);
-  const role = PA.roleKey(r);
-  return `<div class="field" style="margin-top:6px"><label>What the login opens</label>
-    <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:4px 0 8px"><input type="checkbox" id="pa_follow" ${res.from==='role' ? 'checked' : ''}
-      onchange="document.querySelectorAll('.pa-box').forEach(b=>{ if(!b.dataset.fixed) b.disabled = this.checked; })">
-      Follow the ${esc(role)} default (Setup › Partner Login Access)</label>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:6px 14px">
-    ${PA.SECTIONS.map(x=>`<label style="display:flex;gap:8px;align-items:flex-start;font-weight:400">
-      <input type="checkbox" class="pa-box" id="pa_${x.k}" ${on.has(x.k) ? 'checked' : ''} ${x.fixed ? 'disabled data-fixed="1"' : res.from==='role' ? 'disabled' : ''}>
-      <span><b>${esc(x.l)}</b><br><span class="small-note" style="margin:0">${esc(x.d)}${x.fixed ? ' · always open' : ''}</span></span></label>`).join('')}
-    </div></div>`;
-}
-function pobReadAccessBoxes(){
-  const follow = document.getElementById('pa_follow');
-  if(follow && follow.checked) return null;
-  return PA.SECTIONS.filter(x=>{ const b = document.getElementById('pa_' + x.k); return b && b.checked; }).map(x=>x.k);
-}
-function pobApplyAccess(r, list){
-  if(list === null) delete r.portalAccess;
-  else r.portalAccess = PA.clean(list);
-}
-function pobAccessSummary(r){
-  const res = PA.resolve(r, DB.config.partnerPortal);
-  return (res.from==='role' ? PA.roleKey(r) + ' default: ' : 'Own list: ') + PA.SECTIONS.filter(x=>res.sections.includes(x.k)).map(x=>x.l).join(', ');
-}
-function pobOpenAccessModal(id){
-  const r = pobRecords().find(x=>x.id===id);
-  if(!r || !can('POB','edit')) return;
-  openModal('Login Access — ' + pjName(r), `<p class="small-note" style="margin-top:0">What ${esc(pjName(r))} sees when they sign in at <b>${esc(location.origin)}/partner</b>.
-    A section left out is not shown to them, and the server refuses it too.</p>` + pobAccessBoxes(r),
-    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveAccess('${esc(id)}')">Save Access</button>`);
-}
-async function pobSaveAccess(id){
-  const r = pobRecords().find(x=>x.id===id);
-  if(!r || !can('POB','edit')) return;
-  const was = pobAccessSummary(r);
-  pobApplyAccess(r, pobReadAccessBoxes());
-  const now = pobAccessSummary(r);
-  await save('pjOnboarding');
-  if(was !== now) await logAudit('POB', id, 'Login Access Changed', [{field:'sections', oldValue: was, newValue: now}]);
-  closeModal(); render();
-}
-/* Setup › Partner Login Access: each role's sections. */
-function renderSettingsPartnerLogin(){
-  const saved = DB.config.partnerPortal;
-  return `<div class="card" style="padding:16px">
-    <p class="small-note" style="margin-top:0">What a partner opens when they sign in with their Freedom LifeX login at <b>${esc(location.origin)}/partner</b>, by role.
-      A partner follows their role's column until their own list is ticked (Partner Onboarding › the partner › Login Access). Dashboard and My Profile are always open.
-      The login itself is given from the partner's Login Access step — or, for a partner already active, from Create Partner Login on their record.</p>
-    <div class="table-wrap"><table><thead><tr><th>Section</th><th>What it holds</th>${PA.ROLES.map(x=>`<th style="text-align:center">${esc(x)}</th>`).join('')}</tr></thead><tbody>
-    ${PA.SECTIONS.map(x=>`<tr><td><b>${esc(x.l)}</b></td><td class="small-note">${esc(x.d)}</td>
-      ${PA.ROLES.map(role=>`<td style="text-align:center"><input type="checkbox" id="pas_${role.replace(/\W+/g,'')}_${x.k}" ${PA.roleSections(saved, role).includes(x.k) ? 'checked' : ''} ${x.fixed ? 'disabled' : ''}></td>`).join('')}</tr>`).join('')}
-    </tbody></table></div>
-    <div class="row" style="gap:8px;margin-top:10px"><button class="btn primary" onclick="pobSavePortalSettings()">Save Access</button></div>
-  </div>`;
-}
-async function pobSavePortalSettings(){
-  if(!pjMaySetUp()){ alert('You do not have permission to change these settings.'); return; }
-  const roles = {};
-  PA.ROLES.forEach(role=>{ roles[role] = PA.clean(PA.SECTIONS.filter(x=>{ const b = document.getElementById('pas_' + role.replace(/\W+/g,'') + '_' + x.k); return b && b.checked; }).map(x=>x.k)); });
-  DB.config.partnerPortal = {roles, updatedAt: new Date().toISOString(), updatedBy: currentUser};
-  await save('config');
-  alert('Saved.'); render();
+  const have = pobMemberOf(r), lvk = pobLevelOf(r), up = have ? have.parentUserId : pobReportsTo(r);
+  const people = activeTeam().filter(t=>t.id !== (have && have.id)).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  openModal((have ? 'BOSS Login — ' : 'Give BOSS Login — ') + pjName(r), `<p class="small-note" style="margin-top:0">${esc(pjName(r))} signs in to BOSS at <b>${esc(location.origin)}/login</b>, the same platform as the firm, and sees what their level opens. Their password is emailed to them; it is on their team profile until they first sign in.</p>`
+    + fieldInput({k:'lgUser', l:'Login ID (email)', t:'text', vk:'email', req:1}, (have && have.email) || (r.login||{}).userId || r.email || '')
+    + `<div class="field"><label>Level</label><select id="lgLevel" onchange="document.getElementById('lgOpens').textContent = plvSummary(plvLevel(this.value))">
+        ${plvLevels().map(lv=>`<option value="${lv.k}" ${lv.k===lvk?'selected':''}>${esc(lv.k + ' · ' + lv.name)}</option>`).join('')}</select>
+        <div class="small-note" id="lgOpens" style="margin-top:4px">${esc(plvSummary(plvLevel(lvk)))}</div></div>`
+    + `<div class="field"><label>Reports to</label><select id="lgUp">${people.map(t=>`<option value="${esc(t.id)}" ${t.id===up?'selected':''}>${esc(t.name)}${t.partnerLevel ? ' · ' + esc(t.partnerLevel) : t.role ? ' · ' + esc(t.role) : ''}</option>`).join('')}</select>
+        <div class="small-note" style="margin-top:4px">A Sherpa or Master Sherpa sees the records of the partners who report to them.</div></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveLogin('${esc(id)}','${esc(tid||'')}')">${have ? 'Save' : 'Create &amp; Send Login'}</button>`);
 }
 async function pobSaveLogin(id, tid){
   const r = pobRecords().find(x=>x.id===id);
@@ -52798,69 +52807,60 @@ async function pobSaveLogin(id, tid){
   const f = [{k:'lgUser', l:'Login ID', req:1, vk:'email'}];
   const d = readFields(f);
   if(!validateRequired(f, d)) return;
-  const access = pobReadAccessBoxes();
-  const taken = pobLive().find(x=>x.id!==id && x.login && String(x.login.userId).toLowerCase()===String(d.lgUser).trim().toLowerCase());
-  if(taken){ alert('The login ID ' + d.lgUser + ' already belongs to ' + pjName(taken) + '.'); return; }
-  const acct = await pobPortalCall('accounts', {pobId: id, email: d.lgUser.trim()});
-  if(!acct.ok){ alert('The login could not be created: ' + acct.message); return; }
-  const at = new Date().toISOString();
-  pobApplyAccess(r, access);
-  const note = pobAccessSummary(r);
-  r.login = Object.assign({}, r.login, {userId: d.lgUser.trim(), link: acct.loginUrl, portal: true, status: 'Created', createdAt: at, createdBy: currentUser,
-    history: ((r.login||{}).history||[]).concat([{at, by: currentUser, status: 'Created', note}])});
+  const email = String(d.lgUser).trim();
+  const lv = plvLevel((document.getElementById('lgLevel')||{}).value);
+  const up = (document.getElementById('lgUp')||{}).value || pobReportsTo(r);
+  let m = pobMemberOf(r);
+  const dup = DB.team.find(t=>t !== m && t.email && t.email.toLowerCase()===email.toLowerCase());
+  if(dup){ alert('The login ID ' + email + ' already belongs to ' + dup.name + '.'); return; }
+  await plvEnsureRoles();
+  const at = new Date().toISOString(), was = m ? plvSummary(plvLevel(m.partnerLevel)) : '';
+  if(!m){
+    m = {id: uid('USR'), name: pjName(r), email, mobile: r.mobile || '', status: 'Active', branch: r.branch || DB.config.branches[0],
+      parentUserId: up, departments: [], managerIds: [], employeeId: r.partnerCode || nextEmployeeId(), joinedAt: at, createdAt: at,
+      createdBy: currentUser, documents: [], notes: [], partnerPobId: r.id};
+    plvApply(m, lv);
+    DB.team.push(m);
+    setUserManagers(m, [up]);
+  } else {
+    m.email = email; m.parentUserId = up; setUserManagers(m, [up]);
+    plvApply(m, lv);
+  }
+  await save('team');
+  await logAudit('Team', m.id, was ? 'Partner Level Changed' : 'Profile Created', [{field:'Partner', oldValue: was, newValue: plvSummary(lv)}]);
+  const account = await provisionMemberAccount(m);
+  r.login = Object.assign({}, r.login, {userId: email, memberId: m.id, level: lv.k, boss: true,
+    status: (r.login && r.login.status) || 'Created', createdAt: (r.login && r.login.createdAt) || at, createdBy: (r.login && r.login.createdBy) || currentUser,
+    history: ((r.login||{}).history||[]).concat([{at, by: currentUser, status: (r.login && r.login.status) || 'Created', note: plvSummary(lv)}])});
+  delete r.portalAccess;
   closeModal();
-  const res = await pjMail('POB', r, 'pobLogin', {LoginId: r.login.userId, LoginLink: acct.setupUrl, PartnerCode: r.partnerCode}, 'Login access');
-  /* From the Login Access stage the record moves on. A partner who is past
-     it — active before BOSS, imported — just gets the login. */
   if(tid) await doTransition('POB', id, tid);
-  else { await save('pjOnboarding'); await logAudit('POB', id, 'Partner Login Created', [{field:'login', oldValue:'', newValue: r.login.userId + ' · ' + note}]); render(); }
-  pjSaidMail(res, 'The login letter');
+  else { await save('pjOnboarding'); await logAudit('POB', id, was ? 'BOSS Login Changed' : 'BOSS Login Created', [{field:'login', oldValue: was, newValue: email + ' · ' + plvSummary(lv)}]); render(); }
+  if(account && account.created){
+    const mailed = account.mail && account.mail.sent;
+    alert('BOSS login created for ' + pjName(r) + ' (' + lv.name + ', ' + lv.k + ').\n\n'
+      + (mailed ? 'Their password has been emailed to ' + email + '.' : 'The password could NOT be emailed — ' + ((account.mail||{}).note || 'no mail connector') + '.')
+      + '\n\nIt is on their team profile until they sign in at ' + location.origin + '/login.');
+  } else if(account && account.skipped === 'not-admin'){
+    alert(pjName(r) + ' is set up, but only an admin can create the account they sign in with. Ask one to open their team profile.');
+  } else if(account && account.ok === false && !account.skipped){
+    alert('The partner is set up, but their sign-in account is not in step: ' + (account.message || ''));
+  }
 }
-async function pobResendLogin(id){
-  const r = pobRecords().find(x=>x.id===id);
-  if(!r || !r.login || !can('POB','edit')) return;
-  const acct = await pobPortalCall('accounts', {pobId: id, email: r.login.userId});
-  if(!acct.ok){ alert('A new link could not be made: ' + acct.message); return; }
-  const res = await pjMail('POB', r, 'pobLogin', {LoginId: r.login.userId, LoginLink: acct.setupUrl, PartnerCode: r.partnerCode}, 'Login access (new link)');
-  alert((res && res.status==='Sent' ? 'A new password link is on its way to ' + r.login.userId + '.' : 'The letter was not sent: ' + ((res && (res.note || res.status)) || '') + '\n\nThe link is: ' + acct.setupUrl)
-    + '\n\nEvery earlier link stops working now, and this one works once, for 7 days.');
-  render();
-}
-/* When a link will not do, the RM sets the password and tells the
-   partner; the partner changes it under My Profile. Nothing of it is kept
-   in BOSS: the server holds only its hash. */
-function pobOpenSetPassword(id){
-  const r = pobRecords().find(x=>x.id===id);
-  if(!r || !r.login || !pobMayApprove()) return;
-  openModal('Set Password — ' + pjName(r), `<p class="small-note" style="margin-top:0">Sets the password for <b>${esc(r.login.userId)}</b> straight away. Give it to the partner yourself (phone or WhatsApp); they sign in at <b>${esc(location.origin)}/partner/login</b> and can change it under My Profile. Any password link sent earlier stops working.</p>`
-    + fieldInput({k:'spPw', l:'New password (at least 8 characters)', t:'text', req:1}, ''),
-    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveSetPassword('${esc(id)}')">Set Password</button>`);
-}
-async function pobSaveSetPassword(id){
-  const r = pobRecords().find(x=>x.id===id);
-  if(!r || !r.login || !pobMayApprove()) return;
-  const el = document.getElementById('f_spPw') || document.querySelector('[id$="spPw"]');
-  const pw = String(el ? el.value : '');
-  if(pw.length < 8){ alert('Use at least 8 characters.'); return; }
-  const res = await pobPortalCall('accounts/password', {pobId: id, password: pw, email: r.login.userId});
-  if(!res.ok){ alert('The password could not be set: ' + res.message); return; }
-  const at = new Date().toISOString();
-  r.login.portal = true;
-  r.login.history = (r.login.history||[]).concat([{at, by: currentUser, status: r.login.status, note: 'Password set by staff'}]);
-  await save('pjOnboarding');
-  await logAudit('POB', id, 'Login Password Set', [{field:'login', oldValue:'', newValue: res.email + ' · set by staff'}]);
-  closeModal();
-  alert('Done. Tell ' + pjName(r) + ':\n\nSign in at: ' + res.loginUrl + '\nLogin ID: ' + res.email + '\nPassword: the one you just set\n\nThey can change it under My Profile.');
-  render();
-}
+/* Suspending the partner shuts their BOSS account; activating opens it. */
 async function pobSetLoginStatus(id, status){
   const r = pobRecords().find(x=>x.id===id);
   if(!r || !r.login) return;
   if(!pobMayApprove()){ alert('Changing account access needs Approve permission on Partners.'); return; }
   const note = status==='Suspended' ? (prompt('Why is the account suspended?') || '').trim() : '';
   if(status==='Suspended' && !note){ alert('Say why, so the record shows it.'); return; }
-  const acct = await pobPortalCall('accounts/status', {pobId: id, active: status!=='Suspended'});
-  if(!acct.ok && r.login.portal){ alert('The account could not be changed: ' + acct.message); return; }
+  const m = pobMemberOf(r);
+  if(m){
+    m.status = status==='Suspended' ? 'Inactive' : 'Active';
+    await save('team');
+    const s = await syncMemberAccount(m);
+    if(!s.ok && window.CRM_IS_ADMIN){ alert('The account could not be changed: ' + s.message); return; }
+  }
   const was = r.login.status;
   r.login.status = status;
   r.login.history = (r.login.history||[]).concat([{at: new Date().toISOString(), by: currentUser, status, note}]);
@@ -52868,6 +52868,69 @@ async function pobSetLoginStatus(id, status){
   await save('pjOnboarding');
   await logAudit('POB', id, 'Login ' + status, [{field:'account', oldValue: was, newValue: status + (note ? ' — ' + note : '')}]);
   render();
+}
+/* Setup › Partner Levels: what each level opens, and whose records it sees. */
+function renderSettingsPartnerLevels(){
+  const n = lv => DB.team.filter(t=>t.partnerLevel===lv.k).length;
+  return `<div class="card" style="padding:16px">
+    <p class="small-note" style="margin-top:0">An active partner signs in to BOSS itself at <b>${esc(location.origin)}/login</b> and works in the same modules as the firm, as far as their level opens.
+      L1–L3 always see their own tasks, performance and payouts under Partner Journey. <b>Own business only</b> means the leads, clients and work they brought or own;
+      <b>Partners mapped to them</b> adds every partner who reports to them, however deep. A partner's login is given from their Partner Onboarding record.</p>
+    <div class="table-wrap"><table><thead><tr><th>Level</th>${PLV.GROUPS.map(g=>`<th style="text-align:center">${esc(g.l)}</th>`).join('')}<th>Data they see</th><th class="num">Partners</th></tr></thead><tbody>
+    ${plvLevels().map(lv=>`<tr><td><b>${esc(lv.k)}</b> · ${esc(lv.name)}</td>
+      ${PLV.GROUPS.map(g=>`<td style="text-align:center"><input type="checkbox" id="plv_${lv.k}_${g.k}" ${lv.groups.includes(g.k)?'checked':''}></td>`).join('')}
+      <td><select id="plv_${lv.k}_scope">${PLV.SCOPES.map(([k,l])=>`<option value="${k}" ${lv.scope===k?'selected':''}>${esc(l)}</option>`).join('')}</select></td>
+      <td class="num">${n(lv)}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="row" style="gap:8px;margin-top:10px"><button class="btn primary" onclick="plvSaveSettings()">Save &amp; Apply to Partners</button></div>
+  </div>`;
+}
+async function plvSaveSettings(){
+  if(!pjMaySetUp()){ alert('You do not have permission to change these settings.'); return; }
+  const levels = {};
+  PLV.LEVELS.forEach(d=>{
+    levels[d.k] = {groups: PLV.GROUPS.filter(g=>{ const b = document.getElementById('plv_' + d.k + '_' + g.k); return b && b.checked; }).map(g=>g.k),
+      scope: (document.getElementById('plv_' + d.k + '_scope')||{}).value || d.scope};
+  });
+  DB.config.partnerLevels = {levels, updatedAt: new Date().toISOString(), updatedBy: currentUser};
+  await save('config');
+  const members = DB.team.filter(t=>t.partnerPobId);
+  members.forEach(m=>plvApply(m, plvLevel(m.partnerLevel || 'L1')));
+  if(members.length) await save('team');
+  await logAudit('Settings', 'partnerLevels', 'Partner Levels Changed', PLV.LEVELS.map(d=>({field: d.k, oldValue: '', newValue: plvSummary(plvLevel(d.k))})));
+  alert('Saved, and applied to ' + members.length + ' partner login(s).'); render();
+}
+/* ---------- My Partner Journey: a partner's own tasks and payouts ---------- */
+function viewMyPartnerJourney(){
+  const r = memberPartnerRecord();
+  if(!r) return `<div class="card"><div class="empty">This page is for partners. Your Partner Onboarding record holds your journey.</div></div>`;
+  const lv = plvLevel(me().partnerLevel), open = pobClientJourneyOpen(r);
+  const tasks = pobLiveTasks(r).filter(t=>t.status!=='Cancelled');
+  const mineToDo = t => t.kind==='task' && pobTaskState(r, t).open && ['Not Started','In Progress','Changes Required'].includes(t.status || 'Not Started');
+  const pays = (DB.partnerPayouts||[]).filter(p=>p && !p.deletedAt && r.partnerId && p.partnerId===r.partnerId)
+    .map(p=>{ const gross = numVal(p.businessAmount) * numVal(p.ratePct) / 100, tds = gross * numVal(p.tdsPct) / 100; return Object.assign({}, p, {gross, tds, net: gross - tds}); })
+    .sort((a,b)=>String(b.period).localeCompare(String(a.period)));
+  const sum = f => pays.filter(f).reduce((s,p)=>s + p.net, 0);
+  return moduleHeader({title:'My Partner Journey', subtitle: pjName(r) + ' · ' + lv.name + ' (' + lv.k + ')' + (r.partnerCode ? ' · ' + r.partnerCode : ''),
+      actions:[{label:'My Performance', onclick:"navigate('ppf')"}]})
+    + profCard('Where you are', [
+        ['Stage', esc(stateLabel('POB', stateOf('POB', r)))], ['Your RM', esc(teamName(r.assignedTo))], ['Your mentor', esc(teamName(pobMentor(r)))],
+        ['Onboarding', esc(pobProgress(r) + '%')],
+        ['Client Journey', open ? '<span class="badge ok">Open</span>' : '<span class="badge warn">Opens once your onboarding tasks are approved</span>'],
+        ['Your level opens', esc(plvSummary(lv))],
+      ])
+    + profTable('My Tasks', ['Task','Status','Due',''], tasks.map(t=>{
+        const s = pobTaskState(r, t);
+        return `<tr><td><b>${esc(t.title)}</b>${t.description ? `<div class="small-note" style="margin:0">${esc(t.description)}</div>` : ''}
+            ${t.status==='Changes Required' && (t.reviews||[]).length ? `<div class="small-note" style="margin:0;color:var(--danger)">${esc(((t.reviews||[]).slice(-1)[0]||{}).comments||'')}</div>` : ''}
+            ${!s.open && !['Approved','Pending Review'].includes(t.status) && s.reason ? `<div class="small-note" style="margin:0">${esc(s.reason)}</div>` : ''}</td>
+          <td>${statusBadge(t.status || 'Not Started')}</td><td>${esc(fmtDate(t.dueDate)||'—')}</td>
+          <td>${mineToDo(t) ? `<button class="btn sm primary" onclick="pobTaskAction('${esc(r.id)}','${esc(t.id)}','submit')">Submit for Review</button>` : ''}</td></tr>`;
+      }), 'Your tasks arrive with your role.')
+    + profTable('My Payouts — paid ' + money(sum(p=>p.status==='Paid')) + ' · to come ' + money(sum(p=>p.status!=='Paid')),
+        ['Period','Business','Rate','Gross','TDS','Net','Status','Paid on'], pays.map(p=>`<tr><td>${esc(p.period||'')}</td><td>${money(numVal(p.businessAmount))}</td>
+          <td>${esc(String(numVal(p.ratePct)))}%</td><td>${money(p.gross)}</td><td>${money(p.tds)}</td><td><b>${money(p.net)}</b></td><td>${statusBadge(p.status||'')}</td>
+          <td>${esc(p.paidOn ? fmtDate(p.paidOn) : '—')}</td></tr>`), 'No payouts yet. They show here once your RM calculates them.');
 }
 
 /* ---------- role confirmation and assignment ---------- */
@@ -52943,6 +53006,14 @@ async function pobAssignRole(r, role, reason){
   await pobRefreshTasks(r);
   await save('pjOnboarding');
   await logAudit('POB', r.id, from ? 'Role Changed' : 'Role Assigned', [{field:'role', oldValue: from, newValue: role + (reason ? ' — ' + reason : '')}]);
+  // A login whose level came from the role follows it; one set higher (L4–L6) by hand stays.
+  const m = pobMemberOf(r);
+  if(m && ['L1','L2','L3'].includes(m.partnerLevel) && m.partnerLevel !== PLV.levelForRole(role)){
+    plvApply(m, plvLevel(PLV.levelForRole(role)));
+    await save('team');
+    if(r.login) r.login.level = m.partnerLevel;
+    await save('pjOnboarding');
+  }
 }
 /* The workflow's tasks onto the partner. A task already approved under
    the same key is kept as it is; one still open from before is closed as
@@ -53051,7 +53122,8 @@ async function pobTaskAction(id, taskId, action){
   const r = pobRecords().find(x=>x.id===id);
   const t = r && (r.tasks||[]).find(x=>x.id===taskId);
   if(!t) return;
-  if(!can('POB','edit') && !((action==='approve' || action==='return') && pobMayReviewTask(r))){ alert('You do not have permission.'); return; }
+  const own = isPartnerMember() && me().partnerPobId===r.id && t.kind==='task' && ['submit','start','rework'].includes(action);
+  if(!can('POB','edit') && !own && !((action==='approve' || action==='return') && pobMayReviewTask(r))){ alert('You do not have permission.'); return; }
   const s = pobTaskState(r, t);
   let submitted = false, reviewed = '';
   if(action==='start'){
@@ -53121,7 +53193,7 @@ async function pobTellTaskReviewed(r, t, opened){
   const last = (t.reviews||[]).slice(-1)[0] || {};
   const ok = t.status==='Approved';
   const res = await pjMail('POB', r, 'pobTaskReviewed', {Task: t.title, Decision: ok ? 'Approved' : 'Changes Required',
-    Comments: last.comments ? 'Comments: ' + last.comments : '', Mentor: teamName(pobMentor(r)), PortalLink: location.origin + '/partner',
+    Comments: last.comments ? 'Comments: ' + last.comments : '', Mentor: teamName(pobMentor(r)), PortalLink: location.origin + '/',
     NextStep: ok ? ((opened||[]).length ? 'Now open for you: ' + opened.map(x=>x.title).join(', ') + '.' : 'Well done.')
       : 'Make the changes and submit it again.'}, 'Task review — ' + t.title);
   pjSaidMail(res, 'The letter to the partner');
@@ -53918,21 +53990,21 @@ function viewPOBDetail(id){
         + profCard('Status', [
           ['Stage', esc(stateLabel('POB', st))], ['Application', statusBadge(r.applicationStatus)], ['Payment', statusBadge(pobPaymentStatus(r))],
           ['Verification', r.applicationStatus==='Approved' ? '<span class="badge ok">Completed</span>' : esc(dv.approved + ' of ' + dv.total + ' documents approved')],
-          ['Login Account', r.login ? statusBadge(r.login.status) + ' ' + esc(r.login.userId) : 'Not created'],
-          ['Login Opens', esc(pobAccessSummary(r))],
+          ['BOSS Login', r.login ? statusBadge(r.login.status) + ' ' + esc(r.login.userId) + (r.login.boss ? '' : ' <span class="badge warn">old partner login — give a BOSS login</span>') : 'Not created'],
+          ['Level', pobMemberOf(r) ? esc(plvSummary(plvLevel(pobMemberOf(r).partnerLevel))) : esc(plvLevel(pobLevelOf(r)).k + ' · ' + plvLevel(pobLevelOf(r)).name + ' (when the login is given)')],
+          ['Reports to', pobMemberOf(r) ? esc(teamName(pobMemberOf(r).parentUserId)) : '—'],
           ['Operational', statusBadge(r.operationalStatus || 'Onboarding')],
           ['Role Clarity Session', rcs ? statusBadge(rcs.status) : (req.some(t=>t.kind==='session') ? 'Not scheduled' : '—')],
           ['Onboarding Tasks', esc(req.filter(t=>t.status==='Approved').length + ' of ' + req.length)],
           ['Outstanding Approvals', pendingApprovals.length ? esc(pendingApprovals.map(x=>x.what + ': ' + x.detail).join('; ')) : 'None'],
           ['Activated', esc(r.activatedAt ? fmtDate(r.activatedAt) : '')],
-        ], !r.login && can('POB','edit') && ['roleMeeting','roleWorkflow','readiness','active'].includes(st) ? `<div class="row" style="gap:6px;margin-top:8px">
-          <button class="btn sm" onclick="pobOpenLoginModal('POB','${esc(id)}','')">Create Partner Login</button></div>`
-        : r.login && pobMayApprove() ? `<div class="row" style="gap:6px;margin-top:8px">
-          <button class="btn sm" onclick="pobOpenAccessModal('${esc(id)}')">Login Access</button>
+        ], (!r.login || !r.login.boss) && can('POB','edit') && ['roleMeeting','roleWorkflow','readiness','active'].includes(st) ? `<div class="row" style="gap:6px;margin-top:8px">
+          <button class="btn sm" onclick="pobOpenLoginModal('POB','${esc(id)}','')">Give BOSS Login</button></div>`
+        : r.login && r.login.boss && pobMayApprove() ? `<div class="row" style="gap:6px;margin-top:8px">
+          <button class="btn sm" onclick="pobOpenLoginModal('POB','${esc(id)}','')">Level &amp; Reporting</button>
+          ${pobMemberOf(r) ? `<button class="btn sm ghost" onclick="navigate('teammembers','${esc(pobMemberOf(r).id)}')">Team Profile &amp; Password</button>` : ''}
           ${r.login.status!=='Activated' ? `<button class="btn sm" onclick="pobSetLoginStatus('${esc(id)}','Activated')">Activate Account</button>` : ''}
-          ${r.login.status!=='Suspended' ? `<button class="btn sm ghost" onclick="pobSetLoginStatus('${esc(id)}','Suspended')">Suspend Account</button>` : ''}
-          <button class="btn sm ghost" onclick="pobResendLogin('${esc(id)}')">Send a New Password Link</button>
-          <button class="btn sm ghost" onclick="pobOpenSetPassword('${esc(id)}')">Set Password</button></div>` : '')
+          ${r.login.status!=='Suspended' ? `<button class="btn sm ghost" onclick="pobSetLoginStatus('${esc(id)}','Suspended')">Suspend Account</button>` : ''}</div>` : '')
         + profTable('Pending & Due', ['Task','Status','Owner','Due'], pobLiveTasks(r).filter(t=>!['Approved','Cancelled'].includes(t.status) && pobTaskState(r, t).open)
             .map(t=>`<tr><td>${esc(t.title)}</td><td>${statusBadge(t.status)}${pobTaskState(r, t).overdue ? ' <span class="badge danger">Overdue</span>' : ''}</td>
               <td>${esc(pobTaskOwner(r, t))}</td><td>${esc(fmtDate(t.dueDate)||'—')}</td></tr>`), r.role ? 'Nothing open right now.' : 'Tasks arrive with the role.');
@@ -74798,7 +74870,7 @@ const SETTINGS_CATEGORIES = [
     ['cfg_business','Business & Transactions','manageWorkflows','tab','Products, transaction types and the daily business tracker.'],
     ['cfg_alloc','Asset Allocation','manageWorkflows','tab','How an allocation is prepared, consented to and completed.'],
     ['cfg_projects','Projects Tracker','manageWorkflows','tab','Project types, statuses and their checklists.'],
-    ['partnerlogin','Partner Login Access','manageWorkflows','tab','What a partner opens in their own Freedom LifeX login — dashboard, client journey, clients, performance, payouts — by role.'],
+    ['partnerlevels','Partner Levels','manageWorkflows','tab','What an active partner opens in BOSS, L1 Ninja to L6 Zen Monks — the modules and whose records they see.'],
     ['partnertargets','Partner Targets','manageWorkflows','tab','What a Ninja, Super Ninja and Sherpa is expected to achieve each month, measured from the partner onboarding workflow.'],
     ['cfg_campaign','Marketing','manageWorkflows','tab','Campaign types, audiences, opt-out and the sending rules.'],
   ]},
@@ -74894,7 +74966,7 @@ const SETTINGS_CATEGORIES = [
    be their own route are the same function, called from here. */
 const SETTINGS_TAB_VIEWS = {
   partnertargets: ()=>renderSettingsPartnerTargets(),
-  partnerlogin: ()=>renderSettingsPartnerLogin(),
+  partnerlevels: ()=>renderSettingsPartnerLevels(),
   hrsettings: ()=>renderSettingsHr(),
   hrsources: ()=>renderSettingsHrSources(),
   incentivegrid: ()=>renderSettingsIncentiveGrid(),
@@ -80748,7 +80820,8 @@ function hrMaySeeUser(userId){ return userId === currentUser || hrIsStaff(); }
 /* The people an HR screen may list. Reuses the team records that
    already exist — HR creates no accounts of its own. */
 function hrPeople(){
-  const all = (DB.team || []).filter(t=>t && isMemberActive(t));
+  // Partners are not on the payroll: HR lists the firm's own people.
+  const all = (DB.team || []).filter(t=>t && isMemberActive(t) && !t.partnerPobId);
   return hrIsStaff() ? all : all.filter(t=>t.id === currentUser);
 }
 
