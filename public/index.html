@@ -51383,7 +51383,7 @@ async function pjSavePayout(id){
 const PTX = window.PartnerTargets;
 const PT_METRICS = PTX.METRICS, PT_DEFAULTS = PTX.DEFAULTS, PT_NO_ROLE = PTX.NO_ROLE, PT_STATUS = PTX.STATUS, PT_MON = PTX.MON;
 const ptRoleKeys = PTX.roleKeys, ptRoleOf = PTX.roleOf, ptMonthKey = PTX.monthKey, ptShiftMonth = PTX.shiftMonth, ptMonLabel = PTX.monLabel, ptNum = PTX.num;
-const ptRoleLabel = r => r.role || (r.partnerType ? r.partnerType + ' · no role yet' : PT_NO_ROLE);
+const ptRoleLabel = r => r.role || (pobMemberOf(r) ? plvLevel(pobLevelOf(r)).name + ' · no role yet' : PT_NO_ROLE);
 const ptSum = PTX.sum, ptOverall = PTX.overall, ptStatus = PTX.status, ptStartMonth = PTX.startMonth;
 let ptCfgMemo = null, ptCfgSrc;
 function ptConfig(){
@@ -52108,77 +52108,104 @@ function pobOpenStartPicker(){
 }
 
 /* ---------- partners who were active before BOSS ----------
-   The firm's FBMs and FBPs finished onboarding in the old system, so they
-   come in as they are: a PMS record at Onboarded and an onboarding record
-   at Active Partner, with no letters, no payment due and no tasks. The
-   two sheets are the old system's own exports. An FBP names its FBM by
-   that system's Record Id, so the FBM sheet goes in first (or in the
-   same go), and a sheet imported twice updates rather than doubles:
-   a row is matched on its Record Id, then on the mobile number. */
+   Partners who finished onboarding before BOSS come in as they are: a PMS
+   record at Onboarded and an onboarding record at Active Partner, with no
+   letters, no payment due and no tasks. The sheet is the payout team's
+   (Full Name … Mapped Clients), so the same row also gives the partner a
+   BOSS login at their level, reporting to the person named in Reports To,
+   puts them on the payout team, and maps the clients they handle. A sheet
+   imported twice updates rather than doubles: a row is matched on its
+   Access Email, then on its Employee / ARN Code. */
 const POB_IMPORT_COLS = {
-  recordId: ['record id'], fbmName: ['fbm name'], fbpName: ['fbp name'], mobile: ['mobile no', 'mobile', 'mobile number'],
-  email: ['email', 'email id'], arn: ['arn no', 'arn'], euin: ['euin no', 'euin'], pan: ['pan card no', 'pan', 'pan no'],
-  ownerId: ['fbm owner.id', 'fbm owner id', 'owner.id'], owner: ['fbm owner', 'owner', 'rm'],
-  fbmId: ['fbm.id', 'fbm id'], fbm: ['fbm'], renewalDate: ['renewal date'], modified: ['modified time'],
+  name: ['full name', 'name', 'partner name'], email: ['access email', 'email (boss login)', 'email', 'email id', 'login email'],
+  code: ['employee/arn code', 'employee / arn code', 'arn code', 'employee code', 'code', 'arn'], level: ['level', 'primary level'],
+  parent: ['reports to', 'manager', 'reporting manager'], role: ['role', 'payout role', 'business role'], sharing: ['sharing %', 'sharing', 'sharing pct'],
+  extra: ['additional levels', 'extra levels'], gst: ['gstin', 'gst', 'gst number'], pan: ['pan', 'pan no', 'pan card no'],
+  holder: ['account holder', 'bank account holder'], bankName: ['bank name', 'bank'], branch: ['branch', 'bank branch'],
+  account: ['account number', 'account no'], ifsc: ['ifsc', 'ifsc code'], street: ['street', 'address'], city: ['city'], state: ['state'],
+  pincode: ['pincode', 'pin code'], clients: ['mapped clients', 'clients'], mobile: ['mobile', 'mobile no', 'mobile number', 'phone'],
 };
+const POB_IMPORT_HEADERS = ['Full Name','Access Email','Employee/ARN Code','Level','Reports To','Role','Sharing %','Additional Levels','GSTIN','PAN',
+  'Account Holder','Bank Name','Branch','Account Number','IFSC','Street','City','State','Pincode','Mapped Clients'];
 function pobImportKey(h){ return String(h||'').trim().toLowerCase().replace(/\s+/g, ' '); }
 function pobImportTable(t){
   const at = {};
   t.headers.forEach((h, i)=>{ const k = pobImportKey(h);
     Object.entries(POB_IMPORT_COLS).forEach(([f, names])=>{ if(at[f]===undefined && names.includes(k)) at[f] = i; }); });
-  const type = at.fbmName!==undefined ? 'FBM' : at.fbpName!==undefined ? 'FBP' : '';
-  if(!type) return null;
+  if(at.name===undefined || at.email===undefined) return null;
   const cell = (row, f) => at[f]===undefined ? '' : String(row[at[f]]==null ? '' : row[at[f]]).trim();
   return t.rows.map(row=>{
-    const o = {type}; Object.keys(POB_IMPORT_COLS).forEach(f=>{ o[f] = cell(row, f); });
-    o.name = type==='FBM' ? o.fbmName : o.fbpName;
+    const o = {}; Object.keys(POB_IMPORT_COLS).forEach(f=>{ o[f] = cell(row, f); });
+    o.email = o.email.toLowerCase();
     return o;
-  }).filter(o=>o.name || o.mobile || o.recordId);
+  }).filter(o=>o.name || o.email);
 }
-function pobImportTeamId(name){
-  const n = pobImportKey(name);
-  if(!n) return '';
-  const t = DB.team.find(x=>pobImportKey(x.name)===n) || DB.team.find(x=>pobImportKey(x.email)===n);
-  return t ? t.id : '';
+function pobImportTemplate(){
+  const rows = [POB_IMPORT_HEADERS,
+    ['Kavya Rao','kavya@example.com','ARN-270604','L3','ravi@freedomlifex.com','Partner',75,'','27ABCDE1234F1Z5','ABCDE1234F','Kavya Rao','HDFC Bank','Andheri','50100012345678','HDFC0001234','12 MG Road','Mumbai','Maharashtra','400001','Asha Mehta; BQHPM1234K'],
+    ['Nikhil Jain','nikhil@example.com','EMP-021','L1','kavya@example.com','Partner',25,'','','','','','','','','','Pune','Maharashtra','',''],
+  ];
+  const csv = rows.map(r=>r.map(v=>{ v = String(v==null?'':v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v; }).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+  a.download = 'Active_Partners_Import_Template.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
+/* "L3", "3" or "Sherpa"; a business role names its level too. */
+function pobImportLevel(v, role){
+  const t = pobImportKey(v);
+  if(t){
+    const n = Number(t.replace(/[^\d]/g, ''));
+    if(/\d/.test(t)) return n >= 1 && n <= 6 ? 'L' + n : null;
+    const lv = PLV.LEVELS.find(x=>pobImportKey(x.name)===t);
+    return lv ? lv.k : null;
+  }
+  const byRole = POB_ROLES.find(x=>pobImportKey(x)===pobImportKey(role));
+  return byRole ? PLV.levelForRole(byRole) : 'L1';
+}
+function pobImportFindPob(x){
+  const recs = pobLive();
+  const byMember = x.email && DB.team.find(t=>!t.deletedAt && t.partnerPobId && String(t.email||'').toLowerCase()===x.email);
+  return (byMember && recs.find(r=>r.id===byMember.partnerPobId))
+    || (x.email && recs.find(r=>String(r.email||'').toLowerCase()===x.email))
+    || (x.code && recs.find(r=>pobImportKey(r.arnCode||'')===pobImportKey(x.code)))
+    || null;
 }
 function pobImportPlan(rows){
-  const recs = pobRecords(), parts = pjPartners();
-  const fbmOwner = {};
-  rows.filter(x=>x.type==='FBM').forEach(x=>{ fbmOwner[x.recordId] = pobImportTeamId(x.owner); });
-  // The FBMs first, so an FBP in the same go can find its FBM.
-  return rows.slice().sort((a,b)=>(a.type==='FBM'?0:1)-(b.type==='FBM'?0:1)).map(x=>{
-    const mobile = String(x.mobile||'').replace(/\D/g, '').slice(-10);
-    const problems = [];
+  const byEmail = {}; rows.forEach(x=>{ if(x.email) byEmail[x.email] = x; });
+  const seen = {};
+  return rows.map(x=>{
+    const problems = [], warn = [];
     if(!x.name) problems.push('no name');
-    if(mobile && !/^[6-9]\d{9}$/.test(mobile)) problems.push('mobile "' + x.mobile + '" is not 10 digits');
-    if(!mobile) problems.push('no mobile');
-    if(x.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x.email)) problems.push('email "' + x.email + '" does not look right');
-    const pob = (x.recordId && recs.find(r=>!r.deletedAt && r.legacyId===x.recordId))
-      || (mobile && recs.find(r=>!r.deletedAt && r.mobile===mobile));
-    let rm = '';
-    if(x.type==='FBM') rm = pobImportTeamId(x.owner);
-    else {
-      const parent = recs.find(r=>!r.deletedAt && r.legacyId && r.legacyId===x.fbmId);
-      rm = fbmOwner[x.fbmId] || (parent && parent.assignedTo) || '';
-    }
-    const warn = [];
-    if(x.type==='FBM' && x.owner && !rm) warn.push('no team member called "' + x.owner + '" — you will own it');
-    if(x.type==='FBP' && x.fbmId && !rows.some(y=>y.type==='FBM' && y.recordId===x.fbmId) && !recs.some(r=>r.legacyId===x.fbmId))
-      warn.push('its FBM (' + (x.fbm || x.fbmId) + ') is not in BOSS yet — import the FBM sheet too');
-    const renewal = x.renewalDate ? impDate(x.renewalDate) : '';
-    if(renewal===null) warn.push('renewal date "' + x.renewalDate + '" not understood');
-    return {x, mobile, pob, partner: pob ? parts.find(p=>p.id===pob.partnerId) : (mobile && parts.find(p=>!p.deletedAt && p.mobile===mobile)),
-      rm, renewal: renewal || '', problems, warn, skip: problems.some(p=>p==='no name')};
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x.email)) problems.push('access email "' + x.email + '" is not usable');
+    if(seen[x.email]) problems.push('this email is on the sheet twice'); seen[x.email] = 1;
+    const level = pobImportLevel(x.level, x.role);
+    if(!level) problems.push('level "' + x.level + '" is not L1–L6 (L7 is the company)');
+    const role = pobImportKey(x.role);
+    const bizRole = POB_ROLES.find(r=>pobImportKey(r)===role) || '';
+    const payRole = {'partner':'partner', 'mentor':'mentor', 'ops':'ops', 'ops / rm':'ops', 'rm':'ops'}[role] || '';
+    if(role === 'admin') problems.push('a partner cannot be imported as an admin');
+    else if(x.role && !bizRole && !payRole) warn.push('role "' + x.role + '" not understood — left as Partner');
+    const pob = pobImportFindPob(x);
+    const staff = DB.team.find(t=>t.id!==(pob && (pobMemberOf(pob)||{}).id) && !t.deletedAt && x.parent
+      && (String(t.email||'').toLowerCase()===pobImportKey(x.parent) || pobImportKey(t.name)===pobImportKey(x.parent)));
+    const upRow = x.parent && (byEmail[pobImportKey(x.parent)] || rows.find(y=>y!==x && pobImportKey(y.name)===pobImportKey(x.parent)));
+    if(upRow === x || (x.parent && pobImportKey(x.parent)===x.email)) problems.push('reports to themselves');
+    if(x.parent && !staff && !upRow) warn.push('reports to "' + x.parent + '" — nobody by that name or email; they report to you');
+    const mobile = String(x.mobile||'').replace(/\D/g, '').slice(-10);
+    if(mobile && !/^[6-9]\d{9}$/.test(mobile)) warn.push('mobile "' + x.mobile + '" is not 10 digits — left out');
+    const clients = String(x.clients||'').split(/[,;|\n]+/).map(v=>v.trim()).filter(Boolean);
+    return {x, level, bizRole, payRole, pob, staff: staff || null, upRow: upRow && upRow !== x ? upRow : null, mobile: /^[6-9]\d{9}$/.test(mobile) ? mobile : '',
+      clients, problems, warn, skip: problems.length > 0};
   });
 }
 function pobOpenImportActive(){
   if(!can('POB','create')){ alert('You do not have permission.'); return; }
   window._pobImport = null;
-  openModal('Import Active Partners (FBM / FBP)', `<p class="small-note" style="margin-top:0">For partners who finished onboarding before BOSS.
-    They come in as <b>Active Partners</b>: no letters, no payment due, no onboarding tasks. Use the two exports as they are —
-    the FBM sheet (<i>Record Id, FBM Name, Mobile No, Email, ARN No, EUIN No, FBM Owner.id, FBM Owner, Modified Time</i>) and the FBP sheet
-    (<i>Record Id, FBP Name, Renewal Date, FBM.id, FBM, Mobile No, Email, ARN No, EUIN No, Pan Card No, Modified Time</i>). Choose both together, or the FBM sheet first.
-    The FBM Owner is matched to a team member by name and becomes the RM; an FBP gets its FBM’s RM. Importing a sheet again updates the same partners.</p>
+  openModal('Import Active Partners', `<p class="small-note" style="margin-top:0">For partners who finished onboarding before BOSS. They come in as <b>Active Partners</b>: no letters, no payment due, no onboarding tasks.
+    Each one also gets a <b>BOSS login at their level</b> (emailed their password), a place on the <b>payout team</b>, and the clients named in Mapped Clients.</p>
+    <p class="small-note">Columns: <i>${POB_IMPORT_HEADERS.map(esc).join(', ')}</i>. <b>Level</b> is L1–L6 (or Ninja … Zen Monks); <b>Reports To</b> is the email or name of a team member or of another partner on the sheet;
+      <b>Mapped Clients</b> lists the clients' names or PANs, separated by “;”. Importing the sheet again updates the same partners (matched on Access Email).
+      <a href="javascript:void(0)" onclick="pobImportTemplate()">Download the template</a>.</p>
     <input type="file" id="pobImpFile" multiple accept=".csv,.xls,.xlsx,.txt,.tsv" onchange="pobImportRead(this)">
     <div id="pobImpPreview" style="margin-top:12px"></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" id="pobImpGo" disabled onclick="pobImportApply()">Import</button>`);
@@ -52191,20 +52218,20 @@ async function pobImportRead(input){
       const read = await impReadAllSheets(file);
       let got = 0;
       read.tables.forEach(t=>{ const r = pobImportTable(t); if(r){ rows.push(...r); got += r.length; } });
-      notes.push(file.name + ': ' + (got ? got + ' row(s)' : 'no FBM Name or FBP Name column found'));
+      notes.push(file.name + ': ' + (got ? got + ' row(s)' : 'no Full Name and Access Email columns found — start from the template'));
     }catch(e){ notes.push(file.name + ': ' + e.message); }
   }
   const plan = pobImportPlan(rows);
   window._pobImport = plan;
   const go = plan.filter(p=>!p.skip);
-  const n = (type, isNew) => go.filter(p=>p.x.type===type && !p.pob===isNew).length;
+  const upName = p => p.staff ? p.staff.name : p.upRow ? p.upRow.name : 'You';
   box.innerHTML = `<div class="small-note">${notes.map(esc).join('<br>')}</div>
-    <p style="margin:8px 0"><b>${go.length}</b> to import — FBM ${n('FBM', true)} new, ${n('FBM', false)} updated · FBP ${n('FBP', true)} new, ${n('FBP', false)} updated${plan.length - go.length ? ' · <b>' + (plan.length - go.length) + '</b> skipped (no name)' : ''}.</p>
-    <div class="table-wrap" style="max-height:320px;overflow:auto"><table id="pobImpTable"><thead><tr><th>Type</th><th>Name</th><th>Mobile</th><th>ARN / EUIN</th><th>RM</th><th></th><th>Check</th></tr></thead><tbody>
-    ${plan.map(p=>`<tr><td>${esc(p.x.type)}</td><td>${esc(p.x.name||'—')}${p.x.type==='FBP' && p.x.fbm ? '<div class="small-note" style="margin:0">FBM: ' + esc(p.x.fbm) + '</div>' : ''}</td>
-      <td>${esc(p.mobile||'—')}</td><td>${esc([p.x.arn, p.x.euin].filter(Boolean).join(' / ')||'—')}</td><td>${esc(p.rm ? teamName(p.rm) : 'You')}</td>
+    <p style="margin:8px 0"><b>${go.length}</b> to import — ${go.filter(p=>!p.pob).length} new, ${go.filter(p=>p.pob).length} updated${plan.length - go.length ? ' · <b>' + (plan.length - go.length) + '</b> skipped' : ''}.</p>
+    <div class="table-wrap" style="max-height:320px;overflow:auto"><table id="pobImpTable"><thead><tr><th>Partner</th><th>Level</th><th>Reports to</th><th>Clients</th><th></th><th>Check</th></tr></thead><tbody>
+    ${plan.map(p=>`<tr><td><b>${esc(p.x.name||'—')}</b><div class="small-note" style="margin:0">${esc(p.x.email)}${p.x.code ? ' · ' + esc(p.x.code) : ''}</div></td>
+      <td>${esc(p.level ? p.level + ' · ' + plvLevel(p.level).name : p.x.level)}</td><td>${esc(upName(p))}</td><td>${p.clients.length}</td>
       <td>${p.skip ? '<span class="badge danger">Skipped</span>' : p.pob ? '<span class="badge info">Update</span>' : '<span class="badge ok">New</span>'}</td>
-      <td class="small-note">${esc(p.problems.concat(p.warn).join('; '))}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">Nothing to import.</td></tr>'}
+      <td class="small-note">${esc(p.problems.concat(p.warn).join('; '))}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Nothing to import.</td></tr>'}
     </tbody></table></div>`;
   const btn = document.getElementById('pobImpGo');
   if(btn){ btn.disabled = !go.length; btn.textContent = 'Import ' + go.length + ' Partner' + (go.length===1?'':'s'); }
@@ -52212,34 +52239,34 @@ async function pobImportRead(input){
 async function pobImportApply(){
   const plan = (window._pobImport || []).filter(p=>!p.skip);
   if(!plan.length) return;
+  const btn = document.getElementById('pobImpGo'); if(btn){ btn.disabled = true; btn.textContent = 'Importing…'; }
   const now = new Date().toISOString(), today = pobToday();
-  const byLegacy = {};
+  const batch = uid('IMP');
   let added = 0, updated = 0;
+  const failed = [];
   for(const p of plan){
     const x = p.x;
     const parts = String(x.name).trim().split(/\s+/);
     const first = parts.shift() || '', last = parts.join(' ');
-    const rm = p.rm || (p.pob && p.pob.assignedTo) || currentUser;
-    const common = {firstName: first, lastName: last, email: x.email || '', partnerType: x.type, legacyId: x.recordId || ''};
+    const rm = (p.staff && p.staff.id) || (p.pob && p.pob.assignedTo) || currentUser;
+    const common = {firstName: first, lastName: last, email: x.email};
     if(p.mobile) common.mobile = p.mobile;
-    // The partner in PMS, at the end of its road.
-    let partner = p.partner;
+    let r = p.pob;
+    let partner = r ? pjPartners().find(q=>q.id===r.partnerId) : null;
     if(!partner){
-      partner = {id: uid('PMS'), createdAt: now, createdBy: currentUser, leadOwner: 'Freedom LifeX', source: 'Import', importedAt: now};
+      partner = {id: uid('PMS'), createdAt: now, createdBy: currentUser, leadOwner: 'Freedom LifeX', source: 'Import', importedAt: now, importBatch: batch};
       initState('PMS', partner);
       partner.pmsStage = 'onboarded';
       partner.blueprintHistory = [{state: 'onboarded', at: now, by: currentUser, via: 'Imported — onboarded before BOSS'}];
       pjPartners().push(partner);
     }
-    Object.assign(partner, common, {assignedTo: rm, arn: x.arn || partner.arn || '', euin: x.euin || partner.euin || ''});
-    partner.arnHolder = partner.arn ? 'Yes' : (partner.arnHolder || 'No');
-    // And its onboarding record, already active.
-    let r = p.pob || pobFor(partner.id);
+    Object.assign(partner, common, {assignedTo: rm});
+    if(/^ARN/i.test(x.code)){ partner.arn = x.code.toUpperCase(); partner.arnHolder = 'Yes'; }
     if(!r){
       r = {id: uid('POB'), partnerId: partner.id, createdAt: now, createdBy: currentUser,
         partnerCode: pobNextSeq('FLX-P-', 'partnerCode'), applicationId: pobNextSeq('APP-' + new Date().getFullYear() + '-', 'applicationId'),
         registrationDate: today, applicationStatus: 'Approved', payments: [], attempts: [], tasks: [], roleHistory: [],
-        metrics: {leads:0, conversions:0, clients:0}, operationalStatus: 'Active', imported: true, importedAt: now, activatedAt: now};
+        metrics: {leads:0, conversions:0, clients:0}, operationalStatus: 'Active', imported: true, importedAt: now, importBatch: batch, activatedAt: now};
       initState('POB', r);
       r.pobStage = 'active';
       r.blueprintHistory = [{state: 'active', at: now, by: currentUser, via: 'Imported — active before BOSS'}];
@@ -52247,25 +52274,87 @@ async function pobImportApply(){
       partner.onboardingId = r.id;
       added++;
     } else updated++;
-    Object.assign(r, common, {assignedTo: rm, arn: partner.arn, euin: partner.euin, updatedAt: now});
+    Object.assign(r, common, {assignedTo: rm, updatedAt: now});
+    if(x.code) r.arnCode = x.code;
+    if(partner.arn) r.arn = partner.arn;
     if(x.pan) r.pan = String(x.pan).toUpperCase();
-    if(p.renewal) r.renewalDate = p.renewal;
-    if(x.modified) r.legacyModified = x.modified;
-    if(x.type==='FBP'){ r.fbmLegacyId = x.fbmId || ''; r.fbmName = x.fbm || ''; }
-    if(x.recordId) byLegacy[x.recordId] = r;
+    if(p.bizRole) r.role = p.bizRole;
+    const bank = {}, address = {};
+    [['holder','holder'],['bankName','bankName'],['account','account'],['ifsc','ifsc'],['branch','branch']].forEach(([k, f])=>{ if(x[k]) bank[f] = k==='ifsc' ? x[k].toUpperCase() : x[k]; });
+    ['street','city','state','pincode'].forEach(k=>{ if(x[k]) address[k] = x[k]; });
+    const lvn = Number(String(p.level).replace(/\D/g,''));
+    r.payout = Object.assign({}, r.payout, {code: x.code || (r.payout||{}).code || '', gst: x.gst ? x.gst.toUpperCase() : (r.payout||{}).gst || '',
+      bank: Object.assign({}, (r.payout||{}).bank, bank), address: Object.assign({}, (r.payout||{}).address, address), clients: p.clients});
+    if(x.sharing !== '') r.payout.sharing = Number(String(x.sharing).replace('%','')) || 0;
+    if(x.extra) r.payout.extraLevels = String(x.extra).split(/[,;/ ]+/).map(v=>Number(String(v).replace(/\D/g,''))).filter(n=>n>=1 && n<=7 && n!==lvn);
+    if(p.payRole) r.payout.role = p.payRole;
+    p._r = r;
+    // The login, at its level; who it reports to is set once everybody exists.
+    const res = await pobGiveLogin(r, {email: x.email, level: p.level, up: rm, noSave: true, noAccount: true, noPayout: true});
+    if(res.error){ failed.push(x.name + ': ' + res.error); continue; }
+    p._m = res.member;
   }
-  // An FBP points at its FBM's record, wherever that FBM came from.
-  pobRecords().forEach(r=>{
-    if(r.partnerType!=='FBP' || !r.fbmLegacyId) return;
-    const fbm = byLegacy[r.fbmLegacyId] || pobRecords().find(y=>!y.deletedAt && y.legacyId===r.fbmLegacyId && y.partnerType==='FBM');
-    if(fbm){ r.fbmPobId = fbm.id; r.fbmName = pjName(fbm); }
+  // Reports To: a team member, or another partner on this sheet.
+  plan.forEach(p=>{
+    if(!p._m) return;
+    const up = p.staff ? p.staff : p.upRow ? (plan.find(q=>q.x===p.upRow)||{})._m : null;
+    if(up && up.id !== p._m.id){ p._m.parentUserId = up.id; setUserManagers(p._m, [up.id]); }
+    if(!p.staff && p.upRow){ const upR = (plan.find(q=>q.x===p.upRow)||{})._r; if(upR){ p._r.assignedTo = upR.assignedTo; pjPartners().filter(q=>q.id===p._r.partnerId).forEach(q=>{ q.assignedTo = upR.assignedTo; }); } }
   });
+  await save('team');
   await save('pjPartners');
   await save('pjOnboarding');
-  await logAudit('POB', 'import', 'Import', [{field: 'active partners', oldValue: '', newValue: added + ' added, ' + updated + ' updated'}]);
+  // Sign-in accounts, each emailed their password.
+  let accounts = 0, mailed = 0;
+  for(const p of plan){
+    if(!p._m) continue;
+    const a = await provisionMemberAccount(p._m);
+    if(a && a.created){ accounts++; if(a.mail && a.mail.sent) mailed++; }
+    else if(a && a.ok === false && !a.skipped) failed.push(p.x.name + ' (sign-in): ' + (a.message || ''));
+  }
+  // The payout team, then the clients they handle.
+  const done = plan.filter(p=>p._m).map(p=>p._r);
+  const pay = await pobSyncPayout(done);
+  failed.push(...pay.failed);
+  const mapped = await pobImportMapClients(plan.filter(p=>p._m && p.clients.length), failed);
+  await save('pjOnboarding');
+  await save('clients');
+  await logAudit('POB', 'import', 'Import', [{field: 'active partners', oldValue: '', newValue: added + ' added, ' + updated + ' updated · batch ' + batch}]);
   closeModal();
-  alert('Imported: ' + added + ' new active partner(s), ' + updated + ' updated.');
+  alert('Imported: ' + added + ' new active partner(s), ' + updated + ' updated.\n'
+    + accounts + ' BOSS sign-in account(s) created' + (accounts ? ', ' + mailed + ' emailed their password' : '') + (pay.skipped ? '' : '; payout team: ' + pay.added + ' added, ' + pay.updated + ' updated') + '.\n'
+    + mapped.payout + ' payout client mapping(s), ' + mapped.boss + ' BOSS client(s) marked as theirs.'
+    + (pay.skipped ? '\nOnly an admin can add people to the payout team — ask one to press Sync from Partner Journey in Payouts.' : '')
+    + (failed.length ? '\n\nNot done:\n' + failed.join('\n') : ''));
   window._pobTab = 'partners'; navigate('pob');
+}
+/* Mapped Clients: each name or PAN found on the payout side is mapped to the
+   partner, so the levels above them follow from their reporting line; a BOSS
+   client of the same name or PAN carries the partner's mark. */
+async function pobImportMapClients(plan, failed){
+  const out = {payout: 0, boss: 0};
+  if(!plan.length) return out;
+  let list = [];
+  if(isAdmin() && typeof pyGet === 'function'){
+    try { list = (await pyGet('/clients?all=1')).rows || []; } catch(e){ failed.push('payout clients: ' + e.message); }
+  }
+  const isPan = v => /^[A-Z]{5}\d{4}[A-Z]$/.test(String(v).toUpperCase());
+  const same = (a, b) => pobImportKey(a) === pobImportKey(b);
+  for(const p of plan){
+    for(const want of p.clients){
+      const pan = isPan(want) ? want.toUpperCase() : '';
+      const c = list.find(c=>pan ? String(c.pan||'').toUpperCase()===pan : same(c.name, want));
+      if(c && p._r.payoutUserId){
+        try { await pyPut('/clients/' + c.id + '/map', {rmId: p._r.payoutUserId}); out.payout++; }
+        catch(e){ failed.push(p.x.name + ' → ' + want + ': ' + e.message); }
+      }
+      const b = (DB.clients||[]).find(c=>!c.deletedAt && (pan ? String(c.pan||'').toUpperCase()===pan : same(c.cmsName || [c.firstName, c.lastName].filter(Boolean).join(' '), want)));
+      if(b && (!b.partnerPobId || b.partnerPobId===p._r.id)){ b.partnerPobId = p._r.id; b.partnerCode = p._r.partnerCode || ''; out.boss++; }
+      if(!c && !b) failed.push(p.x.name + ' → client "' + want + '" is not in BOSS or Payouts yet');
+    }
+  }
+  if(typeof pyInvalidate === 'function') pyInvalidate();
+  return out;
 }
 
 /* ---------- payments ----------
@@ -52807,12 +52896,36 @@ async function pobSaveLogin(id, tid){
   const f = [{k:'lgUser', l:'Login ID', req:1, vk:'email'}];
   const d = readFields(f);
   if(!validateRequired(f, d)) return;
-  const email = String(d.lgUser).trim();
   const lv = plvLevel((document.getElementById('lgLevel')||{}).value);
   const up = (document.getElementById('lgUp')||{}).value || pobReportsTo(r);
+  const res = await pobGiveLogin(r, {email: String(d.lgUser).trim(), level: lv.k, up});
+  if(res.error){ alert(res.error); return; }
+  const account = res.account;
+  closeModal();
+  if(tid) await doTransition('POB', id, tid);
+  else { await save('pjOnboarding'); await logAudit('POB', id, res.was ? 'BOSS Login Changed' : 'BOSS Login Created', [{field:'login', oldValue: res.was, newValue: res.member.email + ' · ' + plvSummary(lv)}]); render(); }
+  if(account && account.created){
+    const mailed = account.mail && account.mail.sent;
+    alert('BOSS login created for ' + pjName(r) + ' (' + lv.name + ', ' + lv.k + ').\n\n'
+      + (mailed ? 'Their password has been emailed to ' + res.member.email + '.' : 'The password could NOT be emailed — ' + ((account.mail||{}).note || 'no mail connector') + '.')
+      + '\n\nIt is on their team profile until they sign in at ' + location.origin + '/login.');
+  } else if(account && account.skipped === 'not-admin'){
+    alert(pjName(r) + ' is set up, but only an admin can create the account they sign in with. Ask one to open their team profile.');
+  } else if(account && account.ok === false && !account.skipped){
+    alert('The partner is set up, but their sign-in account is not in step: ' + (account.message || ''));
+  }
+}
+/* The login itself, for the modal and for the import alike: the team
+   member at its level and reporting line, its sign-in account, and its
+   place on the payout team. The record is changed, not saved. */
+async function pobGiveLogin(r, o){
+  const email = String(o.email||'').trim();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return {error: 'The login ID has to be an email address.'};
+  const lv = plvLevel(o.level);
+  const up = o.up || pobReportsTo(r);
   let m = pobMemberOf(r);
-  const dup = DB.team.find(t=>t !== m && t.email && t.email.toLowerCase()===email.toLowerCase());
-  if(dup){ alert('The login ID ' + email + ' already belongs to ' + dup.name + '.'); return; }
+  const dup = DB.team.find(t=>t !== m && !t.deletedAt && t.email && t.email.toLowerCase()===email.toLowerCase());
+  if(dup) return {error: 'The login ID ' + email + ' already belongs to ' + dup.name + '.'};
   await plvEnsureRoles();
   const at = new Date().toISOString(), was = m ? plvSummary(plvLevel(m.partnerLevel)) : '';
   if(!m){
@@ -52823,29 +52936,74 @@ async function pobSaveLogin(id, tid){
     DB.team.push(m);
     setUserManagers(m, [up]);
   } else {
-    m.email = email; m.parentUserId = up; setUserManagers(m, [up]);
+    m.email = email; m.name = pjName(r); m.parentUserId = up; setUserManagers(m, [up]);
     plvApply(m, lv);
   }
-  await save('team');
+  if(!o.noSave) await save('team');
   await logAudit('Team', m.id, was ? 'Partner Level Changed' : 'Profile Created', [{field:'Partner', oldValue: was, newValue: plvSummary(lv)}]);
-  const account = await provisionMemberAccount(m);
+  const account = o.noAccount ? null : await provisionMemberAccount(m);
   r.login = Object.assign({}, r.login, {userId: email, memberId: m.id, level: lv.k, boss: true,
     status: (r.login && r.login.status) || 'Created', createdAt: (r.login && r.login.createdAt) || at, createdBy: (r.login && r.login.createdBy) || currentUser,
     history: ((r.login||{}).history||[]).concat([{at, by: currentUser, status: (r.login && r.login.status) || 'Created', note: plvSummary(lv)}])});
   delete r.portalAccess;
-  closeModal();
-  if(tid) await doTransition('POB', id, tid);
-  else { await save('pjOnboarding'); await logAudit('POB', id, was ? 'BOSS Login Changed' : 'BOSS Login Created', [{field:'login', oldValue: was, newValue: email + ' · ' + plvSummary(lv)}]); render(); }
-  if(account && account.created){
-    const mailed = account.mail && account.mail.sent;
-    alert('BOSS login created for ' + pjName(r) + ' (' + lv.name + ', ' + lv.k + ').\n\n'
-      + (mailed ? 'Their password has been emailed to ' + email + '.' : 'The password could NOT be emailed — ' + ((account.mail||{}).note || 'no mail connector') + '.')
-      + '\n\nIt is on their team profile until they sign in at ' + location.origin + '/login.');
-  } else if(account && account.skipped === 'not-admin'){
-    alert(pjName(r) + ' is set up, but only an admin can create the account they sign in with. Ask one to open their team profile.');
-  } else if(account && account.ok === false && !account.skipped){
-    alert('The partner is set up, but their sign-in account is not in step: ' + (account.message || ''));
+  if(!o.noPayout) await pobSyncPayout([r]);
+  return {member: m, account, was};
+}
+
+/* ---------- the payout team follows Partner Journey ----------
+   Every partner with a BOSS login is on the payout team (Payouts › Clients
+   & Map › Hierarchy) at the same level, reporting to the payout person of
+   whoever they report to in BOSS, with the payout details their record
+   holds. Payouts then decides whose numbers each of them sees by that same
+   line: L1 and L2 their own, L3 up everyone mapped below them. Only an
+   admin can change the payout team, so for anybody else this does nothing. */
+function pobPayoutLevel(m){ return Math.min(6, Math.max(1, Number(String(m.partnerLevel||'L1').replace(/\D/g,'')) || 1)); }
+async function pobSyncPayout(records, opts){
+  const out = {added: 0, updated: 0, failed: [], skipped: ''};
+  if(!(typeof pyPost === 'function') || !isAdmin()){ out.skipped = 'not-admin'; return out; }
+  let team;
+  try { team = await pyGet('/users'); } catch(e){ out.failed.push(e.message); return out; }
+  const byEmail = {}; (team||[]).forEach(u=>{ byEmail[String(u.email||'').toLowerCase()] = u; });
+  const list = (records || pobLive()).map(r=>({r, m: pobMemberOf(r)})).filter(x=>x.m && x.m.email);
+  // Everyone onto the team first, then who reports to whom, once they all exist.
+  for(const {r, m} of list){
+    const cur = byEmail[m.email.toLowerCase()];
+    const p = r.payout || {};
+    const body = Object.assign({}, cur || {}, {name: m.name, email: m.email.toLowerCase(), code: p.code || (cur && cur.code) || r.arnCode || r.partnerCode || '',
+      level: pobPayoutLevel(m), role: p.role || (cur && ['mentor','ops'].includes(cur.role) ? cur.role : 'partner'),
+      pan: r.pan || (cur && cur.pan) || '', gst: p.gst || (cur && cur.gst) || '', arn: r.arn || (cur && cur.arn) || '', euin: r.euin || (cur && cur.euin) || '',
+      sharing_pct: p.sharing !== undefined && p.sharing !== '' ? Number(p.sharing) || 0 : (cur && cur.sharing_pct) || 0,
+      extra_levels: p.extraLevels || (cur && cur.extra_levels) || [],
+      bank: Object.assign({}, (cur && cur.bank) || {}, p.bank || {}), address: Object.assign({country: 'India'}, (cur && cur.address) || {}, p.address || {}),
+      active: m.status === 'Active' ? 1 : 0});
+    delete body.parent_id;
+    try {
+      const u = cur ? await pyPut('/users/' + cur.id, body) : await pyPost('/users', body);
+      byEmail[m.email.toLowerCase()] = Object.assign({}, cur || {}, u, {email: m.email.toLowerCase()});
+      r.payoutUserId = u.id;
+      cur ? out.updated++ : out.added++;
+    } catch(e){ out.failed.push(m.name + ': ' + e.message); }
   }
+  for(const {r, m} of list){
+    const me = byEmail[m.email.toLowerCase()];
+    const boss = DB.team.find(t=>t.id===m.parentUserId);
+    const up = boss && boss.email ? byEmail[boss.email.toLowerCase()] : null;
+    const want = up && up.id !== (me && me.id) ? up.id : null;
+    if(me && me.id && Number(me.parent_id||0) !== Number(want||0)){
+      try { await pyPut('/users/' + me.id, {parent_id: want}); } catch(e){ out.failed.push(m.name + ' (reports to): ' + e.message); }
+    }
+  }
+  if(typeof pyInvalidate === 'function') pyInvalidate();
+  return out;
+}
+async function pySyncFromPartnerJourney(){
+  const with_ = pobLive().filter(r=>pobMemberOf(r));
+  if(!with_.length){ pyToast('No partner has a BOSS login yet. Give one from Partner Onboarding, or import active partners.', 'err'); return; }
+  const res = await pobSyncPayout(with_);
+  await save('pjOnboarding');
+  render();
+  alert('Synced from Partner Journey: ' + res.added + ' added to the payout team, ' + res.updated + ' updated.'
+    + (res.skipped ? '\nOnly an admin can change the payout team.' : '') + (res.failed.length ? '\n\nNot done:\n' + res.failed.join('\n') : ''));
 }
 /* Suspending the partner shuts their BOSS account; activating opens it. */
 async function pobSetLoginStatus(id, status){
@@ -52860,6 +53018,7 @@ async function pobSetLoginStatus(id, status){
     await save('team');
     const s = await syncMemberAccount(m);
     if(!s.ok && window.CRM_IS_ADMIN){ alert('The account could not be changed: ' + s.message); return; }
+    await pobSyncPayout([r]);
   }
   const was = r.login.status;
   r.login.status = status;
@@ -52912,7 +53071,8 @@ function viewMyPartnerJourney(){
     .sort((a,b)=>String(b.period).localeCompare(String(a.period)));
   const sum = f => pays.filter(f).reduce((s,p)=>s + p.net, 0);
   return moduleHeader({title:'My Partner Journey', subtitle: pjName(r) + ' · ' + lv.name + ' (' + lv.k + ')' + (r.partnerCode ? ' · ' + r.partnerCode : ''),
-      actions:[{label:'My Performance', onclick:"navigate('ppf')"}]})
+      actions:[{label:'My Performance', onclick:"navigate('ppf')"},
+        typeof pySectionOpen === 'function' && pySectionOpen() && {label:'My Brokerage Payouts', onclick:"navigate('pydash')"}].filter(Boolean)})
     + profCard('Where you are', [
         ['Stage', esc(stateLabel('POB', stateOf('POB', r)))], ['Your RM', esc(teamName(r.assignedTo))], ['Your mentor', esc(teamName(pobMentor(r)))],
         ['Onboarding', esc(pobProgress(r) + '%')],
@@ -53013,6 +53173,7 @@ async function pobAssignRole(r, role, reason){
     await save('team');
     if(r.login) r.login.level = m.partnerLevel;
     await save('pjOnboarding');
+    await pobSyncPayout([r]);
   }
 }
 /* The workflow's tasks onto the partner. A task already approved under
@@ -53878,6 +54039,73 @@ function pobApprovalQueueHtml(){
       <td style="font-weight:700">${esc(pjName(x.r))}</td><td>${esc(x.what)}</td><td>${esc(x.detail)}</td><td>${esc(x.at ? fmtDate(String(x.at).slice(0,10)) : '—')}</td>
       <td>${esc(teamName(x.r.assignedTo))}</td></tr>`).join('') || `<tr><td colspan="5" class="empty">Nothing is waiting for a decision.</td></tr>`}</tbody></table></div>`;
 }
+/* The level a partner works at, as the list shows it; before their login,
+   the role they are on the road to. */
+function pobListLevel(r){
+  if(pobMemberOf(r)){ const lv = plvLevel(pobLevelOf(r)); return lv.k + ' · ' + lv.name; }
+  return r.role ? r.role + ' (no login yet)' : '—';
+}
+/* ---------- deleting what an import brought in ----------
+   For a sheet that went in wrong: every partner the import created leaves
+   Partner Journey (to the recycle bin, with its PMS record), and their
+   BOSS login, sign-in account and place on the payout team go with them.
+   Partners who came through PPS and PMS are never touched. */
+function pobImportedLive(){ return pobLive().filter(r=>r.imported); }
+function pobOpenDeleteImported(){
+  if(!isAdmin()){ alert('Only an admin can delete imported data.'); return; }
+  const list = pobImportedLive();
+  if(!list.length){ alert('There are no imported partners.'); return; }
+  const logins = list.filter(r=>pobMemberOf(r)).length;
+  openModal('Delete Imported Data', `<p style="margin-top:0">This deletes the <b>${list.length}</b> partner(s) brought in by <b>Import Active Partners</b>:</p>
+    <ul class="small-note"><li>their Partner Onboarding and PMS records (they go to the recycle bin);</li>
+      <li>their <b>${logins}</b> BOSS login(s) and sign-in account(s) — they can no longer sign in;</li>
+      <li>their place on the payout team, and the client mappings that named them.</li></ul>
+    <p class="small-note">Partners who came through PPS and PMS are not touched, and nor are leads, clients or business. Their partner mark stays on the clients they brought.</p>
+    <div class="field"><label>Type DELETE to confirm</label><input id="pobDelConfirm" autocomplete="off"></div>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn danger" id="pobDelGo" onclick="pobDeleteImported()">Delete ${list.length} Imported Partner${list.length===1?'':'s'}</button>`);
+}
+async function pobDeleteImported(){
+  if(!isAdmin()) return;
+  if(String((document.getElementById('pobDelConfirm')||{}).value||'').trim() !== 'DELETE'){ alert('Type DELETE to confirm.'); return; }
+  const btn = document.getElementById('pobDelGo'); if(btn){ btn.disabled = true; btn.textContent = 'Deleting…'; }
+  const list = pobImportedLive();
+  const at = new Date().toISOString(), failed = [];
+  let payoutTeam = [];
+  if(typeof pyGet === 'function'){ try { payoutTeam = await pyGet('/users') || []; } catch(e){ failed.push('payout team: ' + e.message); } }
+  const members = list.map(r=>pobMemberOf(r)).filter(Boolean);
+  const gone = new Set(members.map(m=>m.id));
+  let accounts = 0, payout = 0;
+  for(const m of members){
+    const a = await removeMemberAccount(m.id);
+    if(a && a.ok === false) failed.push(m.name + ' (sign-in): ' + (a.message || '')); else accounts++;
+    const u = payoutTeam.find(u=>String(u.email||'').toLowerCase()===String(m.email||'').toLowerCase());
+    if(u && u.role !== 'admin'){ try { await pyDel('/users/' + u.id); payout++; } catch(e){ failed.push(m.name + ' (payout): ' + e.message); } }
+  }
+  // Whoever reported to a deleted login now reports to that login's own manager.
+  const upOf = id => { let m = DB.team.find(t=>t.id===id); while(m && gone.has(m.id)) m = DB.team.find(t=>t.id===m.parentUserId); return m ? m.id : null; };
+  DB.team.forEach(t=>{
+    if(gone.has(t.id)) return;
+    if(gone.has(t.parentUserId)) t.parentUserId = upOf(t.parentUserId);
+    if((t.managerIds||[]).some(x=>gone.has(x))) setUserManagers(t, (t.managerIds||[]).map(x=>gone.has(x) ? upOf(x) : x).filter(Boolean));
+  });
+  DB.team = DB.team.filter(t=>!gone.has(t.id));
+  list.forEach(r=>{
+    r.deletedAt = at; r.deletedBy = currentUser; r.deleteReason = 'Imported data deleted';
+    if(r.login) r.login = Object.assign({}, r.login, {status: 'Deleted', boss: false});
+    const p = pjPartners().find(q=>q.id===r.partnerId);
+    if(p && p.source === 'Import' && !p.deletedAt){ p.deletedAt = at; p.deletedBy = currentUser; p.deleteReason = 'Imported data deleted'; }
+  });
+  await save('team');
+  await save('pjOnboarding');
+  await save('pjPartners');
+  await logAudit('POB', 'import', 'Imported Data Deleted', [{field: 'imported partners', oldValue: String(list.length), newValue: '0'},
+    {field: 'BOSS logins', oldValue: String(members.length), newValue: 'removed'}, {field: 'payout team', oldValue: String(payout), newValue: 'removed'}]);
+  if(typeof pyInvalidate === 'function') pyInvalidate();
+  closeModal();
+  alert('Deleted ' + list.length + ' imported partner(s), ' + members.length + ' BOSS login(s) and ' + payout + ' payout team entr' + (payout===1?'y':'ies') + '.'
+    + (failed.length ? '\n\nNot done:\n' + failed.join('\n') : ''));
+  navigate('pob');
+}
 function viewPOB(){
   if(!can('POB','view')) return permissionWall('Partners');
   window._pobTab = window._pobTab || 'partners';
@@ -53889,7 +54117,8 @@ function viewPOB(){
   const unstarted = pobUnstartedPartners().length;
   const head = moduleHeader({title:'POB — Partner Onboarding',
     subtitle: 'After PMS: due payment, empanelment, evaluation, login, role — then the Ninja, Super Ninja or Sherpa road to active.',
-    actions:[can('POB','create') && {label:'Import Active Partners', icon:'\u2191', onclick:'pobOpenImportActive()'},
+    actions:[isAdmin() && pobImportedLive().length && {label:'Delete Imported Data', icon:'\ud83d\uddd1', onclick:'pobOpenDeleteImported()'},
+      can('POB','create') && {label:'Import Active Partners', icon:'\u2191', onclick:'pobOpenImportActive()'},
       can('POB','create') && {label:'Start for an Onboarded Partner', icon:'+', kind:'primary', onclick:'pobOpenStartPicker()', count: unstarted || undefined}]});
   const all = visibleRecords(pobLive(), r=>r.assignedTo, r=>r.branch);
   if(window._pobTab==='queue') return head + tabs + pobApprovalQueueHtml();
@@ -53899,11 +54128,11 @@ function viewPOB(){
   if(window._pobTab==='training') return head + tabs + pobTrainingCatalogHtml();
   if(window._pobTab==='settings' && pjMaySetUp()) return head + tabs + pobSettingsHtml();
   const searchMap = {stage: r=>stateLabel('POB', stateOf('POB', r)), role: r=>r.role, owner: r=>teamName(r.assignedTo), name: r=>pjName(r),
-    code: r=>r.partnerCode, app: r=>r.applicationId, mobile: r=>r.mobile, email: r=>r.email, type: r=>r.partnerType, fbm: r=>r.fbmName};
+    code: r=>r.partnerCode, app: r=>r.applicationId, mobile: r=>r.mobile, email: r=>r.email, level: r=>pobListLevel(r)};
   const inWindow = applyTimeline('POB', all);
   window._pobRole = window._pobRole || '';
   let rows = applyStageFilter('POB', inWindow).filter(r=>matchesSearch(window._pobSearch, r, searchMap));
-  if(window._pobRole) rows = rows.filter(r=>['FBM','FBP'].includes(window._pobRole) ? r.partnerType===window._pobRole : (r.role||'—')===window._pobRole);
+  if(window._pobRole) rows = rows.filter(r=>window._pobRole==='—' ? !pobMemberOf(r) : pobMemberOf(r) && pobLevelOf(r)===window._pobRole);
   rows = rows.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
   const overdueTasks = all.reduce((n, r)=>n + pobLiveTasks(r).filter(t=>pobTaskState(r, t).overdue).length, 0);
   const overdueReviews = pobReviews().filter(x=>!x.deletedAt && x.status!=='Completed' && x.dueDate && x.dueDate < pobToday() && all.some(r=>r.id===x.pobId)).length;
@@ -53914,16 +54143,16 @@ function viewPOB(){
       {label:'Overdue Tasks', value: overdueTasks, tone: overdueTasks ? 'danger' : 'ok'},
       {label:'Overdue Reviews', value: overdueReviews, tone: overdueReviews ? 'danger' : 'ok', onclick:"window._pobTab='reviews'; render()"}]))}
     ${stageFilterNote('POB')}
-    <div class="row" style="gap:6px;margin:0 0 8px">${['', 'Ninja', 'Super Ninja', 'Sherpa', 'FBM', 'FBP', '—'].map(x=>`<button class="btn sm ${window._pobRole===x?'primary':''}"
-      onclick="window._pobRole='${x}'; render()">${x==='' ? 'All roles' : x==='—' ? 'No role yet' : x}</button>`).join('')}</div>
+    <div class="row" style="gap:6px;margin:0 0 8px">${[''].concat(plvLevels().map(lv=>lv.k), ['—']).map(x=>`<button class="btn sm ${window._pobRole===x?'primary':''}"
+      onclick="window._pobRole='${x}'; render()">${x==='' ? 'All levels' : x==='—' ? 'No login yet' : esc(x + ' · ' + plvLevel(x).name)}</button>`).join('')}</div>
     ${listSearchRow({stateKey:'_pobSearch', live:true})}
     <div class="table-wrap"><table id="pobTable">
-      <thead><tr><th>Partner</th><th>Partner Code</th><th>Application</th><th>Role</th><th>Payment</th><th>Progress</th><th>Owner</th><th>Stage</th></tr></thead>
+      <thead><tr><th>Partner</th><th>Partner Code</th><th>Application</th><th>Level</th><th>Payment</th><th>Progress</th><th>Owner</th><th>Stage</th></tr></thead>
       <tbody>${rows.map(r=>{
         const meta = stateMeta('POB', stateOf('POB', r));
         return `<tr class="row-clickable" onclick="navigate('pob','${esc(r.id)}')">
           <td style="font-weight:700">${esc(pjName(r))}<div class="small-note" style="margin:0">${esc(r.mobile||'')}</div></td>
-          <td>${esc(r.partnerCode||'')}</td><td>${esc(r.applicationId||'')} ${statusBadge(r.applicationStatus)}</td><td>${esc(r.role||r.partnerType||'—')}${r.role && r.partnerType ? ' · ' + esc(r.partnerType) : ''}</td>
+          <td>${esc(r.partnerCode||'')}</td><td>${esc(r.applicationId||'')} ${statusBadge(r.applicationStatus)}</td><td>${esc(pobListLevel(r))}</td>
           <td>${statusBadge(pobPaymentStatus(r))}</td><td>${pobProgress(r)}%</td>
           <td style="color:var(--info)">${esc(teamName(r.assignedTo))}</td>
           <td><span class="badge ${meta.color||'info'}">${esc(meta.label||'')}</span></td></tr>`;
@@ -53980,9 +54209,10 @@ function viewPOBDetail(id){
           ['Name', esc(pjName(r))], ['Partner Code', esc(r.partnerCode)], ['Application ID', esc(r.applicationId)],
           ['Email', esc(r.email||'')], ['Phone', esc(r.mobile||'')], ['Address', esc(r.address||'')], ['City', esc(r.city||'')], ['PAN', esc(r.pan||'')],
           ['Proposed Role', esc(r.proposedRole||'')], ['Business Role', esc(r.role||'Not assigned')], ['Registration Date', esc(fmtDate(r.registrationDate)||'')],
-          ...(r.partnerType ? [['Partner Type', esc(r.partnerType)]] : []),
-          ...(r.partnerType==='FBP' ? [['FBM', r.fbmPobId ? `<a href="javascript:void(0)" onclick="navigate('pob','${esc(r.fbmPobId)}')">${esc(r.fbmName||'')}</a>` : esc(r.fbmName||'')]] : []),
-          ...(r.partnerType==='FBM' ? [['FBPs under them', esc(String(pobLive().filter(y=>y.fbmPobId===r.id).length))]] : []),
+          ...(pobMemberOf(r) ? [['Level', esc(pobListLevel(r))],
+            ['Partners under them', esc(String(DB.team.filter(t=>t.partnerPobId && t.parentUserId===pobMemberOf(r).id).length))]] : []),
+          ...(r.payout ? [['Payout', esc([r.payout.code && 'code ' + r.payout.code, r.payout.sharing !== undefined && 'sharing ' + r.payout.sharing + '%',
+            r.payout.gst && 'GSTIN ' + r.payout.gst, (r.payout.bank||{}).account && 'bank ' + (r.payout.bank.bankName||'') + ' ' + String(r.payout.bank.account).slice(-4).padStart(8, '•')].filter(Boolean).join(' · ') || '—')]] : []),
           ...(r.renewalDate ? [['Renewal Date', esc(fmtDate(r.renewalDate))]] : []),
           ...(r.imported ? [['Imported', esc(fmtDateTime(r.importedAt)) + (r.legacyId ? ' · old Record Id ' + esc(r.legacyId) : '')]] : []),
           ['Onboarding Owner', esc(teamName(r.assignedTo))], ['Mentor', esc(teamName(pobMentor(r)))], ['Branch', esc(r.branch||'')], ['Created', esc(fmtDateTime(r.createdAt))], ['Updated', esc(r.updatedAt ? fmtDateTime(r.updatedAt) : '')],

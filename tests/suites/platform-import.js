@@ -160,8 +160,10 @@ suite(async t => {
        runtime config, and /appraisal-engine.js, the Appraisal System
        handed over as its own module and kept that way so it stays
        provably unmodified. Both come off this server and neither is a
-       dependency. Anything else pulled in would be a library. */
-    const OURS = /^\/(config|appraisal-engine)\.js(\?|$)/;
+       dependency. The payout screens and the partner targets and levels
+       are this server's own files too. Anything else pulled in would be a
+       library. */
+    const OURS = /^\/(config|appraisal-engine|payout|partner-targets|partner-levels)\.js(\?|$)/;
     const r = await t.eval(()=>({supported: xlsxSupported(),
       lib: typeof window.XLSX,
       all: Array.from(document.querySelectorAll('script[src]')).map(s=>s.src),

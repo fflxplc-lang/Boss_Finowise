@@ -47,6 +47,7 @@ function fieldsFrom(body) {
     address: JSON.stringify(body.address || {}),
     arn: body.arn || null, arn_valid: body.arn_valid || null,
     euin: body.euin || null, euin_valid: body.euin_valid || null,
+    active: body.active === 0 || body.active === false || body.active === '0' ? 0 : 1,
   };
 }
 
