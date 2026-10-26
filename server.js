@@ -762,7 +762,6 @@ function loginPage({ error = null, next = '/', email = '' } = {}) {
     margin:0 0 18px; padding:11px 13px; border-radius:9px; font-size:13px;
     color:var(--danger); background:rgba(179,67,43,.08); border:1px solid rgba(179,67,43,.25);
   }
-  .foot.partner-link{margin-top:6px} .partner-link a{color:rgba(255,255,255,.75); font-weight:600}
   .foot{
     text-align:center; margin-top:22px; font-size:11.5px; color:rgba(255,255,255,.45);
     letter-spacing:.2px;
@@ -787,7 +786,6 @@ function loginPage({ error = null, next = '/', email = '' } = {}) {
       <button type="submit">Sign in</button>
     </form>
     <div class="foot">Authorised access only</div>
-    <div class="foot partner-link">A Freedom LifeX partner? <a href="/partner/login">Sign in to your partner login</a></div>
   </div>
 </body>
 </html>`;
@@ -1040,11 +1038,7 @@ function isClientLinkRequest(req) {
   // A partner prospect's registration form. The page holds nothing; what it
   // shows comes from /api/public/pps-form, on the token in its address.
   if (req.method === 'GET' && req.path === '/partner-form' && req.query.pf) return true;
-  // The partner's own login, which is not a BOSS session: every one of its
-  // routes checks the partner's cookie, and answers only with their own
-  // record. The empanelment form is on its token, like the one above.
-  if (req.path === '/partner' || req.path.startsWith('/partner/')) return true;
-  if (req.path.startsWith('/api/partner-portal/')) return true;
+  // The empanelment form is on its token, like the one above.
   if (req.method === 'GET' && req.path === '/empanelment' && req.query.t) return true;
   if (req.path === '/config.js') return true;
   if (req.method !== 'GET' || req.path.startsWith('/api/')) return false;
@@ -3139,9 +3133,12 @@ const partnerJourney = require('./partner-journey').install({ app, storeList, st
   dataDir: path.dirname(DB_FILE) });
 /* The partner's own login and the one empanelment form (B2B changes 3).
    A door of its own, with accounts of its own: see partner-portal.js. */
-require('./partner-portal').install({ app, usersDb, storeList, storeValue, putList, writeToDisk, checkApiKey, hashPassword, passwordMatches,
-  sign, readCookie, signedInUser, tooManyAttempts, noteFailure, forgiveAttempts: (ip) => attempts.delete(ip), branding, esc,
+require('./partner-portal').install({ app, storeList, storeValue, putList, writeToDisk,
   pj: partnerJourney, publicDir: path.join(__dirname, 'public') });
+/* The separate partner login is gone: partners sign in to BOSS itself
+   (Setup › Partner Levels). An old link or bookmark lands on the one
+   sign-in page rather than on nothing. */
+app.get(['/partner', '/partner/login', '/partner/setup'], (req, res) => res.redirect('/login'));
 app.get('/partner-form', (req, res) => {
   res.set('Cache-Control', 'no-store').sendFile(path.join(__dirname, 'public', 'partner-form.html'));
 });

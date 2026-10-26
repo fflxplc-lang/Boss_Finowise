@@ -1,4 +1,4 @@
-/* B2B CHANGES 3 — WHO CHECKS WHAT, THE ONE FORM, AND THE PARTNER'S OWN LOGIN.
+/* B2B CHANGES 3 — WHO CHECKS WHAT, THE ONE FORM, AND THE PARTNER IN BOSS.
 
    The session reminders and the joining link go to everybody registered
    for the webinar by themselves, and the stage follows; a prospect
@@ -10,10 +10,11 @@
    documents and agreement go to the partner as one page on a token;
    choosing to upload the signed agreement makes the upload mandatory;
    submitting sends it for evaluation to the owner's reporting manager.
-   The partner's login sees their own record and nothing of BOSS; they
-   submit tasks, their mentor approves or asks for changes, and the next
-   task opens; once the onboarding tasks are approved they add leads,
-   which fill their figures. */
+   Login access makes the partner a BOSS user at a level (L1–L6) that
+   reports to their RM or senior partner: they open their own Partner
+   Journey, submit tasks there, and their mentor approves or asks for
+   changes; once the onboarding tasks are approved their level's modules
+   open, and they see their own records, or their mapped partners'. */
 const {suite} = require('../lib/harness');
 
 suite({mail: true}, async t => {
@@ -248,179 +249,184 @@ suite({mail: true}, async t => {
     return 'Ravi refused; Meena approved — Login Access';
   });
 
-  t.section('the partner’s own login');
+  t.section('the partner works in BOSS');
 
-  let cookie = '';
-  await step('login access creates the partner’s own account, and the password link signs them in', async () => {
+  await step('login access makes the partner a BOSS user at L1, reporting to their RM', async () => {
     t.mail.clear();
-    await t.eval(async ids => {
+    const r = await t.eval(async ids => {
       pobOpenLoginModal('POB', ids.pob, 'obLoginT');
+      const level = document.getElementById('lgLevel').value, up = document.getElementById('lgUp').value;
       await pobSaveLogin(ids.pob, 'obLoginT');
+      const o = pobRecords().find(x=>x.id===ids.pob), m = pobMemberOf(o);
+      return {level, up, m: m && {id: m.id, email: m.email, lv: m.partnerLevel, role: m.role, scope: m.scope, parent: m.parentUserId, status: m.status, flags: Object.values(m.adminFlags||{}).some(Boolean)},
+        login: o.login, stage: stateOf('POB', o), roles: roleList().includes('Ninja (L1)')};
     }, ids);
+    if(r.level !== 'L1' || r.up !== ids.ravi || !r.m) throw new Error(JSON.stringify(r));
+    if(r.m.email !== 'kavya@example.com' || r.m.lv !== 'L1' || r.m.role !== 'Ninja (L1)' || r.m.scope !== 'own' || r.m.parent !== ids.ravi || r.m.status !== 'Active' || r.m.flags) throw new Error(JSON.stringify(r.m));
+    if(!r.login.boss || r.login.memberId !== r.m.id || r.stage !== 'roleMeeting' || !r.roles) throw new Error(JSON.stringify(r));
+    ids.kavya = r.m.id;
     await t.wait(300);
-    const m = mailTo('kavya@example.com', /Freedom LifeX login/i)[0];
-    const link = m && ((m.text||m.body).match(/https?:\/\/\S+\/partner\/setup\?t=[\w%-]+/) || [])[0];
-    if(!link) throw new Error('no password link in the letter');
-    const token = decodeURIComponent(link.split('t=')[1]);
-    const form = await fetch(t.base + '/partner/setup?t=' + encodeURIComponent(token), {redirect: 'manual'});
-    const short = await fetch(t.base + '/partner/setup', {method:'POST', redirect:'manual', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({t: token, password: 'short', confirm: 'short'})});
-    const set = await fetch(t.base + '/partner/setup', {method:'POST', redirect:'manual', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({t: token, password: 'kavyapass123', confirm: 'kavyapass123'})});
-    cookie = ((set.headers.get('set-cookie')||'').match(/flx_partner=[^;]+/)||[])[0] || '';
-    const reuse = await fetch(t.base + '/partner/setup?t=' + encodeURIComponent(token), {redirect: 'manual'});
-    if(form.status !== 200 || short.status !== 400 || set.status !== 302 || !cookie || reuse.status !== 404) throw new Error([form.status, short.status, set.status, !!cookie, reuse.status].join());
-    const login = await fetch(t.base + '/partner/login', {method:'POST', redirect:'manual', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({email: 'kavya@example.com', password: 'wrong-one'})});
-    if(login.status !== 401) throw new Error('a wrong password signed in');
-    return 'password set from the link (once), a wrong password refused';
+    const admin = await t.eval(() => !!window.CRM_IS_ADMIN);
+    const letter = t.mail.received.filter(m => (m.to||[]).some(x => x.toLowerCase() === 'kavya@example.com'));
+    if(admin && !letter.length) throw new Error('no password letter to the partner');
+    const portal = await fetch(t.base + '/partner', {redirect: 'manual'});
+    const api = await fetch(t.base + '/api/partner-portal/me');
+    if(portal.status !== 302 || !/\/login/.test(portal.headers.get('location') || '') || api.status === 200) throw new Error('the old portal is still there: ' + portal.status + ' ' + portal.headers.get('location') + ' / ' + api.status);
+    return 'Ninja (L1), own business, reports to Ravi; ' + (letter.length ? 'password emailed' : 'no admin, no letter') + '; /partner now goes to the BOSS sign-in';
   });
 
-  await step('signed in, the partner gets their own record and nothing of BOSS', async () => {
-    const h = {Cookie: cookie};
-    const me = await (await fetch(t.base + '/api/partner-portal/me', {headers: h})).json();
-    const boss = await fetch(t.base + '/api/storage/team', {headers: h});
-    const bossPage = await fetch(t.base + '/', {headers: h, redirect: 'manual'});
-    const anon = await fetch(t.base + '/api/partner-portal/me');
-    const portal = await fetch(t.base + '/partner', {headers: h, redirect: 'manual'});
-    const other = await t.eval(async pob => {
-      const r = await (await fetch('/api/partner-docs', {method:'POST', headers: Object.assign({'Content-Type':'application/json'}, apiHeaders()),
-        body: JSON.stringify({name: 'other.pdf', mime: 'application/pdf', data: 'data:application/pdf;base64,' + btoa('%PDF-1.4 other')})})).json();
-      return r.id;
-    }, ids.pob);
-    const steal = await fetch(t.base + '/api/partner-portal/files/' + other, {headers: h});
-    const own = await fetch(t.base + '/api/partner-portal/files/' + me.agreement.signedFileId, {headers: h});
-    const text = JSON.stringify(me);
-    if(!me.ok || me.partner.name !== 'Kavya Emp' || me.partner.rm !== 'Ravi RM' || me.stage.id !== 'roleMeeting') throw new Error(JSON.stringify(me).slice(0, 300));
-    if(text.includes('Pooja') || text.includes('evaluation') && text.includes('criteria')) throw new Error('another partner’s data or the firm’s notes leaked');
-    if(boss.status !== 401 || bossPage.status !== 302 || anon.status !== 401 || portal.status !== 200) throw new Error([boss.status, bossPage.status, anon.status, portal.status].join());
-    if(steal.status !== 404 || own.status !== 200) throw new Error('files: ' + steal.status + ' / ' + own.status);
-    return 'own dashboard; BOSS 401, another file 404, their own signed agreement 200';
+  await step('signed in, the partner opens only their own Partner Journey until onboarding is done', async () => {
+    const r = await t.eval(ids => {
+      currentUser = ids.kavya;
+      const open = ['mypj','ppf','lms','dst','business','pps','pob','teammembers','hrdashboard'].filter(v=>pageOpenToMe(v));
+      const rail = railNavGroups().filter(g=>railItems(g).length).map(g=>g.id);
+      const page = viewMyPartnerJourney();
+      currentUser = ids.admin;
+      return {open, rail, page: /My Tasks/.test(page) && /My Payouts/.test(page) && /Opens once your onboarding/.test(page)};
+    }, ids);
+    if(r.open.join() !== 'mypj,ppf' || !r.page) throw new Error(JSON.stringify(r));
+    if(r.rail.some(g => !['partnerjourney','personal'].includes(g)) && r.rail.includes('pipeline')) throw new Error('rail: ' + r.rail.join());
+    return 'mypj and ppf only; rail ' + r.rail.join(', ');
   });
 
-  await step('the partner submits a task; the mentor asks for changes, then approves, and the next task opens', async () => {
+  await step('the partner submits a task; the mentor asks for changes, then approves', async () => {
     t.mail.clear();
-    await t.eval(async ids => {
+    const r = await t.eval(async ids => {
       const o = pobRecords().find(x=>x.id===ids.pob);
       o.roleMeeting = {date: '2026-11-01', time: '10:00', link: 'https://meet.example.com/role'};
       await pobAssignRole(o, 'Ninja', 'Test');
       o.mentorId = ids.meena; o.pobStage = 'roleWorkflow';
       const rcs = pobLiveTasks(o).find(x=>x.key==='rcs'); rcs.status = 'Approved';
       await pobRefreshTasks(o); await save('pjOnboarding');
-    }, ids);
-    const h = {Cookie: cookie, 'Content-Type': 'application/json'};
-    const me = await (await fetch(t.base + '/api/partner-portal/me', {headers: h})).json();
-    const plan = me.tasks.find(x=>x.title==='Business Plan');
-    const walk = me.tasks.find(x=>x.title==='Platform Walk Through');
-    const submit = ev => fetch(t.base + '/api/partner-portal/tasks/' + plan.id + '/submit', {method:'POST', headers: h, body: JSON.stringify({evidence: ev})}).then(r=>r.json());
-    const empty = await submit('');
-    const first = await submit('My plan: https://docs.example.com/plan');
-    await t.wait(300);
-    const toMentor = mailTo('meena@example.com', /task for review/i).length;
-    await fresh();
-    const r = await t.eval(async (a) => {
-      const o = pobRecords().find(x=>x.id===a.pob);
-      const task = pobLiveTasks(o).find(x=>x.id===a.task);
-      currentUser = a.ravi;
-      await pobTaskAction(a.pob, a.task, 'approve');
-      const ravi = task.status;
-      currentUser = a.meena;
+      const plan = pobLiveTasks(o).find(x=>x.title==='Business Plan');
+      const walk = pobLiveTasks(o).find(x=>x.title==='Platform Walk Through');
+      currentUser = ids.kavya;
+      const button = viewMyPartnerJourney().includes("'" + plan.id + "','submit'");
+      window.prompt = () => '';
+      await pobTaskAction(ids.pob, plan.id, 'submit');
+      const empty = plan.status;
+      window.prompt = () => 'My plan: https://docs.example.com/plan';
+      await pobTaskAction(ids.pob, plan.id, 'submit');
+      const first = plan.status;
+      await pobTaskAction(ids.pob, plan.id, 'approve');      // a partner cannot approve their own
+      const self = plan.status;
+      currentUser = ids.ravi;
+      await pobTaskAction(ids.pob, plan.id, 'approve');
+      const ravi = plan.status;
+      currentUser = ids.meena;
       window.prompt = () => 'Add your monthly targets';
-      await pobTaskAction(a.pob, a.task, 'return');
-      const back = task.status;
-      currentUser = a.admin;
-      return {ravi, back};
-    }, Object.assign({task: plan.id}, ids));
+      await pobTaskAction(ids.pob, plan.id, 'return');
+      const back = plan.status;
+      currentUser = ids.kavya;
+      const why = viewMyPartnerJourney().includes('Add your monthly targets');
+      await pobTaskAction(ids.pob, plan.id, 'submit');
+      const second = plan.status;
+      currentUser = ids.meena; window.prompt = () => 'Good plan';
+      await pobTaskAction(ids.pob, plan.id, 'approve');
+      currentUser = ids.admin;
+      return {button, walkBefore: pobTaskState(o, walk).open, empty, first, self, ravi, back, why, second, done: plan.status, walkAfter: pobTaskState(o, walk).open};
+    }, ids);
     await t.wait(300);
-    const toPartner = mailTo('kavya@example.com', /Changes Required/).length;
-    const seen = (await (await fetch(t.base + '/api/partner-portal/me', {headers: h})).json()).tasks.find(x=>x.id===plan.id);
-    const second = await submit('Plan v2 with targets');
-    await fresh();
-    const done = await t.eval(async (a) => {
-      currentUser = a.meena; window.prompt = () => 'Good plan';
-      await pobTaskAction(a.pob, a.task, 'approve');
-      currentUser = a.admin;
-      return pobLiveTasks(pobRecords().find(x=>x.id===a.pob)).find(x=>x.id===a.task).status;
-    }, Object.assign({task: plan.id}, ids));
-    const after = (await (await fetch(t.base + '/api/partner-portal/me', {headers: h})).json()).tasks;
-    if(plan.maySubmit !== true || walk.open) throw new Error('before: ' + JSON.stringify({plan, walk}));
-    if(empty.ok || !first.ok || first.status !== 'Pending Review' || !toMentor) throw new Error(JSON.stringify({empty, first, toMentor}));
-    if(r.ravi !== 'Pending Review' || r.back !== 'Changes Required' || !toPartner || seen.lastNote !== 'Add your monthly targets' || !seen.maySubmit) throw new Error(JSON.stringify({r, toPartner, seen}));
-    if(!second.ok || done !== 'Approved' || !after.find(x=>x.title==='Platform Walk Through').open) throw new Error(JSON.stringify({second, done}));
-    return 'Pending Review → Changes Required (the partner read why) → Approved by the mentor; Platform Walk Through opened';
+    if(!r.button) throw new Error('before: ' + JSON.stringify(r));
+    if(r.empty === 'Pending Review' || r.first !== 'Pending Review' || r.self !== 'Pending Review') throw new Error(JSON.stringify(r));
+    if(r.ravi !== 'Pending Review' || r.back !== 'Changes Required' || !r.why || r.second !== 'Pending Review') throw new Error(JSON.stringify(r));
+    if(r.done !== 'Approved') throw new Error(JSON.stringify(r));
+    return 'Pending Review → Changes Required (the partner read why) → Approved by the mentor';
   });
 
-  await step('the Client Journey opens once the onboarding tasks are approved, and the leads fill the figures', async () => {
-    const h = {Cookie: cookie, 'Content-Type': 'application/json'};
-    const shut = await fetch(t.base + '/api/partner-portal/leads', {headers: h});
-    await t.eval(async ids => {
+  await step('the Client Journey opens once the onboarding tasks are approved, and the partner sees only their own', async () => {
+    const r = await t.eval(async ids => {
       const o = pobRecords().find(x=>x.id===ids.pob);
+      currentUser = ids.kavya;
+      const shut = pageOpenToMe('lms');
+      currentUser = ids.admin;
       pobRequiredOnboarding(o).forEach(x=>{ x.status = 'Approved'; });
       await save('pjOnboarding');
+      const other = {id: uid('LEAD'), firstName: 'Firm', lastName: 'Lead', mobile: '9876543333', assignedTo: ids.ravi, createdAt: new Date().toISOString()};
+      DB.leads.push(other);
+      currentUser = ids.kavya;
+      const lead = {id: uid('LEAD'), firstName: 'Lead', lastName: 'One', mobile: '9876544444', city: 'Pune', assignedTo: ids.ravi, createdAt: new Date().toISOString()};
+      partnerStamp(lead);
+      DB.leads.push(lead); await save('leads');
+      const open = ['lms','cms','rms','dst','business','hrdashboard'].filter(v=>pageOpenToMe(v));
+      const seen = visibleRecords(DB.leads, l=>l.assignedTo).map(l=>l.id);
+      currentUser = ids.admin;
+      return {shut, open, seen, lead: lead.id, other: other.id, pob: lead.partnerPobId, src: lead.source, fig: pobMetrics(o).leads, cj: pobClientJourneyOpen(o)};
     }, ids);
-    const add = await (await fetch(t.base + '/api/partner-portal/leads', {method:'POST', headers: h,
-      body: JSON.stringify({firstName: 'Lead', lastName: 'One', mobile: '9876544444', city: 'Pune'})})).json();
-    const dupe = await (await fetch(t.base + '/api/partner-portal/leads', {method:'POST', headers: h,
-      body: JSON.stringify({firstName: 'Lead', lastName: 'Again', mobile: '9876544444'})})).json();
-    const edit = await (await fetch(t.base + '/api/partner-portal/leads/' + add.id, {method:'PUT', headers: h, body: JSON.stringify({city: 'Mumbai'})})).json();
-    const list = await (await fetch(t.base + '/api/partner-portal/leads', {headers: h})).json();
-    await fresh();
-    const boss = await t.eval(ids => {
-      const o = pobRecords().find(x=>x.id===ids.pob);
-      const l = DB.leads.find(x=>x.partnerPobId===ids.pob);
-      return {fig: pobMetrics(o), owner: l && l.assignedTo, src: l && l.source, city: l && l.city, open: pobClientJourneyOpen(o)};
-    }, ids);
-    if(shut.status !== 403) throw new Error('open before the tasks were done: ' + shut.status);
-    if(!add.ok || add.figures.leads !== 1 || dupe.ok || !edit.ok || list.leads.length !== 1) throw new Error(JSON.stringify({add, dupe, edit, n: list.leads && list.leads.length}));
-    if(boss.fig.leads !== 1 || boss.owner !== ids.ravi || boss.src !== 'Partner' || boss.city !== 'Mumbai' || !boss.open) throw new Error(JSON.stringify(boss));
-    return 'shut, then open; 1 lead → Leads collected 1, owned by the RM in LMS';
+    if(r.shut || !r.cj) throw new Error('open before the tasks were done');
+    if(r.open.join() !== 'lms,cms,rms') throw new Error('L1 opens ' + r.open.join());
+    if(r.seen.join() !== r.lead || r.pob !== ids.pob || r.src !== 'Partner' || r.fig < 1) throw new Error(JSON.stringify(r));
+    return 'shut, then LMS · CMS · RMS; they see their own lead and not the RM’s';
   });
 
-  await step('a payment the partner records goes to their mapped RM', async () => {
+  await step('a Sherpa (L3) adds Operations and Sales, and sees the partners mapped to them', async () => {
     const r = await t.eval(async ids => {
-      DB.config.partnerOnboarding = Object.assign({}, DB.config.partnerOnboarding, {dueFee: 5000}); await save('config');
-      const p = {id: uid('PMS'), firstName: 'Dev', lastName: 'Due', mobile: '9876555555', email: 'dev.due@example.com', assignedTo: ids.ravi, createdAt: new Date().toISOString()};
-      initState('PMS', p); p.pmsStage = 'onboarded'; pjPartners().push(p); await save('pjPartners');
-      const o = await pobStart(p.id, {quiet: true});
-      const res = await pobPortalCall('accounts', {pobId: o.id, email: 'dev.due@example.com'});
-      return {pob: o.id, setup: res.setupUrl};
+      const mk = async (first, role, up) => {
+        const p = {id: uid('PMS'), firstName: first, lastName: 'Lvl', mobile: '98765' + String(Math.floor(Math.random()*90000)+10000), email: first.toLowerCase() + '.lvl@example.com', assignedTo: ids.ravi, createdAt: new Date().toISOString()};
+        initState('PMS', p); p.pmsStage = 'onboarded'; pjPartners().push(p); await save('pjPartners');
+        const o = await pobStart(p.id, {quiet: true});
+        o.role = role; o.pobStage = 'active';
+        pobOpenLoginModal('POB', o.id, '');
+        if(up) document.getElementById('lgUp').value = up;
+        await pobSaveLogin(o.id, '');
+        return {o, m: pobMemberOf(o)};
+      };
+      const sherpa = await mk('Sanjay', 'Sherpa');
+      const ninja = await mk('Nina', 'Ninja', sherpa.m.id);
+      const lead = {id: uid('LEAD'), firstName: 'Nina', lastName: 'Client', mobile: '9876546666', assignedTo: ids.ravi, partnerPobId: ninja.o.id, createdAt: new Date().toISOString()};
+      DB.leads.push(lead); await save('leads');
+      currentUser = sherpa.m.id;
+      const open = ['lms','dst','queries','business','transactions','hrdashboard','teammembers'].filter(v=>pageOpenToMe(v));
+      const seen = visibleRecords(DB.leads, l=>l.assignedTo).map(l=>l.id);
+      currentUser = ninja.m.id;
+      const ninjaSees = visibleRecords(DB.leads, l=>l.assignedTo).map(l=>l.id);
+      currentUser = ids.admin;
+      return {lv: sherpa.m.partnerLevel, scope: sherpa.m.scope, open, seesNina: seen.includes(lead.id), seesKavya: DB.leads.some(l=>l.partnerPobId===ids.pob && seen.includes(l.id)),
+        ninjaSees: ninjaSees.includes(lead.id), sherpa: sherpa.m.id, ninja: ninja.m.id, ninjaPob: ninja.o.id};
     }, ids);
-    const token = decodeURIComponent(r.setup.split('t=')[1]);
-    const set = await fetch(t.base + '/partner/setup', {method:'POST', redirect:'manual', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({t: token, password: 'devpass1234', confirm: 'devpass1234'})});
-    const c2 = ((set.headers.get('set-cookie')||'').match(/flx_partner=[^;]+/)||[])[0];
-    t.mail.clear();
-    const paid = await (await fetch(t.base + '/api/partner-portal/payments', {method:'POST', headers: {Cookie: c2, 'Content-Type': 'application/json'},
-      body: JSON.stringify({amount: 5000, method: 'UPI', ref: 'UTR-DEV-1', date: '2026-10-20'})})).json();
-    await t.wait(300);
-    const o = (await stored('pjOnboarding')).find(x=>x.id===r.pob);
-    const p = (o.payments||[])[0] || {};
-    if(!paid.ok || p.status !== 'Under Review' || p.recordedBy !== 'Partner' || (p.verifierIds||[]).join() !== ids.ravi) throw new Error(JSON.stringify({paid, p}));
-    if(!mailTo('ravi@example.com', /due payment/i).length) throw new Error('the RM was not emailed');
-    // And the first partner still cannot see this one.
-    const mine = await (await fetch(t.base + '/api/partner-portal/me', {headers: {Cookie: cookie}})).json();
-    if(JSON.stringify(mine).includes('UTR-DEV-1')) throw new Error('one partner saw another’s payment');
-    return 'Under Review with Ravi (the mapped RM), who was emailed';
+    if(r.lv !== 'L3' || r.scope !== 'team') throw new Error(JSON.stringify(r));
+    if(r.open.join() !== 'lms,dst,queries,business,transactions') throw new Error('L3 opens ' + r.open.join());
+    if(!r.seesNina || r.seesKavya || !r.ninjaSees) throw new Error(JSON.stringify(r));
+    Object.assign(ids, {sherpa: r.sherpa, ninja: r.ninja, ninjaPob: r.ninjaPob});
+    return 'Sherpa (L3): Client Journey, Operations, Sales; sees Nina’s client, not Kavya’s';
   });
 
-  await step('the partner’s pages draw', async () => {
-    const [name, value] = cookie.split('=');
-    await t.page.context().addCookies([{name, value, url: t.base}]);
-    await t.page.goto(t.base + '/partner', {waitUntil: 'domcontentloaded'});
-    await t.page.waitForSelector('nav button');
-    const tabs = await t.page.$$eval('nav button', bs => bs.map(b => b.textContent));
-    const seen = {};
-    for(let i = 0; i < tabs.length; i++){
-      await t.page.click('nav button:nth-child(' + (i + 1) + ')');
-      await t.page.waitForTimeout(250);
-      seen[tabs[i]] = (await t.page.textContent('main')).length;
-    }
-    const home = await t.page.evaluate(() => { flxGo('home'); return document.querySelector('main').textContent; });
-    if(!/Welcome, Kavya/.test(home) || Object.values(seen).some(n => n < 30)) throw new Error(JSON.stringify(seen));
+  await step('Setup › Partner Levels changes what a level opens; Monks get HR; suspending shuts the login', async () => {
+    const r = await t.eval(async ids => {
+      window.alert = () => {};
+      document.body.insertAdjacentHTML('beforeend', '<div id="plvTest">' + renderSettingsPartnerLevels() + '</div>');
+      document.getElementById('plv_L1_operations').checked = true;
+      await plvSaveSettings();
+      document.getElementById('plvTest').remove();
+      const k = DB.team.find(t=>t.id===ids.kavya);
+      currentUser = ids.kavya;
+      const l1 = pageOpenToMe('dst');
+      currentUser = ids.admin;
+      const o = pobRecords().find(x=>x.id===ids.ninjaPob);
+      pobOpenLoginModal('POB', o.id, '');
+      document.getElementById('lgLevel').value = 'L5';
+      await pobSaveLogin(o.id, '');
+      currentUser = ids.ninja;
+      const l5 = ['hrdashboard','business','lms'].filter(v=>pageOpenToMe(v));
+      currentUser = ids.admin;
+      window.prompt = () => 'Test suspend';
+      await pobSetLoginStatus(o.id, 'Suspended');
+      const m = pobMemberOf(o);
+      // put L1 back as the sheet has it
+      DB.config.partnerLevels = null; await save('config');
+      return {l1, dst: k.perms.DST && k.perms.DST.view, l5, status: m.status, login: o.login.status};
+    }, ids);
+    if(!r.l1 || !r.dst) throw new Error('the setting did not reach L1: ' + JSON.stringify(r));
+    if(r.l5.join() !== 'hrdashboard,business,lms') throw new Error('L5 opens ' + r.l5.join());
+    if(r.status !== 'Inactive' || r.login !== 'Suspended') throw new Error(JSON.stringify(r));
+    return 'L1 given Operations from Setup; L5 opens ' + r.l5.join(', ') + '; suspended → Inactive';
+  });
+
+  await step('the empanelment form still draws', async () => {
     await t.page.goto(t.base + '/empanelment?t=' + encodeURIComponent(ids.token), {waitUntil: 'domcontentloaded'});
     await t.page.waitForTimeout(500);
     const form = await t.page.textContent('#wrap');
     if(!/Empanelment Form/.test(form)) throw new Error('the form page did not draw');
-    return tabs.join(' · ');
+    return 'Empanelment Form';
   });
 });
