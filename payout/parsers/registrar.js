@@ -54,8 +54,16 @@ function resolveColumns(headers) {
   return map;
 }
 
+// CAMS often sends a tab-separated text file named .xls. Real .xls, .xlsx and
+// .dbf files carry NUL bytes near the top (or start "PK"); text never does.
+function looksLikeText(buffer) {
+  const head = buffer.subarray(0, 4096);
+  if (head[0] === 0x50 && head[1] === 0x4b) return false;
+  return head.length > 0 && !head.includes(0);
+}
+
 export function readSheet(buffer, fileName = '') {
-  const isText = /\.(csv|txt)$/i.test(fileName);
+  const isText = /\.(csv|txt|tsv)$/i.test(fileName) || looksLikeText(buffer);
   // CSV/TXT are read as plain text: otherwise SheetJS reads 12/08/2026 as 8 December (US order),
   // and Indian registrar files are day-first. toISODate parses the text day-first.
   const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true, raw: isText });
