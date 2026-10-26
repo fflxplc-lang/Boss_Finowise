@@ -64,9 +64,12 @@ function looksLikeText(buffer) {
 
 export function readSheet(buffer, fileName = '') {
   const isText = /\.(csv|txt|tsv)$/i.test(fileName) || looksLikeText(buffer);
-  // CSV/TXT are read as plain text: otherwise SheetJS reads 12/08/2026 as 8 December (US order),
-  // and Indian registrar files are day-first. toISODate parses the text day-first.
-  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true, raw: isText });
+  // Text is read here, not by SheetJS: SheetJS reads 12/08/2026 as 8 December (US
+  // order) where Indian registrar files are day-first (toISODate parses the text
+  // day-first), and it builds an object for every cell, which for a 60 MB CAMS
+  // brokerage file of 110 columns is more memory than a small server has.
+  if (isText) return readText(buffer);
+  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   // Pick the sheet with the most rows (registrar exports sometimes ship a cover sheet).
   let best = null;
   for (const name of wb.SheetNames) {
@@ -74,6 +77,54 @@ export function readSheet(buffer, fileName = '') {
     if (!best || rows.length > best.length) best = rows;
   }
   return best || [];
+}
+
+// One line of delimited text into its cells; quotes as in CSV ("a, b" and "").
+function splitLine(line, sep) {
+  if (line.indexOf('"') < 0) return line.split(sep);
+  const out = [];
+  let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) {
+      if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === sep) { out.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+// Tab- or comma-separated text, line by line. Below the header row only the
+// columns a parser can use are kept (the rest are left empty), so a wide file
+// costs a fraction of its full size in memory.
+function readText(buffer) {
+  let text = buffer.toString('utf8');
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  const firstEnd = text.indexOf('\n');
+  const first = firstEnd < 0 ? text : text.slice(0, firstEnd);
+  const sep = (first.split('\t').length >= first.split(',').length) ? '\t' : ',';
+  const rows = [];
+  let keep = null, width = 0, at = 0;
+  while (at < text.length) {
+    let end = text.indexOf('\n', at);
+    if (end < 0) end = text.length;
+    let line = text.slice(at, end);
+    at = end + 1;
+    if (line.endsWith('\r')) line = line.slice(0, -1);
+    const cells = splitLine(line, sep);
+    if (!keep) {
+      rows.push(cells);
+      const cols = rows.length <= 25 ? resolveColumns(cells.map(String)) : null;
+      if (cols && Object.keys(cols).length >= 2 && ['folio', 'code', 'clientId', 'pan'].some((f) => f in cols)) { keep = [...new Set(Object.values(cols))]; width = cells.length; }
+      continue;
+    }
+    const row = new Array(Math.max(width, cells.length)).fill('');
+    for (const i of keep) if (i < cells.length) row[i] = cells[i];
+    rows.push(row);
+  }
+  return rows;
 }
 
 // Finds the header row (first row in the top 25 that matches at least 2 known fields).
