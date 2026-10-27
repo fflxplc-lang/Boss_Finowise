@@ -68,10 +68,12 @@ suite({mail: true}, async t => {
         nLevel: nm && nm.partnerLevel, nUp: nm && nm.parentUserId === km.id, nRm: nikhil.assignedTo, email: km && km.email,
         gst: kavya.payout.gst, ifsc: kavya.payout.bank.ifsc, sharing: kavya.payout.sharing, extra: kavya.payout.extraLevels.join(),
         journey: pobClientJourneyOpen(nikhil), tasks: nikhil.tasks.length, asha: (DB.clients.find(c => c.id === 'CL-IMP-ASHA')||{}).partnerPobId === kavya.id,
-        kPayout: kavya.payoutUserId, nPayout: nikhil.payoutUserId, admin: !!window.CRM_IS_ADMIN};
+        kPayout: kavya.payoutUserId, nPayout: nikhil.payoutUserId, admin: !!window.CRM_IS_ADMIN,
+        login: [kavya.login.status, nikhil.login.status].join(), active: [km.status, nm.status].join()};
     });
     if(r.n !== 2 || r.stage !== 'active,active' || r.pms !== 'onboarded' || r.arn !== 'ARN-270604' || r.pan !== 'ABCDE1234F') throw new Error(JSON.stringify(r));
     if(r.kLevel !== 'L3' || r.kScope !== 'team' || r.kUp !== 'TM-IMP-RAVI' || r.kRm !== 'TM-IMP-RAVI' || r.email !== 'kavya.imp@example.com') throw new Error(JSON.stringify(r));
+    if(r.login !== 'Activated,Activated' || r.active !== 'Active,Active') throw new Error('not activated on import: ' + JSON.stringify(r));
     if(r.nLevel !== 'L1' || !r.nUp || r.nRm !== 'TM-IMP-RAVI' || !r.journey || r.tasks) throw new Error(JSON.stringify(r));
     if(r.gst !== '27ABCDE1234F1Z5' || r.ifsc !== 'HDFC0001234' || r.sharing !== 75 || r.extra !== '2' || !r.asha) throw new Error(JSON.stringify(r));
     Object.assign(ids, {kPayout: r.kPayout, nPayout: r.nPayout});

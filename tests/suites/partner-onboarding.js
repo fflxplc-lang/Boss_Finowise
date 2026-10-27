@@ -48,7 +48,7 @@ suite({mail: true}, async t => {
       navigate('pob'); await new Promise(r=>setTimeout(r,60));
       const list = !!document.querySelector('#pobTable') && document.querySelector('#pobTable').textContent.includes('Kiran Shah');
       navigate('pms', ids.partner); await new Promise(r=>setTimeout(r,60));
-      const btn = Array.from(document.querySelectorAll('.prof-head button')).some(b=>b.textContent.includes('Partner Onboarding'));
+      const btn = Array.from(document.querySelectorAll('.prof-head button')).some(b=>b.textContent.includes('PMS Record'));
       navigate('pob', ids.pob); await new Promise(r=>setTimeout(r,60));
       const tabs = Array.from(document.querySelectorAll('.prof-tabs .tab')).map(x=>x.textContent.split(' (')[0]);
       return {list, btn, tabs};
@@ -466,8 +466,8 @@ suite({mail: true}, async t => {
     return Object.keys(r.out).length + ' tabs and 11 record tabs drawn';
   });
 
-  await step('the letters are in Setup › Email Templates under Partner Onboarding', async () => {
-    const r = await t.eval(()=>MAIL_TEMPLATE_DEFS.filter(d=>d.group==='Partner Onboarding').map(d=>d.key)
+  await step('the letters are in Setup › Email Templates under PMS', async () => {
+    const r = await t.eval(()=>MAIL_TEMPLATE_DEFS.filter(d=>d.group==='PMS · Partner Managing System').map(d=>d.key)
       .filter(k=>DB.config.mailTemplates[k] && DB.config.mailTemplates[k].subject));
     if(r.length !== 8) throw new Error(r.join());
     return r.join(', ');

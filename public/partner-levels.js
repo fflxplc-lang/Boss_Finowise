@@ -14,8 +14,11 @@
      L5 Monks          everything and HR                      team and partners mapped
      L6 Zen Monks      everything and HR                      team and partners mapped
 
-   L1–L3 also see their own tasks, performance and payouts in Partner
-   Journey. Setup › Partner Levels changes any of it.
+   Every level sees its own tasks, performance and payouts in Partner
+   Journey and raises queries in PQS (L3 up also follows its team's).
+   "Everything" includes Partner Journey itself (PPS, Onboarding, PMS),
+   so L4–L6 onboard partners and build their own teams there. Setup ›
+   Partner Levels changes any of it.
 
    Loaded by the CRM (index.html) and by the server, which will hold the
    same rule. */
@@ -34,7 +37,12 @@
     {k:'forms',      l:'Forms',           modules:[]},
     {k:'insights',   l:'Insights',        modules:[]},
     {k:'hr',         l:'HR',              modules:[]},
+    {k:'partnerjourney', l:'Partner Journey (PPS, Onboarding, PMS)', modules:['Partners']},
   ];
+  /* Groups added after a firm may already have saved its levels: a level
+     whose defaults hold one gets it, unless it was saved since. */
+  const LATER = {partnerjourney: 2};
+  const VERSION = 2;
   const ALL = GROUPS.map(g=>g.k);
   const EVERYTHING = ALL.filter(k=>k !== 'hr');
   const SCOPES = [['own','Own business only'], ['team','Partners mapped to them'], ['all','Everyone']];
@@ -53,8 +61,11 @@
     const s = (saved && saved.levels) || {};
     return LEVELS.map(d=>{
       const o = s[d.k] || {};
+      let groups = Array.isArray(o.groups) ? o.groups.filter(g=>ALL.includes(g)) : d.groups.slice();
+      const v = Number((saved && saved.v) || 1);
+      if(Array.isArray(o.groups)) Object.keys(LATER).forEach(g=>{ if(v < LATER[g] && d.groups.includes(g) && !groups.includes(g)) groups.push(g); });
       return Object.assign({}, d, {
-        groups: Array.isArray(o.groups) ? o.groups.filter(g=>ALL.includes(g)) : d.groups.slice(),
+        groups,
         scope: SCOPES.some(x=>x[0] === o.scope) ? o.scope : d.scope,
       });
     });
@@ -66,8 +77,10 @@
     return lv ? lv.k : 'L1';
   }
   /* The permission grid a level hands its partners: the modules its
-     groups need, and View on Partners to read their own Partner
-     Journey and performance (the pages they open there are only those). */
+     groups need, View on Partners to read their own Partner Journey and
+     performance (the pages they open there are only those), and PQS of
+     its own: every level raises queries and follows them; a level that
+     sees its team (L3 up) also works its team's. */
   function perms(lv, allModules){
     const out = {};
     (allModules || []).forEach(m=>{ out[m] = {}; });
@@ -75,7 +88,8 @@
     lv.groups.forEach(g=>{ const x = GROUPS.find(y=>y.k === g); (x ? x.modules : []).forEach(m=>mods.add(m)); });
     mods.forEach(m=>{ out[m] = {}; ACTIONS.forEach(a=>{ out[m][a] = 1; }); });
     out.Partners = Object.assign({}, out.Partners, {view: 1});
+    out.PQS = {view: 1, create: 1, edit: lv.scope === 'own' ? 0 : 1};
     return out;
   }
-  return {GROUPS, LEVELS, SCOPES, ACTIONS, roleName, levels, level, levelForRole, perms};
+  return {GROUPS, LEVELS, SCOPES, ACTIONS, VERSION, roleName, levels, level, levelForRole, perms};
 });
