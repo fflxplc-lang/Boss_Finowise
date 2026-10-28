@@ -114,6 +114,29 @@ suite(async t => {
     return 'Anmol ₹' + aug['ANMOL KUMAR JHA'] + ' in August';
   });
 
+  await t.step('the main dashboard shows the partner business, the firm’s or one person’s team', async () => {
+    const r = await t.eval(async () => {
+      const firm = await pyGet('/dashboard/partners');
+      const anmol = await pyGet('/dashboard/partners?email=anmol@example.com');
+      const kiran = await pyGet('/dashboard/partners?email=kiran@example.com');
+      const nobody = await pyGet('/dashboard/partners?email=nobody@example.com');
+      window._dashWho = ''; DASH_PY.cache = {};
+      navigate('dashboard');
+      await new Promise(r => setTimeout(r, 1500));
+      const box = document.getElementById('dashPyTeam');
+      return {firm: firm.totals, scope: firm.scope, anmol: anmol.totals, kiran: kiran.totals, nobody: !!nobody.none,
+        anmolTeam: anmol.team.map(x => x.name), kiranTeam: kiran.team.map(x => x.name),
+        rows: box ? box.querySelectorAll('tbody tr').length : -1, trend: firm.trend.length};
+    });
+    const names = r.anmolTeam.join('|');
+    if(r.scope !== 'firm' || !(r.firm.gross12 > 0) || !(r.firm.clients > 0) || r.trend !== 6) throw new Error('firm ' + JSON.stringify(r));
+    if(!(r.anmol.gross12 > 0) || r.anmol.gross12 > r.firm.gross12 || r.kiran.gross12 > r.anmol.gross12) throw new Error('totals ' + JSON.stringify(r));
+    if(!/ANMOL KUMAR JHA/.test(names) || /PRIYA NAIR|MEENA IYER|SURESH MENON/.test(names)) throw new Error('Anmol’s team ' + names);
+    if(r.kiranTeam.some(n => n !== 'KIRAN PATIL') || !r.nobody) throw new Error('Kiran ' + JSON.stringify(r));
+    if(r.rows < 1) throw new Error('the dashboard has no partner table: ' + r.rows);
+    return 'firm ₹' + Math.round(r.firm.gross12) + ' over 12 months, Anmol’s team ₹' + Math.round(r.anmol.gross12) + ', Kiran ₹' + Math.round(r.kiran.gross12) + '; ' + r.rows + ' people on the dashboard';
+  });
+
   await t.step('every payout screen and tab draws without an error', async () => {
     const tabs = {pyimports: ['impTab', ['new', 'history', 'trash']], pyclients: ['clientsTab', ['hierarchy', 'clients', 'standardize']],
       pyreports: ['repTab', ['summary', 'monthly', 'client', 'logs', 'team', 'growth', 'approvals', 'recon']],
