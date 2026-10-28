@@ -225,7 +225,10 @@ function install(deps) {
     let moved = 0;
     for (const w of webinars) {
       const slots = dueSlots(w, s, now);
+      /* A referred prospect has no webinar to wait for (see the PPS
+         blueprint): no reminders, no joining link, no stage moved. */
       const regs = prospects.filter((p) => p && !p.deletedAt && p.webinarId === w.id
+        && !String(p.referralCode || '').trim()
         && AWAITING_SESSION.includes(p.ppsStage || 'registered'));
       /* Once the session has begun, whoever was still waiting for a
          reminder is at the session too: the RM marks who attended. */

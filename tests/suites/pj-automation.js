@@ -39,12 +39,13 @@ suite({mail: true}, async t => {
       };
       const ids = {acked: mk('Anil', 'acknowledged'), fresh: mk('Bina', 'registered'),
         whats: mk('Chetan', 'acknowledged', {commChannel: 'WhatsApp'}), gone: mk('Dev', 'community'),
-        elsewhere: mk('Esha', 'acknowledged', {webinarId: other.id})};
+        elsewhere: mk('Esha', 'acknowledged', {webinarId: other.id}),
+        referred: mk('Farah', 'acknowledged', {referralCode: 'MS-ZZ01', referralName: 'Ravi Sherpa'})};
       await save('partnerWebinars'); await save('partnerProspects');
       return {w: w.id, ids};
     });
     web = r.w; ids = r.ids;
-    return '5 prospects, 4 on this webinar';
+    return '6 prospects, 5 on this webinar (one of them referred)';
   });
 
   await t.step('two days before, at 10 AM, the registered are reminded and the stage follows', async () => {
@@ -59,6 +60,7 @@ suite({mail: true}, async t => {
     if(st(ids.acked) !== 'remindersSent' || st(ids.whats) !== 'remindersSent') throw new Error('stages ' + st(ids.acked) + '/' + st(ids.whats));
     if(st(ids.fresh) !== 'registered') throw new Error('a prospect nobody acknowledged was moved on');
     if(st(ids.gone) !== 'community' || comms.some(c=>c.recordId===ids.gone || c.recordId===ids.elsewhere)) throw new Error('wrote to someone not on this session');
+    if(st(ids.referred) !== 'acknowledged' || comms.some(c=>c.recordId===ids.referred)) throw new Error('a referred prospect was sent a session reminder');
     if(!comms.some(c=>c.channel==='WhatsApp' && c.recordId===ids.whats && c.status==='Not Sent')) throw new Error('the WhatsApp registration has no WhatsApp line');
     if(!/2 days/.test(got[0].text)) throw new Error('the letter should say how far off it is');
     return got.length + ' letters, ' + r.reminders.moved + ' moved to Reminders Sent, WhatsApp recorded as owed';
@@ -90,6 +92,31 @@ suite({mail: true}, async t => {
     if(!link[0].text.includes('https://meet.example.com/zz-session')) throw new Error('the letter does not carry the link');
     if(st(ids.acked) !== 'sessionDay') throw new Error('stage ' + st(ids.acked));
     return link.length + ' joining links, Session Day reached';
+  });
+
+  await t.step('a referred prospect gets no reminder and no joining link, and goes straight to the payment link', async () => {
+    t.mail.clear();
+    const list = await stored('partnerProspects');
+    const p = list.find(x=>x.id===ids.referred) || {};
+    const sent = (await stored('communications')).filter(c=>c.recordId===ids.referred);
+    if(p.ppsStage !== 'acknowledged' || sent.length) throw new Error('referred prospect was written to: ' + JSON.stringify({stage: p.ppsStage, sent: sent.map(c=>c.label)}));
+    const r = await t.eval(async id => {
+      await loadAll(); const rec = pjProspects().find(x=>x.id===id);
+      const offered = availableTransitions('PPS', stateOf('PPS', rec), null, rec).map(x=>x.id);
+      const path = ppsPathFor(rec);
+      pjOpenPaymentLinkModal('PPS', id, 'referredLinkT');
+      document.getElementById('f_paymentLink').value = 'https://pay.example.com/zz-ref';
+      await pjSendPaymentLink(id, 'referredLinkT');
+      const after = pjProspects().find(x=>x.id===id);
+      return {offered, path, stage: stateOf('PPS', after)};
+    }, ids.referred);
+    await t.wait(300);
+    const mail = t.mail.matching(/your payment link/);
+    if(!r.offered.includes('referredLinkT') || r.offered.includes('remindersT')) throw new Error('offered ' + r.offered);
+    if(r.path.includes('remindersSent') || r.path.includes('sessionDay')) throw new Error('path ' + r.path);
+    if(r.stage !== 'paymentLinkSent') throw new Error(r.stage);
+    if(mail.length && (/attending/.test(mail[0].text) || !/Ravi Sherpa/.test(mail[0].text))) throw new Error('the letter thanks them for a webinar: ' + mail[0].text);
+    return 'path ' + r.path.join(' → ') + '; payment link sent' + (mail.length ? ', naming the referrer' : '');
   });
 
   await t.step('once the session has started, nothing more goes', async () => {

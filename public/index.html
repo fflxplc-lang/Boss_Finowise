@@ -32758,6 +32758,8 @@ function defaultConfig(){
         body:"Dear {Name},\n\n\"{Webinar}\" starts in 24 hours.\n\n📅 Date: {Date}\n⏰ Time: {Time}\n🔗 Joining Link: {JoiningLink}\n\nPlease join a few minutes early.\n\n{Signature}"},
       pjPaymentLink: {subject:"Become a partner — your payment link",
         body:"Dear {Name},\n\nThank you for attending \"{Webinar}\".\n\nTo join as a partner, the partner fee is {Fee}. You can pay it here:\n\n{PaymentLink}\n\nOnce it is paid, please reply with the payment reference / UTR so we can verify it and welcome you aboard.\n\n{Signature}"},
+      pjReferralPaymentLink: {subject:"Become a partner — your payment link",
+        body:"Dear {Name},\n\nThank you for your interest in partnering with us{ReferredBy}.\n\nTo join as a partner, the partner fee is {Fee}. You can pay it here:\n\n{PaymentLink}\n\nOnce it is paid, please reply with the payment reference / UTR so we can verify it and welcome you aboard.\n\n{Signature}"},
       pjWelcome: {subject:"Payment received — welcome to Freedom Gurukul, {Name}",
         body:"Dear {Name},\n\nWe have received and verified your payment of {Fee} on {PaidOn} (reference {Reference}). Thank you, and welcome aboard!\n\nYour Freedom Gurukul access:\n\n🔗 {GurukulLink}\n{GurukulNote}\n\nYour relationship manager will be in touch shortly to set up a one-to-one discussion.\n\n{Signature}"},
       pjOneToOne: {subject:"Your one-to-one discussion — {Date}",
@@ -49766,7 +49768,7 @@ const BLUEPRINT_PPS = {
     {id:'acknowledged',    label:'Acknowledged / Added to Community'},
     {id:'remindersSent',   label:'Session Reminders Sent'},
     {id:'sessionDay',      label:'Session-Day Reminder & Joining Link Sent'},
-    {id:'paymentLinkSent', label:'Attended — Payment Link & Interest Form Sent'},
+    {id:'paymentLinkSent', label:'Payment Link & Interest Form Sent'},
     {id:'rmFollowUp',      label:'RM Follow-up Call'},
     {id:'paymentVerification', label:'Payment Received — Verification Pending'},
     {id:'community',       label:'Marketing & Education Community', terminal:true, color:'warn'},
@@ -49779,6 +49781,11 @@ const BLUEPRINT_PPS = {
        for the webinar by themselves (partner-journey.js), and the stage
        moves with them, so they are not buttons unless PPS › Settings asks. */
     {id:'remindersT',    from:'acknowledged', to:'remindersSent', label:'Send a Session Reminder', kind:'forward', showIfRule:'pjManualSessionSends'},
+    /* A referred prospect has no webinar to wait for: the session reminders
+       and the joining link are skipped, and the payment link and interest
+       form go straight after the acknowledgement. */
+    {id:'referredLinkT', from:'acknowledged', to:'paymentLinkSent', label:'Referred — Send Payment Link & Interest Form', kind:'forward', color:'ok', showIfRule:'pjReferred'},
+    {id:'referredLinkRemT', from:'remindersSent', to:'paymentLinkSent', label:'Referred — Send Payment Link & Interest Form', kind:'forward', color:'ok', showIfRule:'pjReferred'},
     {id:'back_ack',      from:'acknowledged', to:'registered', label:'Back', kind:'back'},
     {id:'sessionDayT',   from:'remindersSent', to:'sessionDay', label:'Session-Day Reminder & Joining Link Sent', kind:'forward', showIfRule:'pjManualSessionSends'},
     {id:'back_rem',      from:'remindersSent', to:'acknowledged', label:'Back', kind:'back'},
@@ -49856,13 +49863,18 @@ MODULE_VIEW.PPS = 'pps'; MODULE_VIEW.PMS = 'pms'; MODULE_VIEW.PQS = 'pqs'; MODUL
 Object.keys(MODULE_DB_KEY).forEach(m=>{ bulkSelection[m] = bulkSelection[m] || new Set(); });
 TRANSITION_RULES.pjViaEmail = r => (r && r.commChannel) !== 'WhatsApp';
 TRANSITION_RULES.pjViaWhatsapp = r => (r && r.commChannel) !== 'Email';
-TRANSITION_RULES.pjManualSessionSends = () => pjConfig().manualSessionSends === 'Yes';
+TRANSITION_RULES.pjManualSessionSends = r => pjConfig().manualSessionSends === 'Yes' && !pjReferred(r);
+TRANSITION_RULES.pjReferred = r => pjReferred(r);
+/* Referred by a Master Sherpa / Monk's code, rather than registered for a webinar. */
+function pjReferred(r){ return !!String((r && r.referralCode) || '').trim(); }
 /* The steps that do something besides move: a letter that goes, a form
    that is filled. Each opens its own box, and the box moves the stage. */
 STAGE_FORM_HANDLERS.ackEmailT = 'pjOpenAckModal';
 STAGE_FORM_HANDLERS.remindersT = 'pjOpenSessionMailModal';
 STAGE_FORM_HANDLERS.sessionDayT = 'pjOpenSessionMailModal';
 STAGE_FORM_HANDLERS.attendedYesT = 'pjOpenPaymentLinkModal';
+STAGE_FORM_HANDLERS.referredLinkT = 'pjOpenPaymentLinkModal';
+STAGE_FORM_HANDLERS.referredLinkRemT = 'pjOpenPaymentLinkModal';
 STAGE_FORM_HANDLERS.paidT = 'pjOpenPaymentModal';
 STAGE_FORM_HANDLERS.paidAfterCallT = 'pjOpenPaymentModal';
 STAGE_FORM_HANDLERS.payVerifiedT = 'pjOpenVerifyPaymentModal';
@@ -50244,7 +50256,7 @@ function pjAutoSendText(r, w){
    shows that instead of the payment. */
 function ppsPathFor(r){
   const been = id => ((r && r.blueprintHistory)||[]).some(h=>h.state===id) || stateOf('PPS', r)===id;
-  const path = ['registered','acknowledged','remindersSent','sessionDay','paymentLinkSent'];
+  const path = ['registered','acknowledged'].concat(pjReferred(r) && !been('remindersSent') && !been('sessionDay') ? [] : ['remindersSent','sessionDay'], ['paymentLinkSent']);
   if(been('rmFollowUp')) path.push('rmFollowUp');
   if(stateOf('PPS', r)==='community') path.push('community'); else path.push('paymentVerification', 'converted');
   return path;
@@ -50572,7 +50584,7 @@ function pjOpenPaymentLinkModal(module, id, tid){
   if(!r) return;
   const w = pjWebinars().find(x=>x.id===r.webinarId) || {};
   const f = [{k:'paymentLink', l:'Payment Link', t:'text', req:1, h:'Taken from the webinar. Change it here for this prospect only.'}];
-  openModal('Attended — Send Payment Link to ' + pjName(r),
+  openModal((String(tid).startsWith('referred') ? 'Referred — Send Payment Link to ' : 'Attended — Send Payment Link to ') + pjName(r),
     `<p class="small-note" style="margin-top:0">Emails the ${esc(money(pjFee()))} payment link to <b>${esc(r.email||'no address on file')}</b>.</p>`
     + f.map(x=>fieldInput(x, r.paymentLink || pjConfig().paymentLink || w.paymentLink || '')).join(''),
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSendPaymentLink('${esc(id)}','${esc(tid)}')">Send Payment Link</button>`);
@@ -50586,8 +50598,13 @@ async function pjSendPaymentLink(id, tid){
   const w = pjWebinars().find(x=>x.id===r.webinarId) || {};
   r.paymentLink = data.paymentLink;
   closeModal();
-  const res = await pjMail('PPS', r, 'pjPaymentLink', {Webinar: w.title || 'our session', Fee: money(pjFee()), PaymentLink: data.paymentLink},
-    'Payment link');
+  const referred = String(tid).startsWith('referred');
+  const who = r.referralName || r.masterSherpa || '';
+  const res = referred
+    ? await pjMail('PPS', r, 'pjReferralPaymentLink', {ReferredBy: who ? ', on the referral of ' + who : '', ReferralName: who, Fee: money(pjFee()), PaymentLink: data.paymentLink},
+      'Payment link (referred)')
+    : await pjMail('PPS', r, 'pjPaymentLink', {Webinar: w.title || 'our session', Fee: money(pjFee()), PaymentLink: data.paymentLink},
+      'Payment link');
   r.paymentLinkSentAt = new Date().toISOString();
   await doTransition('PPS', id, tid);
   pjSaidMail(res, 'The payment link');
@@ -50896,7 +50913,11 @@ async function migratePartnerJourneyBlueprints(){
     if(!bp || !Array.isArray(bp.states) || !Array.isArray(bp.transitions)) return;
     const code = BLUEPRINTS[m];
     code.states.forEach((st, i)=>{
-      if(bp.states.some(x=>x.id===st.id)) return;
+      /* A referred prospect reaches the payment link without attending, so
+         the stage no longer says they attended. */
+      const was = bp.states.find(x=>x.id===st.id);
+      if(was && st.id==='paymentLinkSent' && was.label==='Attended — Payment Link & Interest Form Sent'){ was.label = st.label; touched = true; }
+      if(was) return;
       const before = code.states[i+1] && bp.states.findIndex(x=>x.id===code.states[i+1].id);
       if(before >= 0) bp.states.splice(before, 0, JSON.parse(JSON.stringify(st))); else bp.states.push(JSON.parse(JSON.stringify(st)));
       touched = true;
@@ -50973,6 +50994,8 @@ function pjStagePanelHtml(module, r, cur){
       : r.commChannel==='Email' ? 'Registered through email: send the acknowledgement email.' : 'Set the type of communication with Edit, and the stage offers the matching step.');
     const w = pjWebinars().find(x=>x.id===r.webinarId);
     const auto = pjConfig().autoReminders !== 'No';
+    if((cur==='acknowledged' || cur==='remindersSent') && pjReferred(r)) return note('Referred' + (r.referralName ? ' by ' + esc(r.referralName) : '')
+      + ' — there is no webinar to wait for, so no session reminders or joining link go out. Send the payment link and the interest form.') + pjFormStatusNote(r);
     if((cur==='acknowledged' || cur==='remindersSent') && w && auto) return note('Reminders go out by themselves before “' + esc(w.title||'the session')
       + '” on ' + esc(fmtDate(w.date)||'—') + ' — ' + esc(pjReminderPlanText()) + ' — and the joining link ' + esc(String(Number(pjConfig().linkHoursBefore)||24)) + ' hours before it. Nothing to press: the stage moves on its own as they go'
       + (pjConfig().manualSessionSends==='Yes' ? ', and the button sends one now.' : '.'))
@@ -76535,6 +76558,9 @@ const MAIL_TEMPLATE_DEFS = [
   {group:'Partner Journey', key:'pjPaymentLink', label:'PPS — payment link, after the session',
    when:'Sent from Attended \u2014 Send Payment Link.',
    vars:['Name','Webinar','Fee','PaymentLink','RMName','FirmName']},
+  {group:'Partner Journey', key:'pjReferralPaymentLink', label:'PPS — payment link, for a referred prospect (no webinar)',
+   when:'Sent from Referred \u2014 Send Payment Link & Interest Form.',
+   vars:['Name','ReferredBy','ReferralName','Fee','PaymentLink','RMName','FirmName']},
   {group:'Partner Journey', key:'pjWelcome', label:'Onboarding — payment acknowledgement & welcome, with Freedom Gurukul access',
    when:'Sent the moment a payment is verified and the partner is created in Onboarding.',
    vars:['Name','Fee','PaidOn','Reference','GurukulLink','GurukulNote','RMName','FirmName']},
@@ -76625,6 +76651,9 @@ const MAIL_WORDING_REVISIONS = [
   //     server, which sends three of them on its own, reads the firm's copy.
   {n:4, keys:['pjAck','pjReminder','pjJoiningLink','pjPaymentLink','pjWelcome','pjOneToOne','pjInduction',
     'pjCourses','pjNismDoubt','pjOnboardingVideo','pjOnboardingOneToOne','pjArnExpiry']},
+  // 5 — a referred prospect's payment link, which does not thank them for a
+  //     webinar they never attended.
+  {n:5, keys:['pjReferralPaymentLink']},
 ];
 const MAIL_WORDING_REVISION = MAIL_WORDING_REVISIONS[MAIL_WORDING_REVISIONS.length-1].n;
 async function migrateMailTemplateWording(){
