@@ -32758,6 +32758,8 @@ function defaultConfig(){
         body:"Dear {Name},\n\n\"{Webinar}\" starts in 24 hours.\n\n📅 Date: {Date}\n⏰ Time: {Time}\n🔗 Joining Link: {JoiningLink}\n\nPlease join a few minutes early.\n\n{Signature}"},
       pjPaymentLink: {subject:"Become a partner — your payment link",
         body:"Dear {Name},\n\nThank you for attending \"{Webinar}\".\n\nTo join as a partner, the partner fee is {Fee}. You can pay it here:\n\n{PaymentLink}\n\nOnce it is paid, please reply with the payment reference / UTR so we can verify it and welcome you aboard.\n\n{Signature}"},
+      pjReferralPaymentLink: {subject:"Become a partner — your payment link",
+        body:"Dear {Name},\n\nThank you for your interest in partnering with us{ReferredBy}.\n\nTo join as a partner, the partner fee is {Fee}. You can pay it here:\n\n{PaymentLink}\n\nOnce it is paid, please reply with the payment reference / UTR so we can verify it and welcome you aboard.\n\n{Signature}"},
       pjWelcome: {subject:"Payment received — welcome to Freedom Gurukul, {Name}",
         body:"Dear {Name},\n\nWe have received and verified your payment of {Fee} on {PaidOn} (reference {Reference}). Thank you, and welcome aboard!\n\nYour Freedom Gurukul access:\n\n🔗 {GurukulLink}\n{GurukulNote}\n\nYour relationship manager will be in touch shortly to set up a one-to-one discussion.\n\n{Signature}"},
       pjOneToOne: {subject:"Your one-to-one discussion — {Date}",
@@ -33289,6 +33291,9 @@ function permGivenActions(u, m){
 function can(module, action){
   const u = me(); if(!u) return false;
   if(isAdmin(u)) return true; // Admin retains full access always
+  /* PQS of its own, which a partner's level hands them (partner-levels.js):
+     a partner raises queries without being given the rest of Partners. */
+  if(module === 'PQS' && u.perms && u.perms.PQS) return !!u.perms.PQS[action] || permHas(u, 'Partners', action);
   const m = permModule(module);
   /* A module closed to this role is closed whatever the action, so one
      setting shuts the whole module rather than forty. */
@@ -33368,6 +33373,12 @@ function sortRows(rows, tableKey, cols){
   });
 }
 function visibleRecords(list, ownerFn, branchFn){
+  const out = visibleRecordsByScope(list, ownerFn, branchFn);
+  const n = dashNarrow();
+  if(!n) return out;
+  return out.filter(r=>n.ids.has(ownerFn(r)) || (r.partnerPobId && n.pobs.has(r.partnerPobId)));
+}
+function visibleRecordsByScope(list, ownerFn, branchFn){
   const u = me();
   if(!u) return [];
   const notDeleted = list.filter(r=>!r.deletedAt);
@@ -33594,7 +33605,10 @@ function navigate(view, arg){
     pmsDetailId = (arg!==undefined && arg!=='') ? arg : null;
   } else if(view==='pob'){
     pobDetailId = (arg!==undefined && arg!=='') ? arg : null;
-  } else if(['pqs','ppo','ppf','mypj'].includes(view)){
+  } else if(view==='pqs'){
+    /* a list page; a query asked for by id opens over it */
+    window._pqsOpen = (arg!==undefined && arg!=='') ? arg : null;
+  } else if(['ppo','ppf','mypj'].includes(view)){
     /* list pages with nothing open on them */
   } else if(view==='dst'){
     dstDetailId = (arg!==undefined) ? arg : null;
@@ -33683,6 +33697,7 @@ async function boot(){
   await migrateBusinessDeclined();
   await migratePartnerJourneyBlueprints();
   await migratePartnerOnboarding();
+  await migratePartnerLevelPerms();
   await migrateMultiGoalBlueprint();
   await migrateConsentTransactions();
   await migrateSchemeAmcNames();
@@ -34192,8 +34207,8 @@ function render(){
     hrincentive:['Incentive Management','The existing records a future incentive rule will be read from'],
     hrappraisal:['Appraisal Management','The existing records a future appraisal will be read from'],
     pps:['PPS · Partner Perspective System','Registration to the partner fee'],
-    pms:['PMS · Partner Managing System','From the fee to the onboarding journey'],
-    pob:['POB · Partner Onboarding','From the due payment to an active partner'],
+    pms:['Onboarding · Partner Onboarding','From the fee to the onboarding journey'],
+    pob:['PMS · Partner Managing System','From the due payment to an active partner'],
     pqs:['PQS · Partner Query System','Partner queries, worked to closed'],
     ppo:['Partner Payout System','What each partner is owed and paid'],
     ppf:['Partner Performance System','The funnel and each partner'],
@@ -34445,7 +34460,7 @@ const NAV_LABELS = {
   queries:'QMS · Query Management', mailbox:'Mail', portfolio:'Portfolio Review',
   fqtests:'FQ Assessments', iseqforms:'ISEQ Forms', cifforms:'CIF Forms',
   planforms:'Plan Input Forms', ctforms:'C&T Forms',
-  pps:'PPS · Partner Perspective System', pms:'PMS · Partner Managing System', pob:'POB · Partner Onboarding', pqs:'PQS · Partner Query System',
+  pps:'PPS · Partner Perspective System', pms:'Onboarding · Partner Onboarding', pob:'PMS · Partner Managing System', pqs:'PQS · Partner Query System',
   ppo:'Partner Payout System', ppf:'Partner Performance System', mypj:'My Partner Journey',
   pydash:'Payout Dashboard', pyimports:'Data Import', pyclients:'Clients & Map', pyreports:'Reports & Payouts',
   pyrates:'Brokerage Rates', pypartner:'Partner Brokerage', pyledger:'Payouts Ledger', pyaudit:'Audit Log', pysettings:'Payout Settings',
@@ -34466,7 +34481,7 @@ const NAV_SHORT = {
   arc:'ARC', dwt:'DWT', djt:'DJT', dst:'DST', queries:'QMS', business:'DBT',
   fqtests:'FQ', iseqforms:'ISEQ', cifforms:'CIF', ctforms:'C&T',
   mis:'MIS',
-  pps:'PPS', pms:'PMS', pob:'Onboarding', pqs:'PQS', ppo:'Payout', ppf:'Performance',
+  pps:'PPS', pms:'Onboarding', pob:'PMS', pqs:'PQS', ppo:'Payout', ppf:'Performance',
 };
 /* The name to show, and the name to say when the pointer rests on it. */
 function navLabelOf(id){ return NAV_SHORT[id] || NAV_LABELS[id] || id; }
@@ -36540,7 +36555,7 @@ function dashCtx(){
   lazy('lost', mdLost);
   lazy('eff', mdEfficiency);
   lazy('rev', mdRevenue);
-  lazy('projects', ()=>(DB.projects || []).filter(p=>!p.deletedAt));
+  lazy('projects', ()=>visibleRecords(DB.projects || [], p=>p.owner, p=>p.branch));
   /* Counting people, not rows: a client holding Equity and Debt is one
      client under each, not two under either. The old cut counted
      transactions, so the card read "nothing recorded" for a book whose
@@ -36560,7 +36575,9 @@ function dashCtx(){
   lazy('overdueTasks', ()=>DB.tasks.filter(t=>t.assignTo === currentUser && !t.deletedAt
     && t.overallStatus !== 'Completed' && t.overallStatus !== 'Cancelled'
     && t.dueDate && t.dueDate < c.today));
-  lazy('upcoming', ()=>DB.reviews.filter(r=>!r.deletedAt && r.meetingDate && r.meetingDate >= c.today).slice(0, 5));
+  lazy('upcoming', ()=>visibleRecords(DB.reviews, r=>r.assignTo || (DB.clients.find(x=>x.id===r.clientId)||{}).rmName,
+      r=>(DB.clients.find(x=>x.id===r.clientId)||{}).branch)
+    .filter(r=>r.meetingDate && r.meetingDate >= c.today).sort((a,b)=>String(a.meetingDate).localeCompare(String(b.meetingDate))).slice(0, 5));
   return c;
 }
 function mdPctCell(p){
@@ -36862,7 +36879,46 @@ function dashOrdered(list){
 function dashWidgetsIn(section){
   return dashOrdered(dashAllWidgets().filter(w=>(w.section || 'book') === section));
 }
+/* WHOSE NUMBERS. The dashboard reads every figure through visibleRecords(),
+   so it already shows what somebody's scope opens to them: their own
+   book, and on team scope everyone reporting to them however deep (a
+   partner's level sets the same). The bar above it says which, and lets
+   anybody with a team narrow it to themselves or to one of their people
+   for as long as they are on the dashboard; it never widens anything.
+   It is read off the reporting line each time, so a change of role,
+   level or manager shows on the next render. */
+function dashTeamPeople(){
+  const u = me();
+  if(!u || isAdmin(u) || u.scope==='all' || u.scope==='branch') return [];
+  return u.scope==='team' ? userDescendants(u.id).filter(t=>t && !t.deletedAt) : [];
+}
+function dashNarrow(){
+  if(currentView!=='dashboard' || !window._dashWho) return null;
+  const u = me(); if(!u) return null;
+  let people;
+  if(window._dashWho==='me') people = [u];
+  else {
+    const t = dashTeamPeople().find(x=>x.id===window._dashWho);
+    if(!t) return null;
+    people = [t].concat(userDescendants(t.id));
+  }
+  return {ids: new Set(people.map(t=>t.id)), pobs: new Set(people.map(t=>t.partnerPobId).filter(Boolean))};
+}
+function dashScopeBarHtml(){
+  const u = me(); if(!u) return '';
+  const team = dashTeamPeople();
+  const what = isAdmin(u) || u.scope==='all' ? 'the whole firm'
+    : u.scope==='branch' ? 'your branch' + (u.branch ? ' (' + u.branch + ')' : '')
+    : team.length ? 'you and the ' + team.length + ' ' + (team.length===1 ? 'person' : 'people') + ' reporting to you'
+    : 'your own records';
+  const sel = team.length ? `<select id="dashWho" onchange="window._dashWho=this.value; render()" style="width:auto;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card,#fff)" aria-label="Whose numbers">
+      <option value="">Me and my team</option><option value="me" ${window._dashWho==='me'?'selected':''}>Only me</option>
+      ${team.map(t=>`<option value="${esc(t.id)}" ${window._dashWho===t.id?'selected':''}>${esc(t.name)}${t.partnerLevel ? ' · ' + esc(t.partnerLevel) : ''} and their team</option>`).join('')}</select>` : '';
+  return `<div class="row between" id="dashScope" style="margin-bottom:10px;gap:10px;flex-wrap:wrap">
+    <span class="small-note" style="margin:0">Showing <b>${esc(what)}</b>, by your access and reporting line.</span>${sel}</div>`;
+}
 function viewDashboard(){
+  if(window._dashWho && window._dashWho!=='me' && !dashTeamPeople().some(t=>t.id===window._dashWho)) window._dashWho = '';
   const c = dashCtx();
   const out = DASH_SECTIONS.map(sec=>{
     const mine = dashWidgetsIn(sec.id).filter(w=>dashMaySee(w));
@@ -36882,7 +36938,8 @@ function viewDashboard(){
       <div class="md-grid">${cards.join('')}</div>
     </div>`;
   }).filter(Boolean).join('');
-  return out || `<div class="empty">Nothing on the dashboard is open to you.
+  if(out) return dashScopeBarHtml() + out;
+  return `<div class="empty">Nothing on the dashboard is open to you.
     ${dashAllWidgets().some(w=>dashIsOn(w) && !dashRoleMay(w))
       ? 'Every card here has been named for other roles.' : ''}
     ${accessRequestChip({kind:'page', view:'dashboard'}, 'Ask for dashboard access')}</div>`;
@@ -49711,11 +49768,11 @@ const BLUEPRINT_PPS = {
     {id:'acknowledged',    label:'Acknowledged / Added to Community'},
     {id:'remindersSent',   label:'Session Reminders Sent'},
     {id:'sessionDay',      label:'Session-Day Reminder & Joining Link Sent'},
-    {id:'paymentLinkSent', label:'Attended — Payment Link & Interest Form Sent'},
+    {id:'paymentLinkSent', label:'Payment Link & Interest Form Sent'},
     {id:'rmFollowUp',      label:'RM Follow-up Call'},
     {id:'paymentVerification', label:'Payment Received — Verification Pending'},
     {id:'community',       label:'Marketing & Education Community', terminal:true, color:'warn'},
-    {id:'converted',       label:'Fee Paid — Moved to PMS', terminal:true, color:'ok'},
+    {id:'converted',       label:'Fee Paid — Moved to Onboarding', terminal:true, color:'ok'},
   ],
   transitions: [
     {id:'ackEmailT',     from:'registered', to:'acknowledged', label:'Acknowledgement Email Sent', kind:'forward', showIfRule:'pjViaEmail'},
@@ -49724,6 +49781,11 @@ const BLUEPRINT_PPS = {
        for the webinar by themselves (partner-journey.js), and the stage
        moves with them, so they are not buttons unless PPS › Settings asks. */
     {id:'remindersT',    from:'acknowledged', to:'remindersSent', label:'Send a Session Reminder', kind:'forward', showIfRule:'pjManualSessionSends'},
+    /* A referred prospect has no webinar to wait for: the session reminders
+       and the joining link are skipped, and the payment link and interest
+       form go straight after the acknowledgement. */
+    {id:'referredLinkT', from:'acknowledged', to:'paymentLinkSent', label:'Referred — Send Payment Link & Interest Form', kind:'forward', color:'ok', showIfRule:'pjReferred'},
+    {id:'referredLinkRemT', from:'remindersSent', to:'paymentLinkSent', label:'Referred — Send Payment Link & Interest Form', kind:'forward', color:'ok', showIfRule:'pjReferred'},
     {id:'back_ack',      from:'acknowledged', to:'registered', label:'Back', kind:'back'},
     {id:'sessionDayT',   from:'remindersSent', to:'sessionDay', label:'Session-Day Reminder & Joining Link Sent', kind:'forward', showIfRule:'pjManualSessionSends'},
     {id:'back_rem',      from:'remindersSent', to:'acknowledged', label:'Back', kind:'back'},
@@ -49734,7 +49796,7 @@ const BLUEPRINT_PPS = {
     {id:'notPaidT',      from:'paymentLinkSent', to:'rmFollowUp', label:'Payment Not Done — RM to Follow Up', kind:'forward', color:'warn'},
     {id:'paidAfterCallT',    from:'rmFollowUp', to:'paymentVerification', label:'Payment Done', kind:'forward', color:'ok'},
     {id:'notPaidAfterCallT', from:'rmFollowUp', to:'community', label:'Not Paid — Move to Community', kind:'forward', color:'danger'},
-    {id:'payVerifiedT',  from:'paymentVerification', to:'converted', label:'Payment Verified — Move to PMS', kind:'forward', color:'ok'},
+    {id:'payVerifiedT',  from:'paymentVerification', to:'converted', label:'Payment Verified — Move to Onboarding', kind:'forward', color:'ok'},
     {id:'payRejectedT',  from:'paymentVerification', to:'rmFollowUp', label:'Payment Not Received — Back to RM', kind:'forward', color:'danger'},
     {id:'reinviteT',     from:'community', to:'acknowledged', label:'Invite to the Next Session', kind:'forward'},
   ],
@@ -49801,13 +49863,18 @@ MODULE_VIEW.PPS = 'pps'; MODULE_VIEW.PMS = 'pms'; MODULE_VIEW.PQS = 'pqs'; MODUL
 Object.keys(MODULE_DB_KEY).forEach(m=>{ bulkSelection[m] = bulkSelection[m] || new Set(); });
 TRANSITION_RULES.pjViaEmail = r => (r && r.commChannel) !== 'WhatsApp';
 TRANSITION_RULES.pjViaWhatsapp = r => (r && r.commChannel) !== 'Email';
-TRANSITION_RULES.pjManualSessionSends = () => pjConfig().manualSessionSends === 'Yes';
+TRANSITION_RULES.pjManualSessionSends = r => pjConfig().manualSessionSends === 'Yes' && !pjReferred(r);
+TRANSITION_RULES.pjReferred = r => pjReferred(r);
+/* Referred by a Master Sherpa / Monk's code, rather than registered for a webinar. */
+function pjReferred(r){ return !!String((r && r.referralCode) || '').trim(); }
 /* The steps that do something besides move: a letter that goes, a form
    that is filled. Each opens its own box, and the box moves the stage. */
 STAGE_FORM_HANDLERS.ackEmailT = 'pjOpenAckModal';
 STAGE_FORM_HANDLERS.remindersT = 'pjOpenSessionMailModal';
 STAGE_FORM_HANDLERS.sessionDayT = 'pjOpenSessionMailModal';
 STAGE_FORM_HANDLERS.attendedYesT = 'pjOpenPaymentLinkModal';
+STAGE_FORM_HANDLERS.referredLinkT = 'pjOpenPaymentLinkModal';
+STAGE_FORM_HANDLERS.referredLinkRemT = 'pjOpenPaymentLinkModal';
 STAGE_FORM_HANDLERS.paidT = 'pjOpenPaymentModal';
 STAGE_FORM_HANDLERS.paidAfterCallT = 'pjOpenPaymentModal';
 STAGE_FORM_HANDLERS.payVerifiedT = 'pjOpenVerifyPaymentModal';
@@ -49977,13 +50044,13 @@ function pjVerifyQueueHtml(){
   return `<p class="small-note" style="margin-top:0">What is waiting for you to verify. A payment or a set of details goes to the reporting manager of whoever put it in (the mapped RM, when the partner put it in), or to an administrator; nobody verifies their own.</p>
     <div class="table-wrap"><table id="pjVerifyTable"><thead><tr><th>Who</th><th>Module</th><th>To verify</th><th>Detail</th><th>Put in by</th><th>Since</th><th>Verifier</th></tr></thead>
     <tbody>${pjVerifyQueue().map(x=>`<tr class="row-clickable" onclick="navigate('${x.view}','${esc(x.r.id)}')">
-      <td style="font-weight:700">${esc(pjName(x.r))}</td><td>${esc(x.module)}</td><td>${esc(x.what)}</td><td>${esc(x.detail)}</td>
+      <td style="font-weight:700">${esc(pjName(x.r))}</td><td>${esc(NAV_SHORT[x.view] || x.module)}</td><td>${esc(x.what)}</td><td>${esc(x.detail)}</td>
       <td>${esc(x.by==='Partner' ? 'The partner' : teamName(x.by))}</td><td>${esc(x.at ? fmtDate(String(x.at).slice(0,10)) : '—')}</td><td>${esc(pjNames(x.verifiers))}</td></tr>`).join('')
       || `<tr><td colspan="7" class="empty">Nothing is waiting for you to verify.</td></tr>`}</tbody></table></div>`;
 }
 function ppsHeader(){
   return moduleHeader({title:'PPS — Partner Perspective System',
-    subtitle: 'Registration to the ' + money(pjFee()) + ' fee. A prospect who pays moves to PMS.',
+    subtitle: 'Registration to the ' + money(pjFee()) + ' fee. A prospect who pays moves to Onboarding.',
     /* Template, Import and Export — the same importer every module uses,
        so a sheet of prospects comes in mapped and checked. */
     module: 'PPS',
@@ -50138,7 +50205,7 @@ function viewPPSDetail(id){
     tabKey: '_ppsTabRec',
     actions: [
       {label:'Back', icon:'←', onclick:"navigate('pps')"},
-      partner && {label:'Open in PMS', icon:'→', onclick:`navigate('pms','${esc(partner.id)}')`},
+      partner && {label:'Open in Onboarding', icon:'→', onclick:`navigate('pms','${esc(partner.id)}')`},
       can('PPS','edit') && {label:'Edit', icon:'✎', onclick:`pjOpenProspectForm('${esc(id)}')`},
       can('PPS','delete') && {label:'Delete', icon:'🗑', onclick:`softDeleteRecord('PPS','${esc(id)}')`},
     ],
@@ -50189,7 +50256,7 @@ function pjAutoSendText(r, w){
    shows that instead of the payment. */
 function ppsPathFor(r){
   const been = id => ((r && r.blueprintHistory)||[]).some(h=>h.state===id) || stateOf('PPS', r)===id;
-  const path = ['registered','acknowledged','remindersSent','sessionDay','paymentLinkSent'];
+  const path = ['registered','acknowledged'].concat(pjReferred(r) && !been('remindersSent') && !been('sessionDay') ? [] : ['remindersSent','sessionDay'], ['paymentLinkSent']);
   if(been('rmFollowUp')) path.push('rmFollowUp');
   if(stateOf('PPS', r)==='community') path.push('community'); else path.push('paymentVerification', 'converted');
   return path;
@@ -50215,7 +50282,7 @@ function pjOpenPaymentModal(module, id, tid){
     {k:'feeRef', l:'Reference / UTR', t:'text', req:1, h:'The payment cannot be verified without it.'},
   ];
   openModal('Payment Done — ' + pjName(r),
-    `<p class="small-note" style="margin-top:0">The partner fee is ${money(pjFee())}. Saving sends the payment for verification; once it is verified, ${esc(pjName(r))} moves to PMS as a partner.</p>`
+    `<p class="small-note" style="margin-top:0">The partner fee is ${money(pjFee())}. Saving sends the payment for verification; once it is verified, ${esc(pjName(r))} moves to Onboarding as a partner.</p>`
     + f.map(x=>fieldInput(x, r[x.k] || (x.k==='feeAmount' ? pjFee() : x.k==='feePaidOn' ? today : ''))).join(''),
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSavePayment('${esc(id)}','${esc(tid)}')">Save &amp; Send for Verification</button>`);
 }
@@ -50295,7 +50362,7 @@ function pjOpenVerifyPaymentModal(module, id, tid){
   openModal('Verify Payment — ' + pjName(r), profCard('Payment', [
       ['Amount', money(r.feeAmount)], ['Paid On', fmtDate(r.feePaidOn)||'—'], ['Mode', esc(r.feeMode||'—')],
       ['Reference / UTR', '<b>' + esc(r.feeRef||'—') + '</b>']])
-    + `<p class="small-note">Check the reference against the bank statement. Verifying creates the partner in PMS and sends the payment acknowledgement and welcome email with their Freedom Gurukul access.</p>`,
+    + `<p class="small-note">Check the reference against the bank statement. Verifying creates the partner in Onboarding and sends the payment acknowledgement and welcome email with their Freedom Gurukul access.</p>`,
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjVerifyPayment('${esc(id)}','${esc(tid)}')">Payment Verified — Move to PMS</button>`);
 }
 async function pjVerifyPayment(id, tid){
@@ -50517,7 +50584,7 @@ function pjOpenPaymentLinkModal(module, id, tid){
   if(!r) return;
   const w = pjWebinars().find(x=>x.id===r.webinarId) || {};
   const f = [{k:'paymentLink', l:'Payment Link', t:'text', req:1, h:'Taken from the webinar. Change it here for this prospect only.'}];
-  openModal('Attended — Send Payment Link to ' + pjName(r),
+  openModal((String(tid).startsWith('referred') ? 'Referred — Send Payment Link to ' : 'Attended — Send Payment Link to ') + pjName(r),
     `<p class="small-note" style="margin-top:0">Emails the ${esc(money(pjFee()))} payment link to <b>${esc(r.email||'no address on file')}</b>.</p>`
     + f.map(x=>fieldInput(x, r.paymentLink || pjConfig().paymentLink || w.paymentLink || '')).join(''),
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSendPaymentLink('${esc(id)}','${esc(tid)}')">Send Payment Link</button>`);
@@ -50531,8 +50598,13 @@ async function pjSendPaymentLink(id, tid){
   const w = pjWebinars().find(x=>x.id===r.webinarId) || {};
   r.paymentLink = data.paymentLink;
   closeModal();
-  const res = await pjMail('PPS', r, 'pjPaymentLink', {Webinar: w.title || 'our session', Fee: money(pjFee()), PaymentLink: data.paymentLink},
-    'Payment link');
+  const referred = String(tid).startsWith('referred');
+  const who = r.referralName || r.masterSherpa || '';
+  const res = referred
+    ? await pjMail('PPS', r, 'pjReferralPaymentLink', {ReferredBy: who ? ', on the referral of ' + who : '', ReferralName: who, Fee: money(pjFee()), PaymentLink: data.paymentLink},
+      'Payment link (referred)')
+    : await pjMail('PPS', r, 'pjPaymentLink', {Webinar: w.title || 'our session', Fee: money(pjFee()), PaymentLink: data.paymentLink},
+      'Payment link');
   r.paymentLinkSentAt = new Date().toISOString();
   await doTransition('PPS', id, tid);
   pjSaidMail(res, 'The payment link');
@@ -50841,7 +50913,11 @@ async function migratePartnerJourneyBlueprints(){
     if(!bp || !Array.isArray(bp.states) || !Array.isArray(bp.transitions)) return;
     const code = BLUEPRINTS[m];
     code.states.forEach((st, i)=>{
-      if(bp.states.some(x=>x.id===st.id)) return;
+      /* A referred prospect reaches the payment link without attending, so
+         the stage no longer says they attended. */
+      const was = bp.states.find(x=>x.id===st.id);
+      if(was && st.id==='paymentLinkSent' && was.label==='Attended — Payment Link & Interest Form Sent'){ was.label = st.label; touched = true; }
+      if(was) return;
       const before = code.states[i+1] && bp.states.findIndex(x=>x.id===code.states[i+1].id);
       if(before >= 0) bp.states.splice(before, 0, JSON.parse(JSON.stringify(st))); else bp.states.push(JSON.parse(JSON.stringify(st)));
       touched = true;
@@ -50918,6 +50994,8 @@ function pjStagePanelHtml(module, r, cur){
       : r.commChannel==='Email' ? 'Registered through email: send the acknowledgement email.' : 'Set the type of communication with Edit, and the stage offers the matching step.');
     const w = pjWebinars().find(x=>x.id===r.webinarId);
     const auto = pjConfig().autoReminders !== 'No';
+    if((cur==='acknowledged' || cur==='remindersSent') && pjReferred(r)) return note('Referred' + (r.referralName ? ' by ' + esc(r.referralName) : '')
+      + ' — there is no webinar to wait for, so no session reminders or joining link go out. Send the payment link and the interest form.') + pjFormStatusNote(r);
     if((cur==='acknowledged' || cur==='remindersSent') && w && auto) return note('Reminders go out by themselves before “' + esc(w.title||'the session')
       + '” on ' + esc(fmtDate(w.date)||'—') + ' — ' + esc(pjReminderPlanText()) + ' — and the joining link ' + esc(String(Number(pjConfig().linkHoursBefore)||24)) + ' hours before it. Nothing to press: the stage moves on its own as they go'
       + (pjConfig().manualSessionSends==='Yes' ? ', and the button sends one now.' : '.'))
@@ -51057,7 +51135,7 @@ function viewPMS(){
   const expiring = all.filter(r=>pjExpiring(r).length);
   if(window._pmsExpiring) rows = rows.filter(r=>pjExpiring(r).length);
   rows = rows.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
-  return `${moduleHeader({title:'PMS — Partner Managing System',
+  return `${moduleHeader({title:'Onboarding — Partner Onboarding',
       subtitle: all.length + ' partner(s) · from the fee to the onboarding journey', actions:[]})}
     ${timelineBarHtml('PMS')}
     ${kpiCards(dashboardStageCards('PMS', inWindow).concat([{label:'ARN / EUIN Expiring', value: expiring.length,
@@ -51109,8 +51187,8 @@ function viewPMSDetail(id){
     actions: [
       {label:'Back', icon:'←', onclick:"navigate('pms')"},
       r.prospectId && {label:'PPS Record', icon:'←', onclick:`navigate('pps','${esc(r.prospectId)}')`},
-      pobFor(id) ? {label:'Partner Onboarding', icon:'🚀', onclick:`navigate('pob','${esc(pobFor(id).id)}')`}
-        : (stateOf('PMS', r)==='onboarded' && can('POB','create') && {label:'Start Onboarding', icon:'🚀', onclick:`pobStartFromPms('${esc(id)}')`}),
+      pobFor(id) ? {label:'PMS Record', icon:'🚀', onclick:`navigate('pob','${esc(pobFor(id).id)}')`}
+        : (stateOf('PMS', r)==='onboarded' && can('POB','create') && {label:'Start PMS', icon:'🚀', onclick:`pobStartFromPms('${esc(id)}')`}),
       can('PQS','create') && {label:'Raise Query', icon:'🎫', onclick:`pjOpenQueryForm(null,'${esc(id)}')`},
       can('PPO','create') && {label:'Add Payout', icon:'₹', onclick:`pjOpenPayoutForm(null,'${esc(id)}')`},
       can('PMS','edit') && {label:'Edit', icon:'✎', onclick:`pjOpenPartnerEdit('${esc(id)}')`},
@@ -51187,79 +51265,329 @@ function pjPartnerFormsHtml(r){
   return out.join('') || '<div class="empty">Nothing yet — the forms and meetings appear here as the partner\u2019s steps are done.</div>';
 }
 
-/* ---------- PQS — Partner Query System ---------- */
+/* ---------- PQS — Partner Query System ----------
+   A query is raised against a partner — by the partner themselves (every
+   level, L1 to L6) or by the firm on their behalf — and goes by its
+   category to the department that answers it: Technical to IT, Payout to
+   Accounts, and so on (PQS › Routing). That department's responsible
+   person maps it to one of their associates; the associate writes the
+   solution and marks it Resolved; whoever raised it closes it, or reopens
+   it when the answer did not do. Each hand-over goes to the bell of whoever
+   has to act next. A category nobody is responsible for goes to the
+   administrators.
+
+   Who sees which query follows the same reporting line as everything
+   else: a partner sees their own (L1, L2) or their team's too (L3 up);
+   the firm's people see their partners', and what they raised, handle or
+   were given. */
 const PJ_QUERY_STATUSES = ['Open','In Progress','Resolved','Closed'];
+const PQS_DEFAULT_ROUTES = [
+  {category:'Technical', dept:'IT', find:/\bIT\b|technical|tech support/i},
+  {category:'Payout', dept:'Accounts', find:/account|finance|payout/i},
+  {category:'ARN / EUIN', dept:'Compliance', find:/complian/i},
+  {category:'Exam / NISM', dept:'Training', find:/training|gurukul|learning/i},
+  {category:'Course / Gurukul', dept:'Training', find:/training|gurukul|learning/i},
+  {category:'Onboarding & Documents', dept:'Partner Operations', find:/partner|operation/i},
+  {category:'Other', dept:'Operations', find:/operation/i},
+];
+/* The firm's own people (not partners), for a responsible person or an associate. */
+function pqsStaff(){ return (DB.team||[]).filter(t=>t && !t.deletedAt && isMemberActive(t) && !t.partnerPobId); }
+/* Who a department falls to before anybody is named for it: somebody whose
+   department, designation or role says so (an IT Admin for Technical). */
+function pqsGuessHead(d){
+  if(!d.find) return '';
+  const hit = pqsStaff().find(t=>(t.departments||[]).some(x=>d.find.test(String(x))) || d.find.test(String(t.designation||'')) || d.find.test(String(t.role||'')));
+  return hit ? hit.id : '';
+}
+function pqsRoutes(){
+  const saved = ((DB.config||{}).pqsRouting || {}).routes;
+  if(Array.isArray(saved) && saved.length) return saved.map(r=>Object.assign({dept:'', head:'', associates:[]}, r));
+  return PQS_DEFAULT_ROUTES.map(d=>({category: d.category, dept: d.dept, head: pqsGuessHead(d), associates: []}));
+}
+function pqsRoute(category){
+  return pqsRoutes().find(r=>r.category===category) || {category, dept: 'Administration', head: '', associates: []};
+}
+function pqsCategories(){
+  const out = pqsRoutes().map(r=>r.category);
+  pjQueries().forEach(q=>{ if(q.category && !out.includes(q.category)) out.push(q.category); });
+  return out;
+}
+/* Whoever answers for a query's department: its responsible person, else the administrators. */
+function pqsHandlers(q){ return q.handler ? [q.handler] : pjAdmins(); }
+function pqsIsHandler(q){ return isAdmin() || pqsHandlers(q).includes(currentUser); }
+function pqsIsAssignee(q){ return !!q.assignTo && q.assignTo===currentUser; }
+function pqsIsRaiser(q){
+  if(q.createdBy===currentUser) return true;
+  const r = memberPartnerRecord();
+  return !!(r && r.partnerId && r.partnerId===q.partnerId);
+}
+/* The PMS-side partners a person may raise for or follow: a partner their
+   own, and on team scope (L3 up) everyone reporting to them; the firm's
+   people the partners their scope opens to them. */
+function pqsPartnerIdsInReach(){
+  const u = me();
+  if(!u) return new Set();
+  if(isAdmin(u) || u.scope==='all') return new Set(pjLivePartners().map(p=>p.id));
+  if(isPartnerMember(u)){
+    const people = u.scope==='team' ? [u].concat(userDescendants(u.id)) : [u];
+    const ids = new Set();
+    people.forEach(t=>{ const r = t.partnerPobId && pobRecords().find(x=>x.id===t.partnerPobId); if(r && r.partnerId) ids.add(r.partnerId); });
+    visibleRecords(pjPartners(), p=>p.assignedTo, p=>p.branch).forEach(p=>ids.add(p.id));
+    return ids;
+  }
+  return new Set(visibleRecords(pjPartners(), p=>p.assignedTo, p=>p.branch).map(p=>p.id));
+}
+function pqsVisibleList(list){
+  const u = me();
+  const live = (list || pjQueries()).filter(q=>q && !q.deletedAt);
+  if(!u) return [];
+  if(isAdmin(u) || u.scope==='all') return live;
+  const reach = pqsPartnerIdsInReach();
+  const team = new Set([u.id].concat(u.scope==='team' ? userDescendants(u.id).map(t=>t.id) : []));
+  return live.filter(q=>reach.has(q.partnerId) || team.has(q.createdBy) || team.has(q.assignTo) || team.has(q.handler));
+}
+/* The fields a query holds (exports, filters and the audit trail read these). */
 function pqsFields(){
   const partners = pjLivePartners();
   const labels = {}; partners.forEach(p=>{ labels[p.id] = pjName(p) + ' · ' + p.id; });
   return [
     {k:'partnerId', l:'Partner', t:'select', req:1, opts: partners.map(p=>p.id), optLabels: labels},
     {k:'subject', l:'Subject', t:'text', req:1},
-    {k:'category', l:'Category', t:'select', opts:['Course / Gurukul','Exam / NISM','ARN / EUIN','Payout','Technical','Other'], req:1},
+    {k:'category', l:'Category', t:'select', opts: pqsCategories(), req:1},
+    {k:'department', l:'Department', t:'text'},
+    {k:'handler', l:'Responsible', t:'team'},
     {k:'priority', l:'Priority', t:'select', opts:['Low','Medium','High']},
     {k:'status', l:'Status', t:'select', opts:PJ_QUERY_STATUSES},
-    {k:'assignTo', l:'Assigned To', t:'team'},
+    {k:'assignTo', l:'Associate', t:'team'},
     {k:'description', l:'Description', t:'textarea'},
-    {k:'resolution', l:'Resolution', t:'textarea', h:'What the partner was told. Needed to mark a query Resolved or Closed.'},
+    {k:'resolution', l:'Solution', t:'textarea', h:'What the partner was told. Needed to mark a query Resolved or Closed.'},
   ];
+}
+/* What the person raising a query fills in; the rest is routing. */
+function pqsRaiseFields(){
+  const reach = pqsPartnerIdsInReach();
+  const partners = isPartnerMember() ? pjLivePartners().filter(p=>reach.has(p.id)) : pjLivePartners();
+  const labels = {}; partners.forEach(p=>{ labels[p.id] = pjName(p) + ' · ' + p.id; });
+  const cats = pqsRoutes().map(r=>r.category);
+  const cl = {}; pqsRoutes().forEach(r=>{ cl[r.category] = r.category + ' → ' + (r.dept || 'Administration'); });
+  return [
+    {k:'partnerId', l:'Partner', t:'select', req:1, opts: partners.map(p=>p.id), optLabels: labels},
+    {k:'subject', l:'Subject', t:'text', req:1},
+    {k:'category', l:'Category', t:'select', opts: cats, optLabels: cl, req:1, h:'Decides which department the query goes to.'},
+    {k:'priority', l:'Priority', t:'select', opts:['Low','Medium','High']},
+    {k:'description', l:'Description', t:'textarea', req:1},
+  ];
+}
+function pqsWaitingOnMe(q){
+  if(['Resolved','Closed'].includes(q.status)) return q.status==='Resolved' && pqsIsRaiser(q);
+  if(pqsIsAssignee(q)) return true;
+  return !q.assignTo && pqsHandlers(q).includes(currentUser);
 }
 function viewPQS(){
   if(!can('PQS','view')) return permissionWall('Partners');
-  const all = pjQueries().filter(q=>!q.deletedAt);
+  const all = pqsVisibleList();
+  window._pqsTab = window._pqsTab || 'queries';
+  const tab = (k, l) => `<div class="tab ${window._pqsTab===k?'active':''}" onclick="window._pqsTab='${k}'; render()">${l}</div>`;
+  const mine = all.filter(pqsWaitingOnMe);
+  const tabs = `<div class="tabs" style="margin-bottom:10px">${tab('queries','Queries')}${tab('mine','Waiting on me' + (mine.length ? ' (' + mine.length + ')' : ''))}
+    ${tab('raised','Raised by me')}${pjMaySetUp() ? tab('routing','Routing') : ''}</div>`;
+  const head = moduleHeader({title:'PQS — Partner Query System',
+      subtitle: all.length + ' quer' + (all.length===1?'y':'ies') + ' you can see · each goes by its category to the department that answers it',
+      actions:[can('PQS','create') && {label: isPartnerMember() ? 'Raise a Query' : 'New Query', icon:'+', kind:'primary', onclick:'pjOpenQueryForm()'}]});
+  if(window._pqsOpen){ const id = window._pqsOpen; window._pqsOpen = null; setTimeout(()=>pjOpenQueryForm(id), 0); }
+  if(window._pqsTab==='routing' && pjMaySetUp()) return head + tabs + pqsRoutingHtml();
+  let base = window._pqsTab==='mine' ? mine : window._pqsTab==='raised' ? all.filter(pqsIsRaiser) : all;
   window._pqsStatus = window._pqsStatus || '';
-  let rows = window._pqsStatus ? all.filter(q=>q.status===window._pqsStatus) : all;
-  rows = rows.filter(q=>matchesSearch(window._pqsSearch, q, {partner: q=>pjPartnerName(q.partnerId), status: q=>q.status, category: q=>q.category}));
-  return `${moduleHeader({title:'PQS — Partner Query System', subtitle: all.length + ' quer' + (all.length===1?'y':'ies') + ' from partners',
-      actions:[can('PQS','create') && {label:'New Query', icon:'+', kind:'primary', onclick:'pjOpenQueryForm()'}]})}
-    ${kpiCards(PJ_QUERY_STATUSES.map(s=>({label:s, value: all.filter(q=>q.status===s).length,
+  let rows = window._pqsStatus ? base.filter(q=>q.status===window._pqsStatus) : base;
+  rows = rows.filter(q=>matchesSearch(window._pqsSearch, q, {partner: q=>pjPartnerName(q.partnerId), status: q=>q.status, category: q=>q.category,
+    department: q=>q.department, associate: q=>teamName(q.assignTo)}));
+  return head + tabs
+    + kpiCards(PJ_QUERY_STATUSES.map(s=>({label:s, value: base.filter(q=>q.status===s).length,
       tone: s==='Open' ? 'danger' : s==='In Progress' ? 'warn' : 'ok', selected: window._pqsStatus===s,
-      onclick:`window._pqsStatus='${window._pqsStatus===s?'':s}'; render()`})))}
-    ${listSearchRow({stateKey:'_pqsSearch', live:true})}
-    ${pjQueryTableHtml(rows, true)}`;
+      onclick:`window._pqsStatus='${window._pqsStatus===s?'':s}'; render()`})))
+    + listSearchRow({stateKey:'_pqsSearch', live:true})
+    + pjQueryTableHtml(rows, true);
 }
 function pjQueryTableHtml(rows, bare){
+  rows = pqsVisibleList(rows);
   const body = rows.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).map(q=>
     `<tr class="row-clickable" onclick="pjOpenQueryForm('${esc(q.id)}')">
       <td>${esc(q.id)}</td><td style="font-weight:700">${esc(q.subject||'—')}</td><td>${esc(pjPartnerName(q.partnerId))}</td>
-      <td>${esc(q.category||'—')}</td><td>${esc(q.priority||'—')}</td><td>${esc(teamName(q.assignTo))}</td>
-      <td>${esc(fmtDate(q.createdAt))}</td><td>${statusBadge(q.status)}</td></tr>`);
-  const head = ['Query','Subject','Partner','Category','Priority','Assigned To','Raised','Status'];
+      <td>${esc(q.category||'—')}</td><td>${esc(q.department||pqsRoute(q.category).dept||'—')}</td>
+      <td>${esc(q.handler ? teamName(q.handler) : 'Administrators')}</td><td>${esc(q.assignTo ? teamName(q.assignTo) : '—')}</td>
+      <td>${esc(q.priority||'—')}</td><td>${esc(fmtDate(q.createdAt))}</td><td>${statusBadge(q.status)}</td></tr>`);
+  const head = ['Query','Subject','Partner','Category','Department','Responsible','Associate','Priority','Raised','Status'];
   if(!bare) return profTable('Queries', head, body, 'No queries from this partner.');
   return `<div class="table-wrap"><table id="pqsTable"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
-    <tbody>${body.join('') || `<tr><td colspan="8" class="empty">No queries match.</td></tr>`}</tbody></table></div>`;
+    <tbody>${body.join('') || `<tr><td colspan="${head.length}" class="empty">No queries match.</td></tr>`}</tbody></table></div>`;
 }
 function pjOpenQueryForm(id, partnerId){
-  const q = id ? pjQueries().find(x=>x.id===id) : {status:'Open', priority:'Medium', partnerId: partnerId||'', assignTo: currentUser};
-  if(!q) return;
-  if(!pjLivePartners().length && !id){ alert('There are no partners in PMS yet. A query is raised against a partner.'); return; }
-  openModal(id ? 'Query ' + id : 'New Partner Query', pqsFields().map(f=>fieldInput(f, q[f.k])).join(''),
-    `<button class="btn" onclick="closeModal()">Cancel</button>${can('PQS', id?'edit':'create')? `<button class="btn primary" onclick="pjSaveQuery('${esc(id||'')}')">Save</button>`:''}`);
+  if(id){ pqsOpenQuery(id); return; }
+  if(!can('PQS','create')){ alert('You do not have permission to raise a query.'); return; }
+  const fields = pqsRaiseFields();
+  const opts = fields[0].opts;
+  if(!opts.length){ alert(isPartnerMember() ? 'Your partner record is not set up yet. Ask your RM.' : 'There are no partners in Onboarding yet. A query is raised against a partner.'); return; }
+  const q = {priority:'Medium', partnerId: partnerId || (opts.length===1 ? opts[0] : ''), category: pqsRoutes()[0].category};
+  openModal('Raise a Partner Query', `<p class="small-note" style="margin-top:0">It goes to the department its category names, whose responsible person hands it to an associate. You are told when there is a solution.</p>`
+    + fields.map(f=>fieldInput(f, q[f.k])).join(''),
+    `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pjSaveQuery()">Raise Query</button>`);
 }
-async function pjSaveQuery(id){
-  if(!can('PQS', id ? 'edit' : 'create')){ alert('You do not have permission.'); return; }
-  const fields = pqsFields();
+/* One query: what was asked, the solution, the trail, and what this person may do next. */
+function pqsOpenQuery(id){
+  const q = pjQueries().find(x=>x.id===id);
+  if(!q || !pqsVisibleList([q]).length){ alert('That query is not open to you.'); return; }
+  const r = pqsRoute(q.category);
+  const staffOpts = (list, cur) => `<option value="">—</option>` + list.map(t=>`<option value="${esc(t.id)}" ${t.id===cur?'selected':''}>${esc(t.name)}${t.designation ? ' · ' + esc(t.designation) : ''}</option>`).join('');
+  const assoc = (r.associates||[]).map(x=>pqsStaff().find(t=>t.id===x)).filter(Boolean);
+  const others = pqsStaff().filter(t=>!assoc.includes(t));
+  const handler = pqsIsHandler(q), assignee = pqsIsAssignee(q), raiser = pqsIsRaiser(q);
+  const open = !['Resolved','Closed'].includes(q.status);
+  const parts = [
+    profCard('Query', [['Partner', esc(pjPartnerName(q.partnerId))], ['Subject', esc(q.subject||'')], ['Category', esc(q.category||'—')],
+      ['Department', esc(q.department || r.dept || '—')], ['Responsible', esc(q.handler ? teamName(q.handler) : 'Administrators')],
+      ['Associate', esc(q.assignTo ? teamName(q.assignTo) : 'Not mapped yet')], ['Priority', esc(q.priority||'—')], ['Status', statusBadge(q.status)],
+      ['Raised', esc(fmtDateTime(q.createdAt) + ' by ' + (q.createdBy ? teamName(q.createdBy) : '—'))]]),
+    `<div class="field"><label>Description</label><div class="small-note" style="margin:0;white-space:pre-wrap">${esc(q.description||'—')}</div></div>`,
+    q.resolution ? `<div class="field"><label>Solution</label><div style="white-space:pre-wrap">${esc(q.resolution)}</div></div>` : '',
+  ];
+  if(handler && q.status!=='Closed'){
+    parts.push(`<div class="section-title">Route it</div>
+      <div class="field"><label>Category</label><select id="pqsCat">${pqsCategories().map(c=>`<option ${c===q.category?'selected':''}>${esc(c)}</option>`).join('')}</select>
+        <div class="small-note" style="margin:0">A different category sends it to that department instead.</div></div>
+      <div class="field"><label>Associate</label><select id="pqsAssoc">${assoc.length ? `<optgroup label="${esc(r.dept || 'Department')} associates">${staffOpts(assoc, q.assignTo)}</optgroup><optgroup label="Everyone else">${others.map(t=>`<option value="${esc(t.id)}" ${t.id===q.assignTo?'selected':''}>${esc(t.name)}</option>`).join('')}</optgroup>` : staffOpts(pqsStaff(), q.assignTo)}</select></div>
+      <div class="field"><label>Priority</label><select id="pqsPri">${['Low','Medium','High'].map(p=>`<option ${p===q.priority?'selected':''}>${p}</option>`).join('')}</select></div>`);
+  }
+  if((assignee || handler) && open){
+    parts.push(`<div class="section-title">Solution</div>
+      <div class="field"><textarea id="pqsSol" rows="4" placeholder="What the partner is told">${esc(q.resolution||'')}</textarea></div>`);
+  }
+  parts.push(`<div class="field"><label>Add a note</label><textarea id="pqsNote" rows="2" placeholder="Seen by everyone on this query"></textarea></div>`);
+  if((q.trail||[]).length) parts.push(profTable('Trail', ['When','Who','What'], q.trail.slice().reverse().map(t=>`<tr><td>${esc(fmtDateTime(t.at))}</td>
+    <td>${esc(t.by ? teamName(t.by) : 'BOSS')}</td><td>${esc(t.what)}${t.note ? `<div class="small-note" style="margin:0;white-space:pre-wrap">${esc(t.note)}</div>` : ''}</td></tr>`), ''));
+  const btn = (label, act, kind) => `<button class="btn ${kind||''}" onclick="pqsAct('${esc(id)}','${act}')">${label}</button>`;
+  const buttons = [`<button class="btn" onclick="closeModal()">Close</button>`, btn('Add Note', 'note')];
+  if(handler && q.status!=='Closed') buttons.push(btn('Save Routing', 'route'));
+  if((assignee || handler) && q.status==='Open') buttons.push(btn('Start Work', 'start'));
+  if((assignee || handler) && open) buttons.push(btn('Mark Resolved', 'resolve', 'primary'));
+  if((raiser || handler) && q.status==='Resolved') buttons.push(btn('Reopen', 'reopen'), btn('Close Query', 'close', 'primary'));
+  openModal('Query ' + id + ' — ' + (q.subject||''), parts.join(''), buttons.join(''));
+}
+function pqsTrail(q, what, note){ q.trail = (q.trail||[]).concat([{at: new Date().toISOString(), by: currentUser, what, note: note || ''}]); }
+const pqsNote = q => ({title: 'Query ' + q.id + ' — ' + (q.subject||''), view: 'pqs', arg: q.id, kind: 'pqs'});
+async function pqsAct(id, act){
+  const q = pjQueries().find(x=>x.id===id);
+  if(!q || !pqsVisibleList([q]).length) return;
+  const val = k => { const el = document.getElementById(k); return el ? String(el.value||'').trim() : ''; };
+  const note = val('pqsNote'), before = Object.assign({}, q), now = new Date().toISOString();
+  const tell = [];
+  if(act==='note'){
+    if(!note){ alert('Write the note first.'); return; }
+    pqsTrail(q, 'Note', note);
+    tell.push([[q.assignTo].concat(pqsHandlers(q), [q.createdBy]).filter(x=>x && x!==currentUser), 'A note was added: ' + note]);
+  } else if(act==='route'){
+    if(!pqsIsHandler(q)) return;
+    const cat = val('pqsCat'), assoc = val('pqsAssoc'), pri = val('pqsPri');
+    if(cat && cat!==q.category){
+      const r = pqsRoute(cat);
+      q.category = cat; q.department = r.dept; q.handler = r.head || ''; q.assignTo = '';
+      pqsTrail(q, 'Sent to ' + (r.dept || 'Administration') + ' (' + cat + ')', note);
+      tell.push([pqsHandlers(q).filter(x=>x!==currentUser), 'Sent to ' + (r.dept || 'you') + '. Map it to an associate.']);
+    } else {
+      if(pri) q.priority = pri;
+      if(assoc !== (q.assignTo||'')){
+        q.assignTo = assoc;
+        if(assoc){
+          if(q.status==='Open') q.status = 'In Progress';
+          pqsTrail(q, 'Mapped to ' + teamName(assoc), note);
+          tell.push([[assoc].filter(x=>x!==currentUser), 'Mapped to you by ' + teamName(currentUser) + '. Write the solution and mark it Resolved.']);
+        } else pqsTrail(q, 'Associate removed', note);
+      } else if(note) pqsTrail(q, 'Note', note);
+    }
+  } else if(act==='start'){
+    q.status = 'In Progress';
+    if(!q.assignTo) q.assignTo = currentUser;
+    pqsTrail(q, 'Work started', note);
+  } else if(act==='resolve'){
+    const sol = val('pqsSol') || q.resolution || '';
+    if(!sol){ alert('Write the solution — what the partner is told — before marking the query Resolved.'); return; }
+    q.resolution = sol; q.status = 'Resolved'; q.resolvedAt = now; q.resolvedBy = currentUser;
+    if(!q.assignTo) q.assignTo = currentUser;
+    pqsTrail(q, 'Resolved', note || sol);
+    tell.push([pqsRaisers(q).concat(pqsHandlers(q)).filter(x=>x && x!==currentUser), 'Resolved: ' + sol]);
+  } else if(act==='reopen'){
+    if(!note){ alert('Say what is still wrong, so the associate knows.'); return; }
+    q.status = 'In Progress'; delete q.resolvedAt;
+    pqsTrail(q, 'Reopened', note);
+    tell.push([[q.assignTo].concat(pqsHandlers(q)).filter(x=>x && x!==currentUser), 'Reopened: ' + note]);
+  } else if(act==='close'){
+    q.status = 'Closed'; q.closedAt = now;
+    pqsTrail(q, 'Closed', note);
+    tell.push([[q.assignTo].filter(x=>x && x!==currentUser), 'Closed by ' + teamName(currentUser) + '.']);
+  } else return;
+  q.updatedAt = now;
+  await save('partnerQueries');
+  await logAudit('PQS', id, act==='note' ? 'Note' : act==='route' ? 'Routed' : q.status, diffFields(before, q, pqsFields()));
+  for(const [who, body] of tell) if(who.length) await notifyUsers([...new Set(who)], Object.assign(pqsNote(q), {body}));
+  closeModal(); render();
+}
+/* The partner the query is about, if they have a login, and whoever raised it. */
+function pqsRaisers(q){
+  const r = pobRecords().find(x=>x.partnerId===q.partnerId);
+  const m = r ? pobMemberOf(r) : null;
+  return [q.createdBy, m && m.id].filter(Boolean);
+}
+async function pjSaveQuery(){
+  if(!can('PQS','create')){ alert('You do not have permission.'); return; }
+  const fields = pqsRaiseFields();
   const data = readFields(fields);
   if(!validateRequired(fields, data)) return;
-  if((data.status==='Resolved' || data.status==='Closed') && !String(data.resolution||'').trim()){
-    alert('Write the resolution — what the partner was told — before marking the query ' + data.status + '.');
-    return;
-  }
-  const now = new Date().toISOString();
-  if(id){
-    const q = pjQueries().find(x=>x.id===id);
-    const before = Object.assign({}, q);
-    Object.assign(q, data, {updatedAt: now});
-    if((data.status==='Resolved' || data.status==='Closed') && !q.resolvedAt) q.resolvedAt = now;
-    await save('partnerQueries');
-    await logAudit('PQS', id, 'Edit', diffFields(before, q, fields));
-  } else {
-    const q = Object.assign({id: uid('PQS'), createdAt: now, createdBy: currentUser}, data);
-    if(data.status==='Resolved' || data.status==='Closed') q.resolvedAt = now;
-    pjQueries().push(q);
-    await save('partnerQueries');
-    await logAudit('PQS', q.id, 'Create', [{field:'subject', oldValue:'', newValue:q.subject}]);
-  }
+  if(!fields[0].opts.includes(data.partnerId)){ alert('Pick one of your partners.'); return; }
+  const now = new Date().toISOString(), r = pqsRoute(data.category);
+  const p = pjPartners().find(x=>x.id===data.partnerId);
+  const q = Object.assign({id: uid('PQS'), createdAt: now, createdBy: currentUser, status: 'Open', department: r.dept, handler: r.head || '', assignTo: ''}, data);
+  if(p && p.onboardingId) q.partnerPobId = p.onboardingId;
+  pqsTrail(q, 'Raised — sent to ' + (r.dept || 'Administration') + (r.head ? ' (' + teamName(r.head) + ')' : ' (administrators)'));
+  pjQueries().push(q);
+  await save('partnerQueries');
+  await logAudit('PQS', q.id, 'Create', [{field:'subject', oldValue:'', newValue:q.subject}, {field:'routed to', oldValue:'', newValue: r.dept + ' · ' + (r.head ? teamName(r.head) : 'administrators')}]);
+  await notifyUsers(pqsHandlers(q).filter(x=>x!==currentUser), Object.assign(pqsNote(q), {body: 'New ' + q.category + ' query for ' + (r.dept || 'you') + ' from ' + pjPartnerName(q.partnerId) + '. Map it to an associate.'}));
   closeModal(); render();
+}
+/* PQS › Routing: each category, its department, the person responsible for
+   it and the associates they usually hand it to. */
+function pqsRoutingHtml(){
+  window._pqsRoutes = window._pqsRoutes || JSON.parse(JSON.stringify(pqsRoutes()));
+  const staff = pqsStaff();
+  const rows = window._pqsRoutes.map((r, i)=>`<tr>
+    <td><input value="${esc(r.category)}" oninput="window._pqsRoutes[${i}].category=this.value"></td>
+    <td><input value="${esc(r.dept)}" oninput="window._pqsRoutes[${i}].dept=this.value"></td>
+    <td><select onchange="window._pqsRoutes[${i}].head=this.value"><option value="">Administrators</option>${staff.map(t=>`<option value="${esc(t.id)}" ${t.id===r.head?'selected':''}>${esc(t.name)}</option>`).join('')}</select></td>
+    <td><details><summary>${(r.associates||[]).length ? esc(pjNames(r.associates)) : 'Anyone'}</summary>
+      ${staff.map(t=>`<label style="display:block"><input type="checkbox" ${(r.associates||[]).includes(t.id)?'checked':''}
+        onchange="pqsToggleAssoc(${i},'${esc(t.id)}',this.checked)"> ${esc(t.name)}</label>`).join('')}</details></td>
+    <td><button class="btn sm ghost" onclick="window._pqsRoutes.splice(${i},1); render()">Remove</button></td></tr>`).join('');
+  return `<p class="small-note" style="margin-top:0">A query goes to the person responsible for its category, who maps it to an associate. With nobody named, the administrators get it.</p>
+    <div class="table-wrap"><table id="pqsRouting"><thead><tr><th>Category</th><th>Department</th><th>Responsible</th><th>Associates</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table></div>
+    <div class="row" style="gap:8px;margin-top:10px"><button class="btn" onclick="window._pqsRoutes.push({category:'',dept:'',head:'',associates:[]}); render()">+ Add Category</button>
+    <button class="btn primary" onclick="pqsSaveRouting()">Save Routing</button></div>`;
+}
+function pqsToggleAssoc(i, id, on){
+  const r = window._pqsRoutes[i]; r.associates = (r.associates||[]).filter(x=>x!==id);
+  if(on) r.associates.push(id);
+}
+async function pqsSaveRouting(){
+  if(!pjMaySetUp()) return;
+  const routes = (window._pqsRoutes||[]).map(r=>({category: String(r.category||'').trim(), dept: String(r.dept||'').trim(), head: r.head || '', associates: r.associates || []}))
+    .filter(r=>r.category);
+  if(!routes.length){ alert('Keep at least one category.'); return; }
+  if(new Set(routes.map(r=>r.category.toLowerCase())).size !== routes.length){ alert('Two rows have the same category.'); return; }
+  DB.config.pqsRouting = {routes, updatedAt: new Date().toISOString(), updatedBy: currentUser};
+  await save('config');
+  await logAudit('Settings', 'pqsRouting', 'Query Routing Changed', routes.map(r=>({field: r.category, oldValue: '', newValue: (r.dept||'—') + ' · ' + (r.head ? teamName(r.head) : 'administrators')})));
+  window._pqsRoutes = null;
+  alert('Saved. New queries follow it; ones already raised keep their department.');
+  render();
 }
 
 /* ---------- PPO — Partner Payout System ---------- */
@@ -51321,7 +51649,7 @@ function pjPayoutTableHtml(rows, bare){
     <tbody>${body.join('') || `<tr><td colspan="9" class="empty">No payouts match.</td></tr>`}</tbody></table></div>`;
 }
 function pjOpenPayoutForm(id, partnerId){
-  if(!pjLivePartners().length && !id){ alert('There are no partners in PMS yet. A payout is made to a partner.'); return; }
+  if(!pjLivePartners().length && !id){ alert('There are no partners in Onboarding yet. A payout is made to a partner.'); return; }
   const partner = partnerId ? pjPartners().find(x=>x.id===partnerId) : null;
   const p = id ? pjPayouts().find(x=>x.id===id)
     : {partnerId: partnerId||'', period: pjMonths()[1], status:'Calculated', ratePct: partner && partner.payoutRatePct || ''};
@@ -52099,8 +52427,8 @@ function pobUnstartedPartners(){
 }
 function pobOpenStartPicker(){
   const list = pobUnstartedPartners();
-  if(!list.length){ alert('Every onboarded partner in PMS has an onboarding record already.'); return; }
-  openModal('Start Partner Onboarding', `<p class="small-note" style="margin-top:0">Onboarded in PMS, not started here yet.</p>`
+  if(!list.length){ alert('Every partner onboarded in Onboarding already has a PMS record.'); return; }
+  openModal('Start PMS', `<p class="small-note" style="margin-top:0">Onboarded in Onboarding, not started in PMS yet.</p>`
     + list.map(p=>`<div class="between" style="padding:6px 0;border-bottom:1px solid var(--line)">
         <span><b>${esc(pjName(p))}</b> <span class="small-note">${esc(p.id)} · ${esc(p.mobile||'')}</span></span>
         <button class="btn sm primary" onclick="closeModal(); pobStartFromPms('${esc(p.id)}')">Start</button></div>`).join(''),
@@ -52242,8 +52570,8 @@ async function pobImportApply(){
   const btn = document.getElementById('pobImpGo'); if(btn){ btn.disabled = true; btn.textContent = 'Importing…'; }
   const now = new Date().toISOString(), today = pobToday();
   const batch = uid('IMP');
-  let added = 0, updated = 0;
-  const failed = [];
+  let added = 0, updated = 0, activated = 0;
+  const failed = [], kept = [];
   for(const p of plan){
     const x = p.x;
     const parts = String(x.name).trim().split(/\s+/);
@@ -52293,6 +52621,16 @@ async function pobImportApply(){
     const res = await pobGiveLogin(r, {email: x.email, level: p.level, up: rm, noSave: true, noAccount: true, noPayout: true});
     if(res.error){ failed.push(x.name + ': ' + res.error); continue; }
     p._m = res.member;
+    /* An active partner is active from the moment they are imported: the
+       login opens at once, with the level's access, and nobody presses
+       Activate Account. One the firm suspended stays suspended. */
+    if(r.login.status === 'Suspended') kept.push(x.name);
+    else if(r.login.status !== 'Activated'){
+      r.login.status = 'Activated'; r.login.activatedAt = now;
+      r.login.history = (r.login.history||[]).concat([{at: now, by: currentUser, status: 'Activated', note: 'Activated automatically — imported as an active partner'}]);
+      res.member.status = 'Active';
+      activated++;
+    }
   }
   // Reports To: a team member, or another partner on this sheet.
   plan.forEach(p=>{
@@ -52322,6 +52660,7 @@ async function pobImportApply(){
   await logAudit('POB', 'import', 'Import', [{field: 'active partners', oldValue: '', newValue: added + ' added, ' + updated + ' updated · batch ' + batch}]);
   closeModal();
   alert('Imported: ' + added + ' new active partner(s), ' + updated + ' updated.\n'
+    + activated + ' login(s) activated automatically' + (kept.length ? ' (' + kept.length + ' kept suspended: ' + kept.join(', ') + ')' : '') + '.\n'
     + accounts + ' BOSS sign-in account(s) created' + (accounts ? ', ' + mailed + ' emailed their password' : '') + (pay.skipped ? '' : '; payout team: ' + pay.added + ' added, ' + pay.updated + ' updated') + '.\n'
     + mapped.payout + ' payout client mapping(s), ' + mapped.boss + ' BOSS client(s) marked as theirs.'
     + (pay.skipped ? '\nOnly an admin can add people to the payout team — ask one to press Sync from Partner Journey in Payouts.' : '')
@@ -52590,7 +52929,7 @@ function pobDocsHtml(r){
   });
   const trail = [];
   pobDocs().filter(d=>!d.deletedAt && d.pobId===r.id).forEach(d=>(d.reviews||[]).forEach(x=>trail.push(Object.assign({type: d.type}, x))));
-  return profTable('Documents — ' + v.approved + ' of ' + v.total + ' mandatory approved', ['Document','Status','Latest version',''], rows, 'No documents on the checklist (POB › Settings).')
+  return profTable('Documents — ' + v.approved + ' of ' + v.total + ' mandatory approved', ['Document','Status','Latest version',''], rows, 'No documents on the checklist (PMS › Settings).')
     + pobAgreementHtml(r)
     + (trail.length ? profTable('Document History', ['When','Document','Decision','Reason','By'],
       trail.sort((a,b)=>String(b.at).localeCompare(String(a.at))).map(x=>`<tr><td>${esc(fmtDateTime(x.at))}</td><td>${esc(x.type)}</td>
@@ -52613,7 +52952,7 @@ function pobOpenEmpanelment(id){
   const r = pobRecords().find(x=>x.id===id);
   if(!r) return;
   if(!pobMayEditApplication(r)){ alert('The application is approved. Only someone with Approve on Partners can change it now.'); return; }
-  openModal('Empanelment Form — ' + r.applicationId, `<p class="small-note" style="margin-top:0">Partner code <b>${esc(r.partnerCode)}</b>. Filled in from what PMS already has; check it and complete the rest.</p>
+  openModal('Empanelment Form — ' + r.applicationId, `<p class="small-note" style="margin-top:0">Partner code <b>${esc(r.partnerCode)}</b>. Filled in from what Onboarding already has; check it and complete the rest.</p>
     <div class="field-grid">${pobFields().map(f=>fieldInput(f, r[f.k])).join('')}</div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="pobSaveEmpanelment('${esc(id)}')">Save</button>`);
 }
@@ -52797,7 +53136,7 @@ function pobEvaluationHtml(r){
   const cs = pobCriteriaState(r);
   return profTable('Evaluation Checklist — ' + cs.filter(x=>x.ok).length + ' of ' + cs.length + ' met', ['Criterion','Met','Note','By'],
       cs.map(x=>`<tr><td>${esc(x.c)}</td><td>${x.ok ? '<span class="badge ok">Yes</span>' : '<span class="badge warn">No</span>'}</td>
-        <td>${esc(x.note)}</td><td>${esc(x.by ? teamName(x.by) : '')}</td></tr>`), 'No criteria set (POB › Settings).',
+        <td>${esc(x.note)}</td><td>${esc(x.by ? teamName(x.by) : '')}</td></tr>`), 'No criteria set (PMS › Settings).',
       pobMayEvaluate(r) ? `<button class="btn sm" onclick="pobOpenEvaluation('${esc(r.id)}')">Update Checklist</button> <button class="btn sm ghost" onclick="pobEscalate('${esc(r.id)}')">Escalate</button>` : '')
     + profTable('Review Attempts', ['Attempt','Submitted','Decision','Reason','By','When'],
       (r.attempts||[]).slice().reverse().map(a=>`<tr><td>${a.n}</td><td>${esc(fmtDateTime(a.submittedAt))}</td>
@@ -52839,16 +53178,19 @@ function plvSummary(lv){
   return lv.name + ' (' + lv.k + ') · ' + PLV.GROUPS.filter(g=>lv.groups.includes(g.k)).map(g=>g.l).concat(['Partner Journey (own)']).join(', ')
     + ' · ' + plvScopeLabel(lv.scope);
 }
-/* What a partner may open: their own Partner Journey always; the level's
-   modules once the Client Journey is open to them (onboarding tasks
-   approved, or active), as it always was. */
+/* What a partner may open: their own Partner Journey and PQS always; the
+   level's modules once the Client Journey is open to them (onboarding
+   tasks approved, or active), as it always was. A level given Partner
+   Journey (L4–L6) opens PPS, Onboarding and PMS for its own team; the
+   payout desk stays the firm's. */
+const PLV_PJ_VIEWS = ['pps','pms','pob'];
 function partnerPageOpen(view, u){
   u = u || me();
-  if(['mypj','ppf'].includes(view)) return true;
+  if(['mypj','ppf','pqs'].includes(view)) return true;
   if(['teammembers','recyclebin','import'].includes(view)) return false;
   const g = navGroupOf(view);
   if(!g) return true;
-  if(g === 'partnerjourney') return false;
+  if(g === 'partnerjourney' && !PLV_PJ_VIEWS.includes(view)) return false;
   const r = memberPartnerRecord(u);
   if(!r || !pobClientJourneyOpen(r)) return false;
   return plvLevel(u.partnerLevel).groups.includes(g);
@@ -52864,6 +53206,7 @@ async function plvEnsureRoles(){
 /* One partner's member brought into line with their level. */
 function plvApply(m, lv){
   m.partnerLevel = lv.k;
+  m.plvV = PLV.VERSION;
   m.role = PLV.roleName(lv);
   m.designation = lv.name + ' · Partner';
   m.scope = lv.scope;
@@ -52875,6 +53218,14 @@ function plvApply(m, lv){
   const hr = lv.groups.includes('hr') ? 1 : 0;
   m.hrAccess = Object.assign({}, m.hrAccess, {attendance: hr, incentive: hr, appraisal: hr});
   if(!hr) Object.assign(m.hrAccess, {staff: 0, admin: 0});
+}
+/* A partner login made before its level's grid changed (PQS of its own,
+   Partner Journey for L4–L6) is brought up to the grid it would get now. */
+async function migratePartnerLevelPerms(){
+  const old = (DB.team||[]).filter(m=>m && m.partnerPobId && !m.deletedAt && Number(m.plvV || 1) < PLV.VERSION);
+  if(!old.length) return;
+  old.forEach(m=>plvApply(m, plvLevel(m.partnerLevel || 'L1')));
+  await save('team');
 }
 function pobOpenLoginModal(module, id, tid){
   const r = pobRecords().find(x=>x.id===id);
@@ -53034,7 +53385,7 @@ function renderSettingsPartnerLevels(){
   return `<div class="card" style="padding:16px">
     <p class="small-note" style="margin-top:0">An active partner signs in to BOSS itself at <b>${esc(location.origin)}/login</b> and works in the same modules as the firm, as far as their level opens.
       L1–L3 always see their own tasks, performance and payouts under Partner Journey. <b>Own business only</b> means the leads, clients and work they brought or own;
-      <b>Partners mapped to them</b> adds every partner who reports to them, however deep. A partner's login is given from their Partner Onboarding record.</p>
+      <b>Partners mapped to them</b> adds every partner who reports to them, however deep. A partner's login is given from their PMS record.</p>
     <div class="table-wrap"><table><thead><tr><th>Level</th>${PLV.GROUPS.map(g=>`<th style="text-align:center">${esc(g.l)}</th>`).join('')}<th>Data they see</th><th class="num">Partners</th></tr></thead><tbody>
     ${plvLevels().map(lv=>`<tr><td><b>${esc(lv.k)}</b> · ${esc(lv.name)}</td>
       ${PLV.GROUPS.map(g=>`<td style="text-align:center"><input type="checkbox" id="plv_${lv.k}_${g.k}" ${lv.groups.includes(g.k)?'checked':''}></td>`).join('')}
@@ -53051,7 +53402,7 @@ async function plvSaveSettings(){
     levels[d.k] = {groups: PLV.GROUPS.filter(g=>{ const b = document.getElementById('plv_' + d.k + '_' + g.k); return b && b.checked; }).map(g=>g.k),
       scope: (document.getElementById('plv_' + d.k + '_scope')||{}).value || d.scope};
   });
-  DB.config.partnerLevels = {levels, updatedAt: new Date().toISOString(), updatedBy: currentUser};
+  DB.config.partnerLevels = {levels, v: PLV.VERSION, updatedAt: new Date().toISOString(), updatedBy: currentUser};
   await save('config');
   const members = DB.team.filter(t=>t.partnerPobId);
   members.forEach(m=>plvApply(m, plvLevel(m.partnerLevel || 'L1')));
@@ -53062,7 +53413,7 @@ async function plvSaveSettings(){
 /* ---------- My Partner Journey: a partner's own tasks and payouts ---------- */
 function viewMyPartnerJourney(){
   const r = memberPartnerRecord();
-  if(!r) return `<div class="card"><div class="empty">This page is for partners. Your Partner Onboarding record holds your journey.</div></div>`;
+  if(!r) return `<div class="card"><div class="empty">This page is for partners. Your PMS record holds your journey.</div></div>`;
   const lv = plvLevel(me().partnerLevel), open = pobClientJourneyOpen(r);
   const tasks = pobLiveTasks(r).filter(t=>t.status!=='Cancelled');
   const mineToDo = t => t.kind==='task' && pobTaskState(r, t).open && ['Not Started','In Progress','Changes Required'].includes(t.status || 'Not Started');
@@ -53071,7 +53422,7 @@ function viewMyPartnerJourney(){
     .sort((a,b)=>String(b.period).localeCompare(String(a.period)));
   const sum = f => pays.filter(f).reduce((s,p)=>s + p.net, 0);
   return moduleHeader({title:'My Partner Journey', subtitle: pjName(r) + ' · ' + lv.name + ' (' + lv.k + ')' + (r.partnerCode ? ' · ' + r.partnerCode : ''),
-      actions:[{label:'My Performance', onclick:"navigate('ppf')"},
+      actions:[{label:'My Performance', onclick:"navigate('ppf')"}, {label:'My Queries', onclick:"navigate('pqs')"},
         typeof pySectionOpen === 'function' && pySectionOpen() && {label:'My Brokerage Payouts', onclick:"navigate('pydash')"}].filter(Boolean)})
     + profCard('Where you are', [
         ['Stage', esc(stateLabel('POB', stateOf('POB', r)))], ['Your RM', esc(teamName(r.assignedTo))], ['Your mentor', esc(teamName(pobMentor(r)))],
@@ -53157,7 +53508,7 @@ async function pobSaveRole(id, tid){
 async function pobAssignRole(r, role, reason){
   await migratePartnerOnboarding();
   const wf = pobLatestWorkflow(role);
-  if(!wf){ alert('There is no ' + role + ' workflow. Set one up under POB › Workflows.'); return; }
+  if(!wf){ alert('There is no ' + role + ' workflow. Set one up under PMS › Workflows.'); return; }
   const at = new Date().toISOString();
   const from = r.role || '';
   r.roleHistory = (r.roleHistory||[]).concat([{from, to: role, by: currentUser, at, reason, workflow: wf.id, version: wf.version}]);
@@ -53560,7 +53911,7 @@ function pobOpenAttempt(id, taskId){
   if(!t) return;
   const m = pobTraining().find(x=>x.id===t.trainingId) || {};
   const max = Number(m.maxAttempts) || 0;
-  if(max && (t.attempts||[]).length >= max){ alert('All ' + max + ' attempts allowed for this module are used. Raise the limit under POB › Training to allow a retake.'); return; }
+  if(max && (t.attempts||[]).length >= max){ alert('All ' + max + ' attempts allowed for this module are used. Raise the limit under PMS › Training to allow a retake.'); return; }
   const scored = m.passScore !== '' && m.passScore !== undefined && m.passScore !== null;
   const f = [scored ? {k:'atScore', l:'Score (%) — pass at ' + m.passScore, t:'number', req:1} : {k:'atResult', l:'Result', t:'select', opts:['Completed','Not Completed'], req:1},
     {k:'atDate', l:'Completed On', t:'date', req:1}, {k:'atCert', l:'Certificate / evidence reference', t:'text'}];
@@ -54057,10 +54408,10 @@ function pobOpenDeleteImported(){
   if(!list.length){ alert('There are no imported partners.'); return; }
   const logins = list.filter(r=>pobMemberOf(r)).length;
   openModal('Delete Imported Data', `<p style="margin-top:0">This deletes the <b>${list.length}</b> partner(s) brought in by <b>Import Active Partners</b>:</p>
-    <ul class="small-note"><li>their Partner Onboarding and PMS records (they go to the recycle bin);</li>
+    <ul class="small-note"><li>their PMS and Onboarding records (they go to the recycle bin);</li>
       <li>their <b>${logins}</b> BOSS login(s) and sign-in account(s) — they can no longer sign in;</li>
       <li>their place on the payout team, and the client mappings that named them.</li></ul>
-    <p class="small-note">Partners who came through PPS and PMS are not touched, and nor are leads, clients or business. Their partner mark stays on the clients they brought.</p>
+    <p class="small-note">Partners who came through PPS and Onboarding are not touched, and nor are leads, clients or business. Their partner mark stays on the clients they brought.</p>
     <div class="field"><label>Type DELETE to confirm</label><input id="pobDelConfirm" autocomplete="off"></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn danger" id="pobDelGo" onclick="pobDeleteImported()">Delete ${list.length} Imported Partner${list.length===1?'':'s'}</button>`);
 }
@@ -54115,10 +54466,10 @@ function viewPOB(){
     ${tab('sessions','Role Clarity Sessions')}${tab('reviews','Reviews')}${tab('workflows','Workflows')}${tab('training','Training')}
     ${pjMaySetUp() ? tab('settings','Settings') : ''}</div>`;
   const unstarted = pobUnstartedPartners().length;
-  const head = moduleHeader({title:'POB — Partner Onboarding',
-    subtitle: 'After PMS: due payment, empanelment, evaluation, login, role — then the Ninja, Super Ninja or Sherpa road to active.',
+  const head = moduleHeader({title:'PMS — Partner Managing System',
+    subtitle: 'After Onboarding: due payment, empanelment, evaluation, login, role — then the Ninja, Super Ninja or Sherpa road to active.',
     actions:[isAdmin() && pobImportedLive().length && {label:'Delete Imported Data', icon:'\ud83d\uddd1', onclick:'pobOpenDeleteImported()'},
-      can('POB','create') && {label:'Import Active Partners', icon:'\u2191', onclick:'pobOpenImportActive()'},
+      can('POB','create') && !isPartnerMember() && {label:'Import Active Partners', icon:'\u2191', onclick:'pobOpenImportActive()'},
       can('POB','create') && {label:'Start for an Onboarded Partner', icon:'+', kind:'primary', onclick:'pobOpenStartPicker()', count: unstarted || undefined}]});
   const all = visibleRecords(pobLive(), r=>r.assignedTo, r=>r.branch);
   if(window._pobTab==='queue') return head + tabs + pobApprovalQueueHtml();
@@ -54156,7 +54507,7 @@ function viewPOB(){
           <td>${statusBadge(pobPaymentStatus(r))}</td><td>${pobProgress(r)}%</td>
           <td style="color:var(--info)">${esc(teamName(r.assignedTo))}</td>
           <td><span class="badge ${meta.color||'info'}">${esc(meta.label||'')}</span></td></tr>`;
-      }).join('') || `<tr><td colspan="8" class="empty">No onboarding records yet. One starts by itself when PMS marks a partner onboarded${unstarted ? ' — ' + unstarted + ' onboarded partner(s) can be started now' : ''}.</td></tr>`}</tbody>
+      }).join('') || `<tr><td colspan="8" class="empty">No PMS records yet. One starts by itself when Onboarding marks a partner onboarded${unstarted ? ' — ' + unstarted + ' onboarded partner(s) can be started now' : ''}.</td></tr>`}</tbody>
     </table></div>`;
 }
 function pobOutstanding(r){
@@ -54167,7 +54518,7 @@ function pobOutstanding(r){
 }
 function viewPOBDetail(id){
   const r = pobRecords().find(x=>x.id===id);
-  if(!r) return `<div class="empty">Onboarding record not found. <button class="btn" onclick="navigate('pob')">Back</button></div>`;
+  if(!r) return `<div class="empty">PMS record not found. <button class="btn" onclick="navigate('pob')">Back</button></div>`;
   if(!recordOpenToMe('POB', r)) return recordDeniedHtml('POB');
   const st = stateOf('POB', r);
   const ses = pobSessions().filter(s=>s.pobId===id);
@@ -54180,11 +54531,11 @@ function viewPOBDetail(id){
     tabKey: '_pobTabRec',
     actions: [
       {label:'Back', icon:'←', onclick:"navigate('pob')"},
-      r.partnerId && {label:'PMS Record', icon:'←', onclick:`navigate('pms','${esc(r.partnerId)}')`},
+      r.partnerId && {label:'Onboarding Record', icon:'←', onclick:`navigate('pms','${esc(r.partnerId)}')`},
       pobMayEditApplication(r) && {label:'Edit Application', icon:'✎', onclick:`pobOpenEmpanelment('${esc(id)}')`},
       can('POB','delete') && {label:'Delete', icon:'🗑', onclick:`softDeleteRecord('POB','${esc(id)}')`},
     ],
-    progress: {title:'Onboarding Progress — ' + pobProgress(r) + '%', html: stepperHtml('POB', r, pobPathFor(r)) + blueprintWidget('POB', r, {compact:1})},
+    progress: {title:'PMS Progress — ' + pobProgress(r) + '%', html: stepperHtml('POB', r, pobPathFor(r)) + blueprintWidget('POB', r, {compact:1})},
     tabs: [['overview','Overview'],['payments','Payments'],['documents','Documents & Agreement'],['evaluation','Evaluation'],
       ['tasks','Role & Tasks'],['sessions','Sessions (' + ses.length + ')'],['training','Training'],['readiness','Readiness'],
       ['reviews','Reviews (' + rvs.length + ')'],['mail','Emails (' + pjComms('POB', id).length + ')'],['history','History']],
@@ -76207,55 +76558,58 @@ const MAIL_TEMPLATE_DEFS = [
   {group:'Partner Journey', key:'pjPaymentLink', label:'PPS — payment link, after the session',
    when:'Sent from Attended \u2014 Send Payment Link.',
    vars:['Name','Webinar','Fee','PaymentLink','RMName','FirmName']},
-  {group:'Partner Journey', key:'pjWelcome', label:'PMS — payment acknowledgement & welcome, with Freedom Gurukul access',
-   when:'Sent the moment a payment is verified and the partner is created in PMS.',
+  {group:'Partner Journey', key:'pjReferralPaymentLink', label:'PPS — payment link, for a referred prospect (no webinar)',
+   when:'Sent from Referred \u2014 Send Payment Link & Interest Form.',
+   vars:['Name','ReferredBy','ReferralName','Fee','PaymentLink','RMName','FirmName']},
+  {group:'Partner Journey', key:'pjWelcome', label:'Onboarding — payment acknowledgement & welcome, with Freedom Gurukul access',
+   when:'Sent the moment a payment is verified and the partner is created in Onboarding.',
    vars:['Name','Fee','PaidOn','Reference','GurukulLink','GurukulNote','RMName','FirmName']},
-  {group:'Partner Journey', key:'pjOneToOne', label:'PMS — one-to-one discussion invitation',
+  {group:'Partner Journey', key:'pjOneToOne', label:'Onboarding — one-to-one discussion invitation',
    when:'Sent from Freedom Gurukul Access, when the lead owner is chosen and the one-to-one is booked.',
    vars:['Name','Host','Date','Time','MeetingLink','FirmName']},
-  {group:'Partner Journey', key:'pjInduction', label:'PMS — partner induction invitation',
+  {group:'Partner Journey', key:'pjInduction', label:'Onboarding — partner induction invitation',
    when:'Sent once Admission Form 1 or 2 is saved, with the induction meeting\u2019s date and link.',
    vars:['Name','Form','Date','Time','MeetingLink','FirmName']},
-  {group:'Partner Journey', key:'pjCourses', label:'PMS — Freedom Gurukul courses unlocked',
+  {group:'Partner Journey', key:'pjCourses', label:'Onboarding — Freedom Gurukul courses unlocked',
    when:'Sent from Unlock FG Courses, naming the courses that were opened.',
    vars:['Name','Courses','GurukulLink','FirmName']},
-  {group:'Partner Journey', key:'pjNismDoubt', label:'PMS — NISM registration & doubt solving session',
+  {group:'Partner Journey', key:'pjNismDoubt', label:'Onboarding — NISM registration & doubt solving session',
    when:'Sent from NISM Registration Done. It repeats the registration details and invites the partner to the doubt solving session.',
    vars:['Name','NismRegNo','NismSeries','NismDate','NismCentre','Date','Time','MeetingLink','FirmName']},
-  {group:'Partner Journey', key:'pjOnboardingVideo', label:'PMS — onboarding video & meeting',
+  {group:'Partner Journey', key:'pjOnboardingVideo', label:'Onboarding — onboarding video & meeting',
    when:'Sent once the ARN / EUIN details have been verified.',
    vars:['Name','VideoLink','Date','Time','MeetingLink','FirmName']},
-  {group:'Partner Journey', key:'pjOnboardingOneToOne', label:'PMS — onboarding one-to-one',
+  {group:'Partner Journey', key:'pjOnboardingOneToOne', label:'Onboarding — onboarding one-to-one',
    when:'Sent when the partner asks for a one-to-one after the onboarding video.',
    vars:['Name','Date','Time','MeetingLink','FirmName']},
-  {group:'Partner Onboarding', key:'pobPaymentAck', label:'POB — payment acknowledgement',
+  {group:'PMS · Partner Managing System', key:'pobPaymentAck', label:'PMS — payment acknowledgement',
    when:'Sent from Send Payment Acknowledgement, once the due payment is verified.',
    vars:['Name','Amount','Reference','PaidOn','PartnerCode','ApplicationId','RMName','FirmName']},
   {group:'Partner Journey', key:'pjVerifyRequest', label:'Verification request to the verifier',
    when:'Sent to whoever has to verify something: a fee or due payment, ARN / EUIN details, an empanelment for evaluation, or a task for its mentor. They are the reporting manager of whoever put it in, the mapped RM when the partner put it in, or an administrator.',
    vars:['VerifierName','What','Name','Details','SubmittedBy','Link','FirmName']},
-  {group:'Partner Onboarding', key:'pobEmpanelmentForm', label:'POB — the empanelment form, sent to the partner',
+  {group:'PMS · Partner Managing System', key:'pobEmpanelmentForm', label:'PMS — the empanelment form, sent to the partner',
    when:'Sent from Send Empanelment Form. The one form carries the partner\u2019s details, their documents and the agreement, filled in with what is on file.',
    vars:['Name','FormLink','PartnerCode','ApplicationId','RMName','FirmName']},
-  {group:'Partner Onboarding', key:'pobTaskReviewed', label:'POB — a task reviewed by the mentor',
+  {group:'PMS · Partner Managing System', key:'pobTaskReviewed', label:'PMS — a task reviewed by the mentor',
    when:'Sent to the partner when their mentor approves a task or asks for changes.',
    vars:['Name','Task','Decision','Comments','NextStep','Mentor','PortalLink','FirmName']},
-  {group:'Partner Onboarding', key:'pobLogin', label:'POB — login access',
+  {group:'PMS · Partner Managing System', key:'pobLogin', label:'PMS — login access',
    when:'Sent from Login Access Created, with the login ID and the password setup link.',
    vars:['Name','LoginId','LoginLink','PartnerCode','FirmName']},
-  {group:'Partner Onboarding', key:'pobRoleMeeting', label:'POB — one-to-one for role confirmation',
+  {group:'PMS · Partner Managing System', key:'pobRoleMeeting', label:'PMS — one-to-one for role confirmation',
    when:'Sent when the internal RM books the role confirmation one-to-one.',
    vars:['Name','Host','Date','Time','MeetingLink','FirmName']},
-  {group:'Partner Onboarding', key:'pobSession', label:'POB — Role Clarity Session invitation',
+  {group:'PMS · Partner Managing System', key:'pobSession', label:'PMS — Role Clarity Session invitation',
    when:'Sent when a Role Clarity Session is scheduled or rescheduled.',
    vars:['Name','Role','Trainer','Date','Time','MeetingLink','Preparation','FirmName']},
-  {group:'Partner Onboarding', key:'pobCourseUnlocked', label:'POB — course unlocked at a milestone',
+  {group:'PMS · Partner Managing System', key:'pobCourseUnlocked', label:'PMS — course unlocked at a milestone',
    when:'Sent when a course unlock task is done — after the conversions or clients the workflow names.',
    vars:['Name','Course','GurukulLink','FirmName']},
-  {group:'Partner Onboarding', key:'pobActivated', label:'POB — activation',
+  {group:'PMS · Partner Managing System', key:'pobActivated', label:'PMS — activation',
    when:'Sent when the readiness review is approved and the partner becomes active.',
    vars:['Name','Role','PartnerCode','LoginId','FirmName']},
-  {group:'Partner Journey', key:'pjArnExpiry', label:'PMS — ARN / EUIN expiry reminder (automatic)',
+  {group:'Partner Journey', key:'pjArnExpiry', label:'Onboarding — ARN / EUIN expiry reminder (automatic)',
    when:'Sent by the server once a week from six months before an onboarded partner\u2019s ARN or EUIN runs out (PPS › Settings).',
    vars:['Name','What','Number','ExpiresOn','DaysLeft','FirmName']},
 ];
@@ -76297,6 +76651,9 @@ const MAIL_WORDING_REVISIONS = [
   //     server, which sends three of them on its own, reads the firm's copy.
   {n:4, keys:['pjAck','pjReminder','pjJoiningLink','pjPaymentLink','pjWelcome','pjOneToOne','pjInduction',
     'pjCourses','pjNismDoubt','pjOnboardingVideo','pjOnboardingOneToOne','pjArnExpiry']},
+  // 5 — a referred prospect's payment link, which does not thank them for a
+  //     webinar they never attended.
+  {n:5, keys:['pjReferralPaymentLink']},
 ];
 const MAIL_WORDING_REVISION = MAIL_WORDING_REVISIONS[MAIL_WORDING_REVISIONS.length-1].n;
 async function migrateMailTemplateWording(){

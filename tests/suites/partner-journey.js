@@ -315,21 +315,25 @@ suite(async t => {
 
   t.section('PQS, payouts and performance');
 
-  await t.step('a query needs its resolution before it is resolved', async () => {
+  await t.step('a query is routed by its category, and needs a solution before it is resolved', async () => {
     const r = await t.eval(async id=>{
       pjOpenQueryForm(null, id);
       document.getElementById('f_subject').value = 'NISM study material';
       document.getElementById('f_category').value = 'Exam / NISM';
-      document.getElementById('f_status').value = 'Resolved';
-      await pjSaveQuery('');
-      const refused = !pjQueries().some(q=>q.subject==='NISM study material');
-      document.getElementById('f_status').value = 'Open';
-      await pjSaveQuery('');
+      document.getElementById('f_description').value = 'Where do I find the mock tests?';
+      await pjSaveQuery();
+      const q = pjQueries().find(x=>x.subject==='NISM study material');
+      pjOpenQueryForm(q.id);
+      await pqsAct(q.id, 'resolve');
+      const refused = q.status === 'Open';
+      pjOpenQueryForm(q.id);
+      document.getElementById('pqsSol').value = 'Mock tests are under Freedom Gurukul › NISM.';
+      await pqsAct(q.id, 'resolve');
       closeModal();
-      return {refused, saved: pjQueries().filter(q=>q.partnerId===id).length};
+      return {refused, dept: q.department, status: q.status, saved: pjQueries().filter(x=>x.partnerId===id).length, trail: (q.trail||[]).map(x=>x.what)};
     }, partner);
-    if(!r.refused || r.saved !== 1) throw new Error(JSON.stringify(r));
-    return 'refused without a resolution, saved as Open';
+    if(!r.refused || r.saved !== 1 || r.dept !== 'Training' || r.status !== 'Resolved') throw new Error(JSON.stringify(r));
+    return 'went to ' + r.dept + '; refused without a solution, then ' + r.trail.join(' → ');
   });
 
   await t.step('a payout works out gross and net, and Paid needs a date', async () => {
