@@ -36590,6 +36590,8 @@ const DASH_SECTIONS = [
    note:'Where the book stands right now. Every figure is read from the records that hold it.'},
   {id:'efficiency', label:'Business Efficiency Report',
    note:'How well the book is being worked, module by module.'},
+  {id:'partners', label:'Partner Business',
+   note:'Brokerage, AUM and payouts from the payout files, and Partner Journey — yours and your team’s.'},
   {id:'day', label:'Your day', note:'Your own book, not the firm’s.'},
 ];
 /* THE REGISTER. One entry per card: what it is called, where it sits,
@@ -36829,6 +36831,136 @@ const DASHBOARD_WIDGETS = [
       ${c.upcoming.length? c.upcoming.map(r=>`<div class="row between" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${esc(clientName(r.clientId))} — ${esc(r.reviewType)}</span><span>${fmtDate(r.meetingDate)}</span></div>`).join('') : `<div class="empty">No reviews scheduled</div>`}
     </div>`},
 ];
+
+DASHBOARD_WIDGETS.push(
+  {id:'pjBusiness', label:'AUM, Brokerage & Payouts', section:'partners', module:'', wide:true, money:true,
+   about:'From the registrar files imported in Payouts: AUM and brokerage on the clients mapped to you and everyone mapped below you, and what each of you earns.',
+   needs:()=>typeof pySectionOpen === 'function' && pySectionOpen(),
+   html:(c, title)=>dashPartnerBusinessHtml(title)},
+  {id:'pjJourney', label:'Partners', section:'partners', module:'Partners',
+   about:'Prospects, onboarding and active partners, and partner logins by level — within what you may see.',
+   needs:()=>can('POB','view'),
+   html:(c, title)=>dashPartnerJourneyHtml(title)},
+  {id:'pjQueries', label:'Partner Queries', section:'partners', module:'Partners',
+   about:'PQS queries you can see, by status, and the ones waiting on you.',
+   needs:()=>can('PQS','view'),
+   html:(c, title)=>dashPartnerQueriesHtml(title)});
+
+/* ---- the partner business ---------------------------------------------
+   The cards above read BOSS's own book (CMS clients and the ledger). A
+   partner's business arrives another way: the registrar files imported in
+   Payouts, the clients mapped there, and the partners in Partner Journey.
+   These cards read those, through the same reach as everything else: the
+   payout server decides whose brokerage a person may see (themselves, and
+   from L3 up everyone mapped below them; an admin the firm), and Partner
+   Journey's records go through visibleRecords(). The bar's narrowing to one
+   person of the team applies here too. */
+const DASH_PY = {cache: {}, loading: {}, errors: {}};
+function dashPyUrl(){
+  const n = window._dashWho;
+  const who = n === 'me' ? me() : n ? (DB.team||[]).find(t=>t.id===n) : null;
+  return '/dashboard/partners' + (who && who.email ? '?email=' + encodeURIComponent(who.email) : '');
+}
+function dashPy(url){
+  const c = DASH_PY.cache[url];
+  if(c && Date.now() - c.at < 60000) return {data: c.data};
+  if(DASH_PY.errors[url]) return {error: DASH_PY.errors[url]};
+  if(!DASH_PY.loading[url] && typeof pyGet === 'function'){
+    DASH_PY.loading[url] = true;
+    pyGet(url).then(d=>{ DASH_PY.cache[url] = {data: d, at: Date.now()}; delete DASH_PY.errors[url]; },
+                    e=>{ DASH_PY.errors[url] = e.message; setTimeout(()=>{ delete DASH_PY.errors[url]; }, 60000); })
+      .finally(()=>{ delete DASH_PY.loading[url]; if(currentView==='dashboard') render(); });
+  }
+  return {data: c ? c.data : undefined};
+}
+function dashPyLevel(l){ const n = Number(l)||0; if(n >= 7) return 'Company'; const lv = plvLevels()[n-1]; return lv ? lv.k + ' · ' + lv.name : 'L' + n; }
+function dashPartnerBusinessHtml(title){
+  const head = `<div class="section-title" style="margin-top:0">${esc(title)}</div>`;
+  const st = dashPy(dashPyUrl());
+  if(st.error) return `<div class="card md-card">${head}<div class="empty">The payout figures could not be read: ${esc(st.error)}</div></div>`;
+  const d = st.data;
+  if(!d) return `<div class="card md-card">${head}<div class="empty">Reading the payout figures…</div></div>`;
+  if(d.none) return `<div class="card md-card">${head}<div class="empty">That person is not on the payout team yet (Payouts › Clients &amp; Map › Hierarchy).</div></div>`;
+  const t = d.totals || {}, month = pjMonthLabel(d.latest), year = pjMonthLabel(d.from12) + ' – ' + month;
+  const fig = (v, l, n) => `<div class="md-fig"><div class="md-fig-num">${v}</div><div class="md-fig-lbl">${esc(l)}</div>${n ? `<div class="small-note" style="margin:2px 0 0">${esc(n)}</div>` : ''}</div>`;
+  const empty = !t.gross12 && !t.aum && !t.share12;
+  const max = Math.max(1, ...(d.trend||[]).map(x=>x.gross));
+  const team = d.team || [];
+  return `<div class="card md-card">
+    <div class="between" style="align-items:flex-start">${head}
+      <span class="small-note" style="margin:0">${d.scope==='firm' ? 'The whole firm' : (team.length > 1 ? 'You and ' + (team.length-1) + ' mapped below' : 'Your own')} · from the payout files</span></div>
+    <div class="md-figs">
+      ${fig(money(t.aum), 'AUM', month)}
+      ${fig(money(t.grossMonth), 'Brokerage', month)}
+      ${fig(money(t.gross12), 'Brokerage', year)}
+      ${fig(money(t.share12), d.scope==='firm' ? 'Paid out to partners' : 'Earnings (you and your team)', year)}
+      ${fig(Number(t.clients||0).toLocaleString(numberLocale()), 'Clients with brokerage', year)}
+    </div>
+    ${empty ? `<div class="small-note" style="margin-top:10px">No brokerage on ${d.scope==='firm' ? 'the book' : 'clients mapped to you or your team'} yet. Upload the registrar files in Payouts › Data Import, and map the clients in Payouts › Clients &amp; Map.</div>` : `
+    <div class="md-bars" style="margin-top:12px">${(d.trend||[]).map(x=>`<div class="md-bar"><span class="md-bar-lbl">${esc(pjMonthLabel(x.period))}</span>
+      <span class="md-bar-track"><span style="width:${Math.max(2, Math.round(x.gross/max*100))}%"></span></span>
+      <span class="md-bar-val">${money(x.gross)}</span></div>`).join('')}</div>`}
+    ${team.length ? `<div class="table-wrap" style="margin-top:12px"><table id="dashPyTeam"><thead><tr><th>Person</th><th>Level</th>
+        <th class="se-r">Clients</th><th class="se-r">AUM</th><th class="se-r">Brokerage (12 mo)</th><th class="se-r">Earnings (12 mo)</th></tr></thead><tbody>
+      ${team.map(p=>`<tr><td style="font-weight:${p.me?700:500}">${esc(p.name)}${p.me ? ' <span class="badge info">you</span>' : ''}</td><td>${esc(dashPyLevel(p.level))}</td>
+        <td class="se-r">${p.clients}${p.own !== p.clients ? ` <span class="small-note" style="margin:0">(${p.own} own)</span>` : ''}</td>
+        <td class="se-r">${money(p.aum)}</td><td class="se-r">${money(p.gross12)}</td><td class="se-r">${money(p.share12)}</td></tr>`).join('')}
+      </tbody></table></div>` : ''}
+  </div>`;
+}
+/* Partner Journey by the numbers, within what the person may see. */
+function dashPartnerJourney(){
+  const pps = can('PPS','view') && pageOpenToMe('pps') ? visibleRecords(pjProspects(), r=>r.assignedTo, r=>r.branch) : null;
+  const onb = can('PMS','view') && pageOpenToMe('pms') ? visibleRecords(pjPartners(), r=>r.assignedTo, r=>r.branch) : null;
+  const pms = visibleRecords(pobLive(), r=>r.assignedTo, r=>r.branch);
+  const n = dashNarrow();
+  const u = me();
+  let people = (DB.team||[]).filter(t=>t && !t.deletedAt && t.partnerPobId);
+  if(n) people = people.filter(t=>n.ids.has(t.id));
+  else if(!(isAdmin(u) || u.scope==='all')){
+    const mine = new Set([u.id].concat(u.scope==='team' ? userDescendants(u.id).map(t=>t.id) : []));
+    const pobs = new Set(pms.map(r=>r.id));
+    people = people.filter(t=>mine.has(t.id) || pobs.has(t.partnerPobId));
+  }
+  const levels = plvLevels().map(lv=>({label: lv.k + ' · ' + lv.name, value: people.filter(t=>t.partnerLevel===lv.k).length}));
+  const st = (m, r) => stateOf(m, r);
+  return {
+    prospects: pps && {open: pps.filter(r=>!['converted','community'].includes(st('PPS', r))).length, converted: pps.filter(r=>st('PPS', r)==='converted').length, total: pps.length},
+    onboarding: onb && {open: onb.filter(r=>st('PMS', r)!=='onboarded').length, done: onb.filter(r=>st('PMS', r)==='onboarded').length},
+    pms: {active: pms.filter(r=>st('POB', r)==='active').length, open: pms.filter(r=>st('POB', r)!=='active').length},
+    levels, people: people.length,
+  };
+}
+function dashPartnerJourneyHtml(title){
+  const j = dashPartnerJourney();
+  const fig = (v, l, n, view) => `<div class="md-fig${view ? ' md-open' : ''}" ${view ? `role="button" tabindex="0" onclick="navigate('${view}')"` : ''}><div class="md-fig-num">${v}</div><div class="md-fig-lbl">${esc(l)}</div>${n ? `<div class="small-note" style="margin:2px 0 0">${esc(n)}</div>` : ''}</div>`;
+  const max = Math.max(1, ...j.levels.map(x=>x.value));
+  return `<div class="card md-card">
+    <div class="section-title" style="margin-top:0">${esc(title)}</div>
+    <div class="md-figs">
+      ${j.prospects ? fig(j.prospects.open, 'Prospects in PPS', j.prospects.converted + ' paid the fee', 'pps') : ''}
+      ${j.onboarding ? fig(j.onboarding.open, 'In Onboarding', j.onboarding.done + ' onboarded', 'pms') : ''}
+      ${fig(j.pms.active, 'Active partners (PMS)', j.pms.open + ' still on the road', 'pob')}
+      ${fig(j.people, 'Partners with a login', '')}
+    </div>
+    <div class="md-bars" style="margin-top:12px">${j.levels.map(x=>`<div class="md-bar"><span class="md-bar-lbl">${esc(x.label)}</span>
+      <span class="md-bar-track"><span style="width:${Math.max(x.value ? 4 : 0, Math.round(x.value/max*100))}%"></span></span>
+      <span class="md-bar-val">${x.value}</span></div>`).join('')}</div>
+  </div>`;
+}
+function dashPartnerQueriesHtml(title){
+  const all = pqsVisibleList();
+  const by = s => all.filter(q=>q.status===s).length;
+  const mine = all.filter(pqsWaitingOnMe).length;
+  return `<div class="card md-card">
+    <div class="section-title" style="margin-top:0">${esc(title)}</div>
+    <div class="md-figs">
+      ${PJ_QUERY_STATUSES.map(s=>`<div class="md-fig md-open" role="button" tabindex="0" onclick="window._pqsTab='queries'; window._pqsStatus='${s}'; navigate('pqs')">
+        <div class="md-fig-num">${by(s)}</div><div class="md-fig-lbl">${esc(s)}</div></div>`).join('')}
+    </div>
+    <div class="small-note" style="margin-top:10px">${mine ? `<a href="javascript:void(0)" onclick="window._pqsTab='mine'; window._pqsStatus=''; navigate('pqs')">${mine} waiting on you</a>` : 'Nothing waiting on you.'}</div>
+  </div>`;
+}
 
 /* ---- what the firm has said about it --------------------------------- */
 function dashConfig(){

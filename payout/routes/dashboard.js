@@ -86,13 +86,96 @@ r.get('/', (req, res) => {
     SELECT u.id, u.name, u.level, SUM(l.amount) earnings, COUNT(DISTINCT l.brokerage_id) txns
     FROM payout_lines l JOIN users u ON u.id = l.user_id
     JOIN brokerage b ON b.id = l.brokerage_id ${LIVE}
-    WHERE ${inRange} GROUP BY u.id ORDER BY earnings DESC LIMIT 5`).all(from, to);
+    WHERE ${inRange} ${uid ? `AND l.user_id ${IN_SCOPE}` : ''} GROUP BY u.id ORDER BY earnings DESC LIMIT 5`).all(...p(from, to));
 
   res.json({
     range: { from, to, latest },
     kpis: { gross: gross.s, pool: pool.s, clients, transactions: txCount },
     compliance, topClients, redemptions, revenue, producers, categories, leaderboard,
   });
+});
+
+/* The partner business on the CRM's own dashboard: AUM, brokerage and payouts
+   for whoever is asking and everyone mapped below them (an admin: the firm),
+   and the same per person of that team. A client counts for everyone on its
+   mapping (Clients & Map), and is handled by the lowest level on it. With
+   ?email= it narrows to that person and their team, if they are in scope. */
+const childrenOf = db.prepare('SELECT id FROM users WHERE parent_id = ?');
+function subtree(id) {
+  const ids = [id];
+  for (let i = 0; i < ids.length; i++) for (const u of childrenOf.all(ids[i])) if (!ids.includes(u.id)) ids.push(u.id);
+  return ids;
+}
+r.get('/partners', (req, res) => {
+  let ids = scopeIds(req);
+  let focus = null;
+  if (req.query.email) {
+    const u = db.prepare('SELECT id FROM users WHERE lower(email) = lower(?)').get(String(req.query.email));
+    if (!u || (ids && !ids.includes(u.id))) return res.json({ none: true });
+    focus = u.id;
+    ids = subtree(u.id).filter((x) => !ids || ids.includes(x));
+  }
+  const inScope = ids ? new Set(ids) : null;
+  const latest = latestPeriod();
+  const months = [];
+  for (let i = 5; i >= 0; i--) months.push(shiftPeriod(latest, -i));
+  const from12 = shiftPeriod(latest, -11);
+
+  // Each client's mapping, and who handles it.
+  const clients = new Map();
+  for (const c of db.prepare('SELECT id, hierarchy FROM clients').all()) {
+    let h = {};
+    try { h = JSON.parse(c.hierarchy || '{}') || {}; } catch { h = {}; }
+    const levels = Object.keys(h).map(Number).filter((k) => h[k]).sort((a, b) => a - b);
+    const people = levels.map((k) => Number(h[k]));
+    if (inScope && !people.some((x) => inScope.has(x))) continue;
+    clients.set(c.id, { people, handler: people[0] || null });
+  }
+  const perClient = db.prepare(`SELECT b.client_id id, b.period,
+      COALESCE(SUM(b.amount),0) gross, COALESCE(SUM(b.aum),0) aum
+    FROM brokerage b ${LIVE} WHERE b.period BETWEEN ? AND ? AND b.client_id IS NOT NULL GROUP BY b.client_id, b.period`).all(from12, latest);
+  // Unmapped brokerage is the firm's: only an admin, looking at the firm, sees it.
+  const unmapped = !inScope ? db.prepare(`SELECT b.period, COALESCE(SUM(b.amount),0) gross, COALESCE(SUM(b.aum),0) aum
+    FROM brokerage b ${LIVE} WHERE b.period BETWEEN ? AND ? AND b.client_id IS NULL GROUP BY b.period`).all(from12, latest) : [];
+
+  const totals = { aum: 0, grossMonth: 0, gross12: 0, clients: 0, shareMonth: 0, share12: 0 };
+  const trend = months.map((m) => ({ period: m, gross: 0, share: 0 }));
+  const people = new Map();
+  const person = (id) => { if (!people.has(id)) people.set(id, { id, clients: new Set(), own: new Set(), aum: 0, gross12: 0, share12: 0 }); return people.get(id); };
+  const seen = new Set();
+  for (const x of perClient.concat(unmapped.map((u) => ({ ...u, id: null })))) {
+    const c = x.id === null ? null : clients.get(x.id);
+    if (x.id !== null && !c) continue;
+    if (x.id !== null) seen.add(x.id);
+    totals.gross12 += x.gross;
+    if (x.period === latest) { totals.aum += x.aum; totals.grossMonth += x.gross; }
+    const t = trend.find((y) => y.period === x.period); if (t) t.gross += x.gross;
+    if (!c) continue;
+    c.people.forEach((u) => {
+      if (inScope && !inScope.has(u)) return;
+      const p = person(u); p.clients.add(x.id); p.gross12 += x.gross;
+      if (x.period === latest) p.aum += x.aum;
+      if (c.handler === u) p.own.add(x.id);
+    });
+  }
+  totals.clients = seen.size;
+  const share = db.prepare(`SELECT l.user_id, l.period, COALESCE(SUM(l.amount),0) s FROM payout_lines l
+    JOIN brokerage b ON b.id = l.brokerage_id ${LIVE}
+    WHERE l.period BETWEEN ? AND ? AND l.user_id IS NOT NULL GROUP BY l.user_id, l.period`).all(from12, latest);
+  for (const x of share) {
+    if (inScope && !inScope.has(x.user_id)) continue;
+    totals.share12 += x.s;
+    if (x.period === latest) totals.shareMonth += x.s;
+    const t = trend.find((y) => y.period === x.period); if (t) t.share += x.s;
+    person(x.user_id).share12 += x.s;
+  }
+  const names = new Map(db.prepare('SELECT id, name, email, code, level, parent_id FROM users').all().map((u) => [u.id, u]));
+  const me = focus || req.user.id;
+  const team = [...people.values()].filter((p) => names.has(p.id) && (!inScope || inScope.has(p.id)))
+    .map((p) => { const u = names.get(p.id); return { id: p.id, name: u.name, email: u.email, code: u.code, level: u.level,
+      clients: p.clients.size, own: p.own.size, aum: p.aum, gross12: p.gross12, share12: p.share12, me: p.id === me }; })
+    .sort((a, b) => (b.me - a.me) || (b.aum - a.aum) || (b.gross12 - a.gross12)).slice(0, 50);
+  res.json({ latest, from12, totals, trend, team, scope: inScope ? 'team' : 'firm', size: inScope ? inScope.size : null });
 });
 
 // Notifications are operational (imports, approvals), so only admins get them.
