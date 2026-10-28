@@ -68641,6 +68641,13 @@ async function impCommit(){
   const now = new Date().toISOString();
   const touched = {clients:false, holdings:false, sips:false};
   const log = [];
+  /* What this run made and changed, so Remove can take it back out. */
+  const undo = {created:[], updated:[]};
+  const undoChanged = (srcId, rec, after) => {
+    const before = {};
+    Object.keys(after).forEach(k=>{ before[k] = rec[k] === undefined ? null : rec[k]; });
+    undo.updated.push({srcId, id: rec.id, before, after});
+  };
   const byId = new Map();
   DB.clients.forEach(c=>{ if(c && c.id) byId.set(c.id, c); });
   const holdingByKey = new Map();
@@ -68672,6 +68679,7 @@ async function impCommit(){
       initState('CMS', client);
       DB.clients.push(client);
       byId.set(client.id, client);
+      undo.created.push({srcId:'clients', id: client.id});
       batch.created++;
       touched.clients = true;
       await logAudit('CMS', client.id, 'Created by platform import',
@@ -68696,6 +68704,9 @@ async function impCommit(){
     if(changes.length){
       touched.clients = true;
       if(!fresh){
+        const before = {}, after = {};
+        changes.forEach(c=>{ before[c.field] = c.oldValue === '' ? null : c.oldValue; after[c.field] = client[c.field]; });
+        undo.updated.push({srcId:'clients', id: client.id, before, after});
         batch.updated++;
         await logAudit('CMS', client.id, 'Updated by platform import', changes);
       }
@@ -68711,14 +68722,17 @@ async function impCommit(){
              format: fmt.id, firstSeenAt: now};
         DB.platformHoldings.push(h);
         holdingByKey.set(key, h);
+        undo.created.push({srcId:'platformHoldings', id: h.id});
       } else {
         h.prev = {invested: h.invested, current: h.current, xirr: h.xirr, asOf: h.asOf};
       }
       /* asOf is when BOSS was told; reportAsOn is the date the report
          itself is true of. They are different questions and the screens
          ask the second one. */
-      Object.assign(h, r.aum, {sleeves, src: r.src, batchId: batch.id, file: w.file,
+      const put = Object.assign({}, r.aum, {sleeves, src: r.src, batchId: batch.id, file: w.file,
         asOf: now, reportAsOn: w.asOn || '', importedBy: currentUser});
+      if(h.firstSeenAt !== now) undoChanged('platformHoldings', h, Object.assign({prev: h.prev}, put));
+      Object.assign(h, put);
       touched.holdings = true;
     } else {
       const key = impSnapshotKey(fmt, r);
@@ -68728,9 +68742,12 @@ async function impCommit(){
              format: fmt.id, firstSeenAt: now};
         DB.platformSips.push(s);
         sipByKey.set(key, s);
+        undo.created.push({srcId:'platformSips', id: s.id});
       }
-      Object.assign(s, r.sip, {src: r.src, batchId: batch.id, file: w.file,
+      const put = Object.assign({}, r.sip, {src: r.src, batchId: batch.id, file: w.file,
         asOf: now, reportAsOn: w.asOn || '', importedBy: currentUser});
+      if(s.firstSeenAt !== now) undoChanged('platformSips', s, put);
+      Object.assign(s, put);
       touched.sips = true;
     }
     batch.written++;
@@ -68748,12 +68765,22 @@ async function impCommit(){
      file lands, which is what lets a year-on-year growth figure be
      read rather than typed. */
   if(touched.holdings || touched.sips) await aumLedgerRecord(w.asOn || '', batch.id);
+  /* A client on two rows is changed twice: what goes back is what it was
+     before the first, and what is checked is what the last one left. */
+  const merged = new Map();
+  undo.updated.forEach(u=>{
+    const k = u.srcId + ':' + u.id, m = merged.get(k);
+    if(!m){ merged.set(k, u); return; }
+    Object.keys(u.after).forEach(f=>{ if(!(f in m.before)) m.before[f] = u.before[f]; m.after[f] = u.after[f]; });
+  });
+  undo.updated = [...merged.values()];
+  batch.undoId = await impUndoRecord(undo, {file: w.file, label: fmt.label});
   await save('importBatches');
   /* The same history table the CSV import writes to, so Data
      Administration shows one list of every import the firm has run. */
   DB.importHistory.push({id: uid('IMH'), module: impPlatformLabel(fmt.platform) + ' · ' + fmt.report,
     file: w.file, total: batch.total, imported: batch.written,
-    skipped: batch.skipped + batch.failed, date: now, by: currentUser, batchId: batch.id});
+    skipped: batch.skipped + batch.failed, date: now, by: currentUser, batchId: batch.id, undoId: batch.undoId});
   await save('importHistory');
   w.result = {batch, log};
   return w.result;
@@ -69230,7 +69257,7 @@ function renderSettingsImportMaps(){
     <div class="section-title">Imports run so far</div>
     <div class="table-wrap"><table><thead><tr>
       <th>Batch</th><th>Platform</th><th>Report</th><th>File</th><th>Rows</th>
-      <th>Created</th><th>Updated</th><th>Skipped</th><th>Failed</th><th>When</th><th>By</th>
+      <th>Created</th><th>Updated</th><th>Skipped</th><th>Failed</th><th>When</th><th>By</th><th></th>
     </tr></thead><tbody>
       ${DB.importBatches.slice().reverse().slice(0,40).map(b=>`<tr>
         <td class="small-note">${esc(b.id)}</td>
@@ -69240,7 +69267,9 @@ function renderSettingsImportMaps(){
         <td>${b.skipped? `<span class="badge warn">${b.skipped}</span>`:'—'}</td>
         <td>${b.failed? `<span class="badge danger">${b.failed}</span>`:'—'}</td>
         <td>${esc(fmtDate(String(b.at).slice(0,10)))}</td><td>${esc(teamName(b.by))}</td>
-      </tr>`).join('') || `<tr><td colspan="11" class="empty">No platform report has been imported yet.</td></tr>`}
+        <td>${(isAdmin() || (can('CMS','delete') && can('Transactions','delete'))) ? `<button class="btn ghost sm" style="color:var(--danger)"
+          title="Take out what this import brought in" onclick="pfAskRemoveBatch('${esc(b.id)}')">Remove</button>` : ''}</td>
+      </tr>`).join('') || `<tr><td colspan="12" class="empty">No platform report has been imported yet.</td></tr>`}
     </tbody></table></div>`;
 }
 
@@ -70137,8 +70166,40 @@ async function impUndoRecord(undo, o){
   return id;
 }
 function impUndoFor(hist){
-  if(!hist || !hist.undoId) return null;
-  return (DB.importUndo || []).find(u=>u.id === hist.undoId) || null;
+  if(!hist) return null;
+  if(hist.undoId) return (DB.importUndo || []).find(u=>u.id === hist.undoId) || null;
+  return hist.batchId ? pfBatchUndo(hist.batchId) : null;
+}
+/* A platform report imported before imports kept a record of what they
+   did. Its batch still says enough: every snapshot and SIP line it wrote
+   carries its batch id, what it first created was stamped the moment the
+   run began, and an AUM snapshot it overwrote kept its previous figures.
+   A SIP line it overwrote kept nothing, so that one stays as it is. */
+function pfBatchUndo(batchId){
+  const b = (DB.importBatches || []).find(x=>x && x.id === batchId);
+  if(!b) return null;
+  const t0 = Date.parse(b.at);
+  const near = at => Math.abs(Date.parse(at || '') - t0) < 5000;
+  const created = [], updated = [];
+  let kept = 0;
+  (DB.platformHoldings || []).forEach(h=>{
+    if(!h || h.deletedAt || h.batchId !== b.id) return;
+    if(near(h.firstSeenAt)) created.push({srcId:'platformHoldings', id: h.id});
+    else if(h.prev) updated.push({srcId:'platformHoldings', id: h.id,
+      before: {invested: h.prev.invested, current: h.prev.current, xirr: h.prev.xirr, asOf: h.prev.asOf, batchId: null},
+      after:  {invested: h.invested, current: h.current, xirr: h.xirr, asOf: h.asOf, batchId: h.batchId}});
+    else kept++;
+  });
+  (DB.platformSips || []).forEach(x=>{
+    if(!x || x.deletedAt || x.batchId !== b.id) return;
+    if(near(x.firstSeenAt)) created.push({srcId:'platformSips', id: x.id});
+    else kept++;
+  });
+  (DB.clients || []).forEach(c=>{
+    if(c && !c.deletedAt && /^Platform import/.test(c.createdVia || '') && c.createdBy === b.by && near(c.createdAt))
+      created.push({srcId:'clients', id: c.id});
+  });
+  return {id: 'batch:' + b.id, synthetic: true, created, updated, kept};
 }
 let impBackState = null;
 function impBackSetSource(id){ window._impBackForce = id; }
@@ -71472,12 +71533,12 @@ function mapImpClean(rec){
 /* Which records are pointed at by some other record. Built in one pass
    over the link fields BOSS already declares, because asking the question
    per record would be a scan of the whole database per record. */
-function impUndoReferenced(){
+function impUndoReferenced(skip){
   const refs = {};
   Object.keys(IMP_BACK_LINKS).forEach(f=>{ refs[IMP_BACK_LINKS[f]] = refs[IMP_BACK_LINKS[f]] || new Set(); });
   EXPORT_SOURCES.forEach(s=>{
     (DB[s.id] || []).forEach(r=>{
-      if(!r || r.deletedAt) return;
+      if(!r || r.deletedAt || (skip && skip.has(s.id + ':' + r.id))) return;
       Object.keys(IMP_BACK_LINKS).forEach(f=>{
         const v = r[f];
         if(v !== undefined && v !== null && v !== '') refs[IMP_BACK_LINKS[f]].add(String(v));
@@ -71497,7 +71558,9 @@ function impUndoPlan(histId){
   if(!undo) return {hist, undo:null, can:false, why:'This import was made before BOSS kept a record of what '
     + 'each one did, so there is nothing to reverse it from. Its line can be removed from the history, but '
     + 'the records it wrote cannot be told apart from any other.'};
-  const refs = impUndoReferenced();
+  /* What this import made may point at what it made (a snapshot at the
+     client it created); only somebody else's record holds one back. */
+  const refs = impUndoReferenced(new Set((undo.created || []).map(c=>c.srcId + ':' + c.id)));
   const remove = [], linked = [], gone = [];
   (undo.created || []).forEach(c=>{
     const rec = (DB[c.srcId] || []).find(r=>r && String(r.id) === String(c.id));
@@ -71549,6 +71612,10 @@ function askDeleteImport(histId){
              ${line(plan.restore.length, 'record(s) it changed will have the fields it changed <b>put back to '
                + 'what they were</b>. The records themselves stay.')}
            </ul>
+           ${plan.undo.kept ? `<div class="small-note">${plan.undo.kept} SIP or AUM line(s) this import wrote over
+             were kept as they are: it was made before imports recorded what they replaced.</div>` : ''}
+           ${plan.undo.synthetic ? `<div class="small-note">Client details it filled in stay: this import was made
+             before imports recorded what they changed.</div>` : ''}
            ${(plan.linked.length || plan.moved.length || plan.gone.length || plan.lost.length)
              ? `<div class="section-title">What will be left alone, and why</div>
                 <ul style="font-size:13px">
@@ -71609,6 +71676,7 @@ async function deleteImport(histId){
     DB.importUndo = (DB.importUndo || []).filter(u=>u.id !== plan.undo.id);
     await save('importUndo');
   }
+  if(h.batchId && plan.undo) await pfBatchRemoved(h.batchId);
   DB.importHistory = (DB.importHistory || []).filter(x=>x.id !== histId);
   await save('importHistory');
   await logAudit('Settings', histId, 'Import deleted and reversed', [
@@ -71627,6 +71695,30 @@ async function deleteImport(histId){
         ? '\n\n' + plan.linked.length + ' left in place because something else now points at them, and '
           + plan.moved.length + ' left as they are because somebody has changed them since.' : '')
     : 'The line is gone from the history. No record was touched.');
+}
+/* A platform report taken back out: its batch goes from the list, and the
+   month's book line it wrote is worked out again from what is left, if
+   that month is the latest (an older month's book is not known any more). */
+async function pfBatchRemoved(batchId){
+  DB.importBatches = (DB.importBatches || []).filter(b=>b && b.id !== batchId);
+  await save('importBatches');
+  const all = aumLedgerAll(), row = all.find(r=>r && r.batchId === batchId);
+  if(row && row === all[all.length - 1]){
+    Object.assign(row, aumBookTotals(), {at: new Date().toISOString(), by: currentUser, batchId: ''});
+    await save('aumMonthly');
+  }
+}
+/* Remove, from Setup › Platform Import Mapping: the same reversal Data
+   Import offers, for the history line this batch wrote. */
+function pfAskRemoveBatch(batchId){
+  const h = (DB.importHistory || []).find(x=>x && x.batchId === batchId);
+  if(h) return askDeleteImport(h.id);
+  const b = (DB.importBatches || []).find(x=>x && x.id === batchId);
+  if(!b) return;
+  const id = uid('IMH');
+  DB.importHistory.push({id, module: impPlatformLabel(b.platform) + ' · ' + b.report, file: b.file, total: b.total,
+    imported: b.written || 0, skipped: (b.skipped || 0) + (b.failed || 0), date: b.at, by: b.by, batchId: b.id, undoId: b.undoId});
+  askDeleteImport(id);
 }
 function impMayDelete(h){
   const plan = impUndoPlan(h.id);

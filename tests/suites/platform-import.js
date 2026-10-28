@@ -683,6 +683,64 @@ suite(async t => {
     return 'changed, logged, and reset back to the shipped mapping';
   });
 
+  t.section('an import taken back out');
+
+  /* One new client and one figure changed, so Remove has something to
+     delete and something to put back. */
+  const removeFile = n => write('Finowise_AUM_remove' + n + '.xlsx', 'AUM Report', [FIN_AUM_HEAD,
+    ['ZZ Remove Newcomer ' + n, 'ZZREM' + n + '234R', 'Varanasi', '', '', '1,00,000', '1,20,000', '9', '98765 4321' + n],
+    ['ZZ Mehta Rajesh', 'zzmeh1234r', 'Varanasi', '', 'Priya Nair', '10,00,000', '99,99,999', '14.5', '98765 43210']]);
+  const mehtaNow = () => t.eval(id => {
+    const h = DB.platformHoldings.find(x=>!x.deletedAt && x.clientId===id && x.format==='finowise_aum');
+    return h && h.current;
+  }, ids.mehta);
+  const removeIt = batchId => t.eval(async id => {
+    const was = window.alert; let said = '';
+    window.alert = m => { said = m; };
+    try {
+      pfAskRemoveBatch(id);
+      const modal = document.getElementById('overlay').textContent;
+      const h = DB.importHistory.find(x=>x.batchId===id);
+      await deleteImport(h.id);
+      return {modal, said};
+    } finally { window.alert = was; }
+  }, batchId);
+  const after = (batchId, name) => t.eval(([id, name]) => ({
+    batch: DB.importBatches.some(b=>b.id===id),
+    client: DB.clients.some(c=>!c.deletedAt && c.cmsName===name),
+    holdings: DB.platformHoldings.filter(h=>!h.deletedAt && h.batchId===id).length,
+    hist: DB.importHistory.some(h=>h.batchId===id)}), [batchId, name]);
+
+  await t.step('Remove takes out what an import brought in, and puts back what it overwrote', async () => {
+    const before = await mehtaNow();
+    const r = await runImport('finowise_aum', removeFile(1));
+    if(r.batch.created !== 1 || await mehtaNow() !== 9999999) throw new Error('import ' + JSON.stringify(r.batch));
+    const button = await t.eval(() => { navigate('settings','importmaps'); return !!Array.from(document.querySelectorAll('#content button')).find(b=>b.textContent.trim()==='Remove'); });
+    const done = await removeIt(r.batch.id);
+    const a = await after(r.batch.id, 'ZZ Remove Newcomer 1');
+    if(!button || !/deleted outright/.test(done.modal) || a.batch || a.client || a.holdings || a.hist) throw new Error(JSON.stringify({button, a, done}));
+    const back = await mehtaNow();
+    if(back !== before) throw new Error('Mehta reads ' + back + ', was ' + before);
+    return done.said.replace(/\s+/g, ' ') + ' Mehta back at ' + back;
+  });
+
+  await t.step('an import made before imports kept a record can still be removed', async () => {
+    const before = await mehtaNow();
+    const r = await runImport('finowise_aum', removeFile(2));
+    /* As an older import left things: no record of what it did. */
+    await t.eval(async id => {
+      const b = DB.importBatches.find(x=>x.id===id), h = DB.importHistory.find(x=>x.batchId===id);
+      DB.importUndo = DB.importUndo.filter(u=>u.id!==b.undoId);
+      delete b.undoId; delete h.undoId;
+    }, r.batch.id);
+    const done = await removeIt(r.batch.id);
+    const a = await after(r.batch.id, 'ZZ Remove Newcomer 2');
+    if(a.batch || a.client || a.holdings) throw new Error(JSON.stringify({a, done}));
+    const back = await mehtaNow();
+    if(back !== before) throw new Error('Mehta reads ' + back + ', was ' + before);
+    return 'newcomer and their snapshot gone; Mehta back at ' + back;
+  });
+
   await t.step('nothing was alerted along the way', async () => {
     if(t.dialogs.length) throw new Error('alerts: ' + t.dialogs.join(' | ').slice(0, 300));
     return 'none';
