@@ -2,6 +2,7 @@
 // Column names vary between report versions, so each field is matched against a list
 // of known header aliases (compared after stripping case, spaces and punctuation).
 import XLSX from 'xlsx';
+import zlib from 'node:zlib';
 import { norm, clean, upper, num, toISODate } from '../util.js';
 
 const ALIASES = {
@@ -64,12 +65,14 @@ function looksLikeText(buffer) {
 
 export function readSheet(buffer, fileName = '') {
   const isText = /\.(csv|txt|tsv)$/i.test(fileName) || looksLikeText(buffer);
-  // Text is read here, not by SheetJS: SheetJS reads 12/08/2026 as 8 December (US
-  // order) where Indian registrar files are day-first (toISODate parses the text
+  // Text and .xlsx are read here, not by SheetJS: SheetJS reads 12/08/2026 as 8 December
+  // (US order) where Indian registrar files are day-first (toISODate parses the text
   // day-first), and it builds an object for every cell, which for a 60 MB CAMS
   // brokerage file of 110 columns is more memory than a small server has.
   if (isText) return readText(buffer);
-  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  const xlsx = readXlsx(buffer);
+  if (xlsx) return xlsx;
+  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true, dense: true });
   // Pick the sheet with the most rows (registrar exports sometimes ship a cover sheet).
   let best = null;
   for (const name of wb.SheetNames) {
@@ -77,6 +80,29 @@ export function readSheet(buffer, fileName = '') {
     if (!best || rows.length > best.length) best = rows;
   }
   return best || [];
+}
+
+// Collects rows the same way for text and .xlsx: rows are kept whole until the header
+// row turns up (within the top 25), then only the columns a parser can use are kept.
+function collector() {
+  const rows = [];
+  let keep = null, width = 0;
+  return {
+    rows,
+    // Below the header only cells at these indexes are wanted (null = all).
+    wanted: () => keep,
+    push(cells) {
+      if (!keep) {
+        rows.push(cells);
+        const cols = rows.length <= 25 ? resolveColumns(cells.map(String)) : null;
+        if (cols && Object.keys(cols).length >= 2 && ['folio', 'code', 'clientId', 'pan'].some((f) => f in cols)) { keep = [...new Set(Object.values(cols))]; width = cells.length; }
+        return;
+      }
+      const row = new Array(Math.max(width, cells.length)).fill('');
+      for (const i of keep) if (i < cells.length) row[i] = cells[i];
+      rows.push(row);
+    },
+  };
 }
 
 // One line of delimited text into its cells; quotes as in CSV ("a, b" and "").
@@ -96,35 +122,143 @@ function splitLine(line, sep) {
   return out;
 }
 
-// Tab- or comma-separated text, line by line. Below the header row only the
-// columns a parser can use are kept (the rest are left empty), so a wide file
-// costs a fraction of its full size in memory.
+// Tab- or comma-separated text, line by line.
 function readText(buffer) {
   let text = buffer.toString('utf8');
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
   const firstEnd = text.indexOf('\n');
   const first = firstEnd < 0 ? text : text.slice(0, firstEnd);
   const sep = (first.split('\t').length >= first.split(',').length) ? '\t' : ',';
-  const rows = [];
-  let keep = null, width = 0, at = 0;
+  const out = collector();
+  let at = 0;
   while (at < text.length) {
     let end = text.indexOf('\n', at);
     if (end < 0) end = text.length;
     let line = text.slice(at, end);
     at = end + 1;
     if (line.endsWith('\r')) line = line.slice(0, -1);
-    const cells = splitLine(line, sep);
-    if (!keep) {
-      rows.push(cells);
-      const cols = rows.length <= 25 ? resolveColumns(cells.map(String)) : null;
-      if (cols && Object.keys(cols).length >= 2 && ['folio', 'code', 'clientId', 'pan'].some((f) => f in cols)) { keep = [...new Set(Object.values(cols))]; width = cells.length; }
-      continue;
-    }
-    const row = new Array(Math.max(width, cells.length)).fill('');
-    for (const i of keep) if (i < cells.length) row[i] = cells[i];
-    rows.push(row);
+    out.push(splitLine(line, sep));
   }
-  return rows;
+  return out.rows;
+}
+
+// The entries of a zip file, from its central directory: name -> { method, size, data }.
+function zipEntries(buf) {
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return null;
+  const count = buf.readUInt16LE(eocd + 10);
+  let p = buf.readUInt32LE(eocd + 16);
+  const out = new Map();
+  for (let n = 0; n < count && p + 46 <= buf.length && buf.readUInt32LE(p) === 0x02014b50; n++) {
+    const method = buf.readUInt16LE(p + 10);
+    const csize = buf.readUInt32LE(p + 20);
+    const size = buf.readUInt32LE(p + 24);
+    const nameLen = buf.readUInt16LE(p + 28), extraLen = buf.readUInt16LE(p + 30), commentLen = buf.readUInt16LE(p + 32);
+    const local = buf.readUInt32LE(p + 42);
+    const name = buf.toString('utf8', p + 46, p + 46 + nameLen);
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    out.set(name, { method, size, data: buf.subarray(start, start + csize) });
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return out;
+}
+
+// Inflated into a Buffer, which lives outside the JavaScript heap: a 60 MB .xlsx
+// holds several hundred MB of sheet XML, more than one string can.
+function unzip(entry) {
+  if (!entry) return null;
+  return entry.method === 0 ? entry.data : zlib.inflateRawSync(entry.data);
+}
+
+const XML_ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+const unxml = (s) => (s.indexOf('&') < 0 ? s : s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => (
+  e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : (XML_ENT[e] ?? m))));
+// All <t> texts of one string item (rich text is split into runs; phonetic hints are not text).
+const textOf = (xml) => {
+  let s = '';
+  const re = /<t(?:\s[^>]*)?>([^<]*)<\/t>|<t\s*\/>|<rPh\b[\s\S]*?<\/rPh>/g;
+  for (let m; (m = re.exec(xml));) if (m[1] !== undefined) s += m[1];
+  return unxml(s);
+};
+
+// Each piece of buf between <open ...> and </close>, as a string, without making
+// one string of the whole buffer.
+function eachElement(buf, open, close, fn) {
+  const o = Buffer.from(open), c = Buffer.from(close);
+  let at = 0;
+  for (;;) {
+    let s = buf.indexOf(o, at);
+    // "<si" must not match "<sir…"; the next character ends the tag name.
+    while (s >= 0 && !/[\s>/]/.test(String.fromCharCode(buf[s + o.length]))) s = buf.indexOf(o, s + 1);
+    if (s < 0) return;
+    const selfClose = buf.indexOf('>', s);
+    if (selfClose > 0 && buf[selfClose - 1] === 0x2f) { fn(buf.toString('utf8', s, selfClose + 1)); at = selfClose + 1; continue; }
+    const e = buf.indexOf(c, s);
+    if (e < 0) return;
+    fn(buf.toString('utf8', s, e + c.length));
+    at = e + c.length;
+  }
+}
+
+const colIndex = (ref) => {
+  let n = 0;
+  for (let i = 0; i < ref.length; i++) {
+    const ch = ref.charCodeAt(i);
+    if (ch < 65 || ch > 90) break;
+    n = n * 26 + ch - 64;
+  }
+  return n - 1;
+};
+
+// .xlsx read straight from its XML: the sheet with the most data, one row at a time,
+// keeping only the cells collector() asks for. Returns null for anything else.
+function readXlsx(buffer) {
+  if (buffer[0] !== 0x50 || buffer[1] !== 0x4b) return null;
+  const zip = zipEntries(buffer);
+  if (!zip) return null;
+  const sheets = [...zip.keys()].filter((k) => /^xl\/worksheets\/[^/]+\.xml$/i.test(k));
+  if (!sheets.length) return null;
+  sheets.sort((a, b) => zip.get(b).size - zip.get(a).size);
+  const strings = [];
+  const sst = unzip(zip.get('xl/sharedStrings.xml'));
+  if (sst) eachElement(sst, '<si', '</si>', (x) => strings.push(textOf(x)));
+  const sheet = unzip(zip.get(sheets[0]));
+  const out = collector();
+  const cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  let lastRow = 0;
+  eachElement(sheet, '<row', '</row>', (xml) => {
+    const rn = Number((/^<row\b[^>]*?\sr="(\d+)"/.exec(xml) || [])[1]) || lastRow + 1;
+    // Rows the file leaves out are blank rows; keep their place before the header.
+    for (; lastRow + 1 < rn && !out.wanted(); lastRow++) out.push([]);
+    lastRow = rn;
+    const want = out.wanted();
+    const cells = [];
+    let next = 0;
+    cellRe.lastIndex = 0;
+    for (let m; (m = cellRe.exec(xml));) {
+      const attrs = m[1];
+      const ref = /\sr="([A-Z]+)/.exec(attrs);
+      const i = ref ? colIndex(ref[1]) : next;
+      next = i + 1;
+      if (want && !want.includes(i)) continue;
+      const body = m[2] || '';
+      const t = (/\st="(\w+)"/.exec(attrs) || [])[1] || 'n';
+      const v = /<v>([^<]*)<\/v>/.exec(body);
+      let val = '';
+      if (t === 's') val = v ? (strings[Number(v[1])] ?? '') : '';
+      else if (t === 'inlineStr') val = textOf(body);
+      else if (t === 'str' || t === 'e') val = v ? unxml(v[1]) : '';
+      else if (t === 'b') val = v ? v[1] === '1' : '';
+      else val = v && v[1] !== '' ? Number(v[1]) : '';
+      while (cells.length < i) cells.push('');
+      cells[i] = val;
+    }
+    out.push(cells);
+  });
+  return out.rows;
 }
 
 // Finds the header row (first row in the top 25 that matches at least 2 known fields).
