@@ -32922,6 +32922,7 @@ let systemResetting = false;   // set by a reset; nothing may write after it
 async function save(part){
   if(systemResetting) return;  // the wipe writes through sset directly
   await sset(part, DB[part]);
+  if(part === 'clients' && !pyClientSyncWriting && typeof pyClientSyncSoon === 'function') pyClientSyncSoon(5000);
   /* The one place in BOSS that can tell a record it has never seen from one
      it has — which is what "created" and "changed" mean. The Automation
      Builder's triggers come off this and nothing else, so a module added
@@ -33389,7 +33390,7 @@ function visibleRecordsByScope(list, ownerFn, branchFn){
   if(isPartnerMember(u)){
     const people = u.scope==='team' ? [u].concat(userDescendants(u.id)) : [u];
     const ids = new Set(people.map(t=>t.id)), pobs = new Set(people.map(t=>t.partnerPobId).filter(Boolean));
-    return notDeleted.filter(r=>ids.has(ownerFn(r)) || pobs.has(r.partnerPobId) || pobs.has(r.id));
+    return notDeleted.filter(r=>ids.has(ownerFn(r)) || pobs.has(r.partnerPobId) || pobs.has(r.id) || pyMappedTo(r, ids));
   }
   if(u.scope==='branch') return notDeleted.filter(r=>branchFn(r)===u.branch);
   if(u.scope==='team') {
@@ -33397,9 +33398,10 @@ function visibleRecordsByScope(list, ownerFn, branchFn){
     // arbitrary-depth chain actually work for visibility: a manager sees their reports' records
     // AND their reports' reports', not just direct reports.
     const teamIds = new Set([u.id, ...userDescendants(u.id).map(t=>t.id)]);
-    return notDeleted.filter(r=>teamIds.has(ownerFn(r)));
+    return notDeleted.filter(r=>teamIds.has(ownerFn(r)) || pyMappedTo(r, teamIds));
   }
-  return notDeleted.filter(r=>ownerFn(r)===u.id); // 'own' (default)
+  const mine = new Set([u.id]);
+  return notDeleted.filter(r=>ownerFn(r)===u.id || pyMappedTo(r, mine)); // 'own' (default)
 }
 /* =====================================================================
    THE RECORD DOOR — the same rule, in front of a record opened by id
@@ -33727,9 +33729,11 @@ async function boot(){
      found out at 3am. */
   apiDrainInbox().then(n=>{ if(n) render(); }).catch(()=>{});
   apiRunDueSyncs().catch(()=>{});
+  pyClientSyncSoon(8000);
   setInterval(()=>{
     apiDrainInbox().then(n=>{ if(n) render(); }).catch(()=>{});
     apiRunDueSyncs().catch(()=>{});
+    pyClientSyncSoon(0);
   }, 600000);
   // …and from here the screen keeps itself up to date: the stream for
   // speed, and the catch-up underneath it for the times the stream
@@ -53441,6 +53445,147 @@ async function pobGiveLogin(r, o){
    line: L1 and L2 their own, L3 up everyone mapped below them. Only an
    admin can change the payout team, so for anybody else this does nothing. */
 function pobPayoutLevel(m){ return Math.min(6, Math.max(1, Number(String(m.partnerLevel||'L1').replace(/\D/g,'')) || 1)); }
+/* PAYOUT CLIENTS ARE BOSS CLIENTS.
+
+   A client who arrives through Payouts (a folio master, a brokerage file, the
+   client mapping sheet, or added by hand in Clients & Map) is the same person
+   CMS, Operations, the reviews and every other module work on. So each payout
+   client is kept as one CMS record, found again by its payout id, then by
+   PAN, email or mobile, and only then by a name nobody else carries. Nothing
+   is uploaded twice and nobody gets a second copy.
+
+   Who it belongs to follows the payout mapping: the lowest level on it is
+   the client's RM in BOSS (unless somebody in BOSS has set another), and
+   everyone above them on the mapping sees the client too (mappedTo). A
+   partner, an RM or a mentor then reaches it by the same rules as any other
+   record of theirs.
+
+   The four fields both sides hold (name, PAN, email, mobile) are kept equal
+   in both directions. What each side last agreed on is kept (payoutSeen), so
+   a change on one side is told from a change on the other; if both changed,
+   BOSS wins, because BOSS is where people edit a client. It runs in an
+   admin's browser, as the partner sync does, because writing every client
+   needs an admin: after any payout import or mapping, after a client is
+   saved, and when an admin signs in. */
+const PY_CLIENT_FIELDS = [['name','cmsName'],['pan','pan'],['email','email'],['mobile','mobile']];
+let pyClientSyncRun = null, pyClientSyncTimer = null, pyClientSyncWriting = false;
+function pyClientSyncSoon(delay){
+  if(typeof isAdmin !== 'function' || !isAdmin() || typeof pyGet !== 'function') return;
+  clearTimeout(pyClientSyncTimer);
+  pyClientSyncTimer = setTimeout(()=>{ pyClientSync().catch(e=>console.error('client sync', e && e.message)); }, delay === undefined ? 3000 : delay);
+}
+const pyNormPan = v => String(v || '').replace(/\s+/g, '').toUpperCase();
+const pyNormMobile = v => { const d = String(v || '').replace(/\D/g, ''); return d.length >= 10 ? d.slice(-10) : ''; };
+const pyNormName = v => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const pyClientVal = (k, v) => k === 'pan' ? pyNormPan(v) : String(v === undefined || v === null ? '' : v).trim();
+/* Visible to whoever the payout mapping names, as well as to its owner. */
+function pyMappedTo(r, ids){ return Array.isArray(r.mappedTo) && r.mappedTo.some(id=>ids.has(id)); }
+function pyClientSync(){
+  if(pyClientSyncRun) return pyClientSyncRun;
+  pyClientSyncRun = pyClientSyncOnce().finally(()=>{ pyClientSyncRun = null; });
+  return pyClientSyncRun;
+}
+async function pyClientSyncOnce(){
+  const out = {created: 0, linked: 0, updated: 0, pushed: 0, owners: 0, failed: [], skipped: ''};
+  if(typeof pyGet !== 'function' || !isAdmin()){ out.skipped = 'not-admin'; return out; }
+  let rows, users;
+  try { rows = ((await pyGet('/clients?all=1')) || {}).rows || []; users = (await pyGet('/users')) || []; }
+  catch(e){ out.failed.push(e.message); return out; }
+  const memberByEmail = new Map();
+  (DB.team || []).forEach(m=>{ if(m && m.email && !m.deletedAt) memberByEmail.set(String(m.email).toLowerCase(), m.id); });
+  const memberOf = new Map();
+  users.forEach(u=>{ const m = memberByEmail.get(String(u.email || '').toLowerCase()); if(m) memberOf.set(Number(u.id), m); });
+  const byPy = new Map(), byPan = new Map(), byEmail = new Map(), byMob = new Map(), byName = new Map();
+  const index = c=>{
+    if(c.payoutClientId) byPy.set(Number(c.payoutClientId), c);
+    const pan = pyNormPan(c.pan), mob = pyNormMobile(c.mobile), em = String(c.email || '').trim().toLowerCase(), nm = pyNormName(c.cmsName);
+    if(pan && !byPan.has(pan)) byPan.set(pan, c);
+    if(em && !byEmail.has(em)) byEmail.set(em, c);
+    if(mob && !byMob.has(mob)) byMob.set(mob, c);
+    if(nm) byName.set(nm, (byName.get(nm) || []).concat([c]));
+  };
+  DB.clients.forEach(c=>{ if(c && !c.deletedAt) index(c); });
+  const live = new Set(rows.map(p=>Number(p.id)));
+  const free = c => c && (!c.payoutClientId || !live.has(Number(c.payoutClientId)));
+  const now = new Date().toISOString();
+  let dirty = false;
+  for(const p of rows){
+    const pid = Number(p.id);
+    const chain = Object.keys(p.hierarchy || {}).map(Number).sort((a, b)=>a - b)
+      .map(l=>memberOf.get(Number(p.hierarchy[l]))).filter(Boolean);
+    const handler = chain[0] || '';
+    let c = byPy.get(pid) || null;
+    if(!c){
+      const pan = pyNormPan(p.pan), mob = pyNormMobile(p.mobile), em = String(p.email || '').trim().toLowerCase();
+      c = [pan && byPan.get(pan), em && byEmail.get(em), mob && byMob.get(mob)].find(free) || null;
+      if(!c && !pan){
+        const same = (byName.get(pyNormName(p.name)) || []).filter(free);
+        if(same.length === 1 && !pyNormPan(same[0].pan)) c = same[0];
+      }
+    }
+    let changed = false, fresh = false;
+    if(!c){
+      c = {id: uid('CMS'), cmsName: String(p.name || '').trim(), pan: pyNormPan(p.pan), email: String(p.email || '').trim(),
+        mobile: String(p.mobile || '').trim(), rmName: handler, rmFromPayout: handler, createdAt: now, createdBy: currentUser,
+        createdVia: 'Payout import'};
+      initState('CMS', c);
+      DB.clients.push(c);
+      out.created++; changed = fresh = true;
+    } else if(Number(c.payoutClientId) !== pid){ out.linked++; changed = fresh = true; }
+    if(Number(c.payoutClientId) !== pid){ c.payoutClientId = pid; byPy.set(pid, c); }
+    index(c);
+    /* name, PAN, email and mobile, both ways */
+    const seen = c.payoutSeen || {}, up = {}, after = {};
+    PY_CLIENT_FIELDS.forEach(([pk, bk])=>{
+      const pv = pyClientVal(pk, p[pk]), bv = pyClientVal(pk, c[bk]);
+      const sv = seen[pk] === undefined ? null : pyClientVal(pk, seen[pk]);
+      after[pk] = pv;
+      if(pv === bv) return;
+      if(!bv || (pv && sv !== null && bv === sv)){ c[bk] = pv; changed = true; return; }
+      up[pk] = bv; after[pk] = bv;
+    });
+    if(Object.keys(up).length){
+      try {
+        await pyPut('/clients/' + pid, {name: after.name || p.name, pan: after.pan, email: after.email, mobile: after.mobile});
+        out.pushed++;
+      } catch(e){ out.failed.push((c.cmsName || pid) + ': ' + e.message); PY_CLIENT_FIELDS.forEach(([pk])=>{ after[pk] = pyClientVal(pk, p[pk]); }); }
+    }
+    if(JSON.stringify(seen) !== JSON.stringify(after)){ c.payoutSeen = after; changed = true; }
+    /* who it belongs to */
+    if(handler && c.rmName !== handler && (!c.rmName || c.rmName === c.rmFromPayout)){
+      c.rmName = handler; c.rmFromPayout = handler; out.owners++; changed = true;
+    }
+    if(JSON.stringify(c.mappedTo || []) !== JSON.stringify(chain)){ c.mappedTo = chain; changed = true; }
+    const aum = Number(p.aum) || 0, folios = (p.folios || []).join(', ');
+    if(c.payoutAum !== aum || (c.payoutFolios || '') !== folios){ c.payoutAum = aum; c.payoutFolios = folios; c.payoutAumPeriod = p.aumPeriod || ''; changed = true; }
+    if(changed){ c.payoutSyncedAt = now; dirty = true; if(!fresh) out.updated++; }
+  }
+  /* A payout client that has gone leaves its BOSS record standing: it is a
+     client in BOSS in its own right now. Only the link goes. */
+  DB.clients.forEach(c=>{
+    if(c && c.payoutClientId && !live.has(Number(c.payoutClientId))){
+      delete c.payoutClientId; delete c.payoutSeen; delete c.mappedTo; dirty = true;
+    }
+  });
+  if(dirty){
+    pyClientSyncWriting = true;
+    try { await save('clients'); } finally { pyClientSyncWriting = false; }
+    if(out.created || out.linked || out.pushed) await logAudit('CMS', 'payout-sync', 'Clients synced with Payouts', [
+      {field:'Created in CMS', oldValue:'', newValue: String(out.created)},
+      {field:'Linked to an existing CMS client', oldValue:'', newValue: String(out.linked)},
+      {field:'Sent back to Payouts', oldValue:'', newValue: String(out.pushed)}]);
+    if(typeof render === 'function' && !/^py/.test(currentView || '')) render();
+  }
+  return out;
+}
+async function pyClientSyncNow(){
+  const r = await pyClientSync();
+  if(r.skipped){ alert('Only an admin can sync the payout clients into BOSS.'); return; }
+  alert('Payout clients are in BOSS.\n\n' + r.created + ' new client(s) created in CMS, ' + r.linked + ' matched to a client BOSS already had, '
+    + r.pushed + ' change(s) sent back to Payouts, ' + r.owners + ' RM(s) set from the payout mapping.'
+    + (r.failed.length ? '\n\nNot done: ' + r.failed.slice(0, 5).join('; ') : ''));
+}
+
 async function pobSyncPayout(records, opts){
   const out = {added: 0, updated: 0, failed: [], skipped: ''};
   if(!(typeof pyPost === 'function') || !isAdmin()){ out.skipped = 'not-admin'; return out; }

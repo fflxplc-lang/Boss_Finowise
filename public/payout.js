@@ -47,6 +47,8 @@ async function pyApi(method, url, body){
     err.status = res.status; err.code = data && data.code;
     throw err;
   }
+  /* What changes the payout clients changes BOSS's clients: see pyClientSync. */
+  if(method !== 'GET' && /^\/(clients|imports|reports\/(bulk-mapping\/apply|rm-file))/.test(url) && typeof pyClientSyncSoon === 'function') pyClientSyncSoon();
   return data;
 }
 const pyGet = u => pyApi('GET', u);
@@ -1114,6 +1116,7 @@ function pyClientList(admin){
   PY.s.clientChecked = PY.s.clientChecked || {};
   const head = `<div class="between py-wrap" style="gap:8px;margin-bottom:10px">${pySearch('pyClientQ', 'clientQ', 'Search name, PAN, folio…', 300)}
       <div class="row" style="gap:8px"><button class="btn" onclick="pyClientExport()">⬇ Export</button>
+        ${admin && typeof pyClientSyncNow === 'function' ? `<button class="btn" title="Every payout client as a CMS client, with its RM and team from the mapping" onclick="pyClientSyncNow()">⟳ Sync to BOSS clients</button>` : ''}
         ${admin ? `<button class="btn primary" onclick="pyClientModal(-1)">+ Add client</button>` : ''}</div></div>
     <div class="pill-tabs" style="margin-bottom:10px">${pills.map(p=>`<button class="${filter === p[0] ? 'active' : ''}" onclick="PY.s.clientFilter='${p[0]}'; PY.s.clientQPage=1; render()">${p[1]} <span class="py-count">${p[2] === undefined ? '?' : p[2]}</span></button>`).join('')}</div>`;
   if(!d) return pyCard('', head + pyLoadingHtml(url));
